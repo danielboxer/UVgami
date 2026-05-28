@@ -1,0 +1,30 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.11", "numpy", "ninja"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "partuv"
+version = "0.1.2.2"
+description = "UV unwrapping pipeline with pybind11 bindings and preprocessing utilities"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Zhaoning Wang" }]
+dependencies = [
+  "numpy",
+  "trimesh==4.9.0",
+  "scipy",
+  "opencv-python",
+  "libigl",
+]
+
+
+
+[tool.scikit-build]
+sdist.include = [
+  "extern/easy_profiler/lib/libeasy_profiler.so",
+  "extern/easy_profiler/lib/cmake/easy_profiler/**",
+]
+cmake.verbose = true
+ninja.make-fallback = true
+
+wheel.packages = ["partuv", "preprocess_utils"]

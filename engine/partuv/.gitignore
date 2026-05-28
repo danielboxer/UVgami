@@ -1,0 +1,102 @@
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+*.un~
+
+# Large external dependencies (fetch at build time)
+extern/libigl/
+extern/eigen-3.4.0/
+extern/json/
+
+# Build artifacts
+build/
+*.swo
+*.swp
+
+*build*/
+
+archive
+# eigen-3.4.0
+# libigl
+meshes
+.vscode
+# stb
+yaml-cpp-0.8.0
+
+
+test*
+output_folder*
+*pycache*
+
+# easy_profiler/
+scripts/*.json
+cluster
+cluster_normal
+
+mesh_processing/
+scripts/lib/
+extern/uvpackmaster/
+*.run
+*.html
+*.zip
+
+# /extern/*
+
+# 2. But do not ignore the OpenABF folder itself
+!/extern/OpenABF/
+
+# 3. Now ignore everything inside OpenABF again
+/extern/OpenABF/*
+
+# 4. Finally, unignore include/ and everything beneath it
+!/extern/OpenABF/include/
+!/extern/OpenABF/include/**
+
+preprocess_utils/partfield/checkpoints/
+preprocess_utils/partfield/config/*ckpt
+demo_benchmark/
+*.safetensors
+*.ckpt
+
+# wheelhouse/
+
+outputs/
+output*/
+
+
+dist/
+extern2/
+
+datasets*/
+
+*.log
+
+scripts-archive/
+
+!demo/meshes/*.obj

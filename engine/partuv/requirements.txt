@@ -1,0 +1,21 @@
+#  conda install -c conda-forge libstdcxx-ng>=13 libgcc-ng>=13  gxx_linux-64
+# -f https://data.pyg.org/whl/torch-2.7.1+cu128.html
+# torch==2.7.1 --index-url  https://download.pytorch.org/whl/cu128
+# torch==2.3.1
+
+# torch-scatter -f https://data.pyg.org/whl/torch-2.7.1+cu118.html
+psutil
+lightning==2.2
+h5py
+yacs
+loguru
+boto3
+plyfile
+einops
+libigl
+open3d
+scikit-image
+trimesh==4.9.0
+seaborn
+
+# git+https://github.com/eliphatfs/cumesh2sdf.git
