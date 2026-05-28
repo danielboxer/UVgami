@@ -219,6 +219,172 @@ class Cleanup(Job):
                 bpy.data.objects.remove(input_mesh, do_unlink=True)
 
 
+class TransferUVs(Job):
+    def __init__(self, count):
+        super().__init__(count)
+
+    def finish(self, input_mesh, output):
+        if not check_exists(input_mesh) or not check_exists(output):
+            return False, False
+
+        # need to exit edit mode to modify mesh data
+        was_in_edit = input_mesh.mode == "EDIT"
+        if was_in_edit:
+            old_active = bpy.context.view_layer.objects.active
+            bpy.context.view_layer.objects.active = input_mesh
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+        input_data = input_mesh.data
+        output_data = output.data
+
+        # vertex count must match
+        if len(input_data.vertices) != len(output_data.vertices):
+            if was_in_edit:
+                bpy.ops.object.mode_set(mode="EDIT")
+                bpy.context.view_layer.objects.active = old_active
+            return False, False
+
+        output_uv = output_data.uv_layers.active
+        if output_uv is None:
+            if was_in_edit:
+                bpy.ops.object.mode_set(mode="EDIT")
+                bpy.context.view_layer.objects.active = old_active
+            return False, False
+
+        # get or create UV layer on input
+        if not input_data.uv_layers:
+            input_data.uv_layers.new(name="UVMap")
+        input_uv = input_data.uv_layers.active
+
+        topology_matched = len(input_data.polygons) == len(
+            output_data.polygons
+        ) and len(input_data.loops) == len(output_data.loops)
+
+        # build output vert index -> input vert index mapping via world position
+        out_to_in_vert = self._build_vertex_mapping(
+            input_mesh, output, input_data, output_data
+        )
+        if out_to_in_vert is None:
+            if was_in_edit:
+                bpy.ops.object.mode_set(mode="EDIT")
+                bpy.context.view_layer.objects.active = old_active
+            return False, False
+
+        # build input face lookup: frozenset of vert indices -> poly
+        input_face_lookup = {}
+        for poly in input_data.polygons:
+            face_key = frozenset(poly.vertices)
+            input_face_lookup[face_key] = poly
+
+        # for each output face, find matching input face and transfer UVs
+        for out_poly in output_data.polygons:
+            # map output face vertices to input vertex indices
+            mapped_verts = frozenset(
+                out_to_in_vert.get(v, -1) for v in out_poly.vertices
+            )
+
+            target_poly = None
+            if mapped_verts in input_face_lookup:
+                # exact face match
+                target_poly = input_face_lookup[mapped_verts]
+            else:
+                # output face is a subset of an input face (triangulated quad/ngon)
+                for face_key, poly in input_face_lookup.items():
+                    if mapped_verts.issubset(face_key):
+                        target_poly = poly
+                        break
+
+            if target_poly is None:
+                continue
+
+            # build vert -> loop index lookup for the input face
+            in_vert_to_loop = {}
+            for in_loop_idx in range(
+                target_poly.loop_start,
+                target_poly.loop_start + target_poly.loop_total,
+            ):
+                in_vert_to_loop[input_data.loops[in_loop_idx].vertex_index] = (
+                    in_loop_idx
+                )
+
+            # transfer UV for each loop in the output face
+            for out_loop_idx in range(
+                out_poly.loop_start, out_poly.loop_start + out_poly.loop_total
+            ):
+                out_vert = output_data.loops[out_loop_idx].vertex_index
+                in_vert = out_to_in_vert.get(out_vert)
+                if in_vert is not None and in_vert in in_vert_to_loop:
+                    in_loop_idx = in_vert_to_loop[in_vert]
+                    input_uv.uv[in_loop_idx].vector = output_uv.uv[out_loop_idx].vector
+
+        # transfer seams using position-based edge matching
+        self._transfer_seams(input_data, output_data, out_to_in_vert)
+
+        input_data.update()
+
+        # remove output mesh
+        bpy.data.objects.remove(output, do_unlink=True)
+        # unhide input in case it was hidden
+        input_mesh.hide_set(False)
+
+        if was_in_edit:
+            bpy.ops.object.mode_set(mode="EDIT")
+            bpy.context.view_layer.objects.active = old_active
+
+        return True, topology_matched
+
+    def _build_vertex_mapping(self, input_mesh, output_mesh, input_data, output_data):
+        precision = 4
+        input_matrix = input_mesh.matrix_world
+        output_matrix = output_mesh.matrix_world
+
+        input_pos_to_idx = {}
+        for v in input_data.vertices:
+            world_co = input_matrix @ v.co
+            key = (
+                round(world_co.x, precision),
+                round(world_co.y, precision),
+                round(world_co.z, precision),
+            )
+            # handle multiple vertices at same position
+            if key not in input_pos_to_idx:
+                input_pos_to_idx[key] = []
+            input_pos_to_idx[key].append(v.index)
+
+        out_to_in = {}
+        for v in output_data.vertices:
+            world_co = output_matrix @ v.co
+            key = (
+                round(world_co.x, precision),
+                round(world_co.y, precision),
+                round(world_co.z, precision),
+            )
+            if key in input_pos_to_idx and input_pos_to_idx[key]:
+                # pop from list to handle duplicate positions correctly
+                out_to_in[v.index] = input_pos_to_idx[key].pop(0)
+
+        # if we couldn't map all vertices, the transfer won't work
+        if len(out_to_in) != len(output_data.vertices):
+            return None
+        return out_to_in
+
+    def _transfer_seams(self, input_data, output_data, out_to_in_vert):
+        seam_edges = set()
+        for edge in output_data.edges:
+            if edge.use_seam:
+                v0 = out_to_in_vert.get(edge.vertices[0])
+                v1 = out_to_in_vert.get(edge.vertices[1])
+                if v0 is not None and v1 is not None:
+                    seam_edges.add((min(v0, v1), max(v0, v1)))
+
+        for edge in input_data.edges:
+            edge_key = (
+                min(edge.vertices[0], edge.vertices[1]),
+                max(edge.vertices[0], edge.vertices[1]),
+            )
+            edge.use_seam = edge_key in seam_edges
+
+
 class Symmetrise(Job):
     def __init__(self, count, axes, center, overlap):
         super().__init__(count)
