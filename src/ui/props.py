@@ -199,6 +199,13 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         name="Pack After Unwrap",
         description="Automatically pack UVs after each unwrap finishes",
     )
+    transfer_uvs: bpy.props.BoolProperty(
+        name="",
+        description=(
+            "Transfer the UV map from the output mesh to the original input mesh."
+            " Only works when the topology matches (same vertex and face count)"
+        ),
+    )
     preview_unwrap_sharp: bpy.props.BoolProperty(
         name="",
         description=(

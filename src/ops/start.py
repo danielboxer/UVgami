@@ -11,7 +11,7 @@ import bpy
 import numpy
 
 from ..handler import handle_error
-from ..job import Cleanup, Join, Preserve, Symmetrise
+from ..job import Cleanup, Join, Preserve, Symmetrise, TransferUVs
 from ..logger import logger
 from ..manager import manager
 from ..unwrap import Unwrap
@@ -319,10 +319,14 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 unwrap_name = self.names[obj.name][0]
                 join_job = Join(len(s))
                 cleanup_job = None
+                transfer_uvs_job = None
 
-                # the delete job can come after join because it doesn't depend
-                # on the unwrapped objects
-                if prefs.cleanup == "HIDE" or prefs.cleanup == "DELETE":
+                if props.transfer_uvs:
+                    transfer_uvs_job = TransferUVs(len(s))
+                    manager.input[transfer_uvs_job] = self.input_objs[object_idx]
+                elif prefs.cleanup == "HIDE" or prefs.cleanup == "DELETE":
+                    # the delete job can come after join because it doesn't depend
+                    # on the unwrapped objects
                     # the count is > 1 because all the separated objs need to
                     # finish before deleting the original
                     cleanup_job = Cleanup(len(s), prefs.cleanup)
@@ -334,6 +338,8 @@ class UVGAMI_OT_start(bpy.types.Operator):
                         join_job.count -= 1
                         if cleanup_job is not None:
                             cleanup_job.count -= 1
+                        if transfer_uvs_job is not None:
+                            transfer_uvs_job.count -= 1
                         collection = check_collection(
                             "UVgami Invalid Input", context.scene.collection
                         )
@@ -346,6 +352,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
                             "preserve": None,
                             "cleanup": cleanup_job,
                             "symmetrize": symmetrize_job,
+                            "transfer_uvs": transfer_uvs_job,
                         }
                         separated_objects.append(o)
                         self.names[o.name] = [
@@ -359,8 +366,13 @@ class UVGAMI_OT_start(bpy.types.Operator):
                     "preserve": None,
                     "cleanup": None,
                     "symmetrize": symmetrize_job,
+                    "transfer_uvs": None,
                 }
-                if prefs.cleanup == "HIDE" or prefs.cleanup == "DELETE":
+                if props.transfer_uvs:
+                    transfer_uvs_job = TransferUVs(1)
+                    jobs[obj]["transfer_uvs"] = transfer_uvs_job
+                    manager.input[transfer_uvs_job] = self.input_objs[object_idx]
+                elif prefs.cleanup == "HIDE" or prefs.cleanup == "DELETE":
                     cleanup_job = Cleanup(1, prefs.cleanup)
                     jobs[obj]["cleanup"] = cleanup_job
                     manager.input[cleanup_job] = self.input_objs[object_idx]
@@ -400,6 +412,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
                     self.jobs[obj]["join"],
                     self.jobs[obj]["cleanup"],
                     self.jobs[obj]["symmetrize"],
+                    self.jobs[obj]["transfer_uvs"],
                 ),
                 origin=obj.matrix_world.translation,
                 materials=materials,

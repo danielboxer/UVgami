@@ -54,6 +54,17 @@ class UVGAMI_PT_main(bpy.types.Panel):
             row = box.row()
             row.prop(props, "maintain_mode", expand=True)
 
+        split = box.split(factor=0.7)
+        split.label(icon="UV_DATA", text="Transfer UVs")
+        split.prop(props, "transfer_uvs")
+
+        if props.transfer_uvs:
+            row = box.row()
+            row.label(
+                text="Transfer UVs may cause stretching if mesh is not triangulated",
+                icon="ERROR",
+            )
+
     def _build_unwrap_groups(self, active_unwraps):
         """Group unwraps by their join jobs."""
         groups = {}

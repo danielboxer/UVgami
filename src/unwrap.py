@@ -56,6 +56,7 @@ class Unwrap:
         self.join_job = jobs[1]
         self.cleanup_job = jobs[2]
         self.symmetrize_job = jobs[3]
+        self.transfer_uvs_job = jobs[4]
 
         # object info
         self.origin = mathutils.Vector(origin)

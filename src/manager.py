@@ -66,6 +66,8 @@ class UnwrapManager:
             progress_bar.start()
         self.is_active = True
         self.found_invalid_objects = False
+        self.transfer_uv_failed = False
+        self.transfer_uv_topology_differed = False
         self.finished_count = 0
         self.cancelled_count = 0
         self.error_code = 0
@@ -336,6 +338,37 @@ class UnwrapManager:
 
         logger.add_data("objects", unwrap.input_name)
 
+        # transfer UVs to original input mesh if enabled
+        if unwrap.transfer_uvs_job is not None:
+            input_mesh = self.input[unwrap.transfer_uvs_job]
+            # replace output with input in pack list before finish deletes output
+            pack_replaced = False
+            if props.pack_after_unwrap:
+                for i, obj in enumerate(self._pack_output_objects):
+                    if obj == output:
+                        self._pack_output_objects[i] = input_mesh
+                        pack_replaced = True
+                        break
+            success, topology_matched = unwrap.transfer_uvs_job.finish(
+                input_mesh, output
+            )
+            if success:
+                if not topology_matched:
+                    self.transfer_uv_topology_differed = True
+                return
+            else:
+                # transfer failed, restore pack list if we changed it
+                if pack_replaced:
+                    for i, obj in enumerate(self._pack_output_objects):
+                        if obj == input_mesh:
+                            self._pack_output_objects[i] = output
+                            break
+                self.transfer_uv_failed = True
+                logger.add_data(
+                    "errors",
+                    "UV transfer failed (vertex count mismatch), keeping output",
+                )
+
         collection = check_collection("UVgami Unwrapped", bpy.context.scene.collection)
         move_to_collection(output, collection)
 
@@ -464,6 +497,18 @@ class UnwrapManager:
                     msg.append("Check 'UVgami Invalid Input'.")
                     logger.add_data(
                         "errors", "Some meshes were not able to be unwrapped"
+                    )
+
+                if self.transfer_uv_failed:
+                    msg.append(
+                        "UV transfer failed: vertex count mismatch."
+                        " This can happen with cuts or symmetry enabled."
+                    )
+
+                if self.transfer_uv_topology_differed:
+                    msg.append(
+                        "UV transfer: input and output meshes have different topology."
+                        " Enable 'Preserve Mesh' for best results."
                     )
 
                 if self.error_code != 0:
