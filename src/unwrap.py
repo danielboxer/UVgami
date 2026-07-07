@@ -16,7 +16,7 @@ from .logger import logger
 from .manager import manager
 from .utils.io import print_stdin
 from .utils.mesh import check_exists
-from .utils.paths import get_extension_dir_path, get_linux_path, get_preferences
+from .utils.paths import get_extension_dir_path
 
 
 class Unwrap:
@@ -88,51 +88,8 @@ class Unwrap:
         self.stop_requested_at = None
 
     def start_unwrap(self):
-        prefs = get_preferences()
-        # check for valid engine
-        engine_path = pathlib.Path(prefs.engine_path)
-        if (
-            str(engine_path) == "."
-            or not engine_path.is_file()
-            or engine_path.stem != "uvgami"
-        ):
-            engine_path = pathlib.Path(manager.engine_path)
-
-        quality = bpy.context.scene.uvgami.quality
-        u = ""
-        if quality == "HIGH":
-            u = "4.05"
-        elif quality == "MEDIUM":
-            u = "4.1"
-        else:
-            u = "4.2"
-
-        s_weight = bpy.context.scene.uvgami.weight_value
-        s = ""
-        if s_weight == 5:
-            s = "200"
-        elif s_weight == 4:
-            s = "150"
-        elif s_weight == 3:
-            s = "100"
-        elif s_weight == 2:
-            s = "50"
-        elif s_weight == 1:
-            s = "25"
-
-        args = []
-        shared_args = f"-u {u} -s {s}"
-
-        if platform.system() == "Windows" and engine_path.suffix == "":
-            input_path = get_linux_path(self.path)
-            output_path = get_linux_path(get_extension_dir_path() / "output")
-            args = [
-                "bash",
-                "-c",
-                f"~/uvgami -i {input_path} -o {output_path}/ {shared_args}",
-            ]
-        else:
-            args = [str(engine_path), "-i", str(self.path)] + shared_args.split()
+        props = bpy.context.scene.uvgami
+        args = manager.engine.build_args(manager.engine_path, self.path, props)
 
         self.process = subprocess.Popen(
             args,

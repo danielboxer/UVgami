@@ -1,15 +1,11 @@
 # Copyright (C) 2022 Daniel Boxer
 # See __init__.py and LICENSE for more information
 
-import pathlib
-import platform
-import shutil
-import subprocess
-
 import bmesh
 import bpy
 import numpy
 
+from ..engines import get_engine
 from ..handler import handle_error
 from ..job import Cleanup, Join, Preserve, Symmetrise, TransferUVs
 from ..logger import logger
@@ -24,12 +20,7 @@ from ..utils.mesh import (
     new_bmesh,
     set_bmesh,
 )
-from ..utils.paths import (
-    get_bundled_engine_path,
-    get_extension_dir_path,
-    get_linux_path,
-    get_preferences,
-)
+from ..utils.paths import get_extension_dir_path, get_preferences
 from .guides import SEAM_RESTRICTIONS_GROUP
 
 
@@ -43,6 +34,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
         self.reset_variables()
 
     def reset_variables(self):
+        self.engine = None
         self.engine_path = None
         self.input_path = None
 
@@ -62,8 +54,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         try:
             logger.new_info()
-            prefs = get_preferences()
-            self.engine_path = pathlib.Path(prefs.engine_path)
+            self.engine = get_engine(context.scene.uvgami.engine)
 
             if self.check_for_errors() is not None:
                 return {"CANCELLED"}
@@ -104,10 +95,12 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         if self._run_autosave_check(prefs) is not None:
             return {"CANCELLED"}
-        if self._validate_engine_path() is not None:
+
+        engine_path, error = self.engine.validate(prefs)
+        if error is not None:
+            self.report({"ERROR"}, error)
             return {"CANCELLED"}
-        if self._setup_wsl_engine_if_needed(prefs) is not None:
-            return {"CANCELLED"}
+        self.engine_path = engine_path
 
         return None
 
@@ -125,58 +118,6 @@ class UVGAMI_OT_start(bpy.types.Operator):
             "Autosave is turned on. Save the file before starting UVgami",
         )
         return {"CANCELLED"}
-
-    def _validate_engine_path(self):
-        if str(self.engine_path) == ".":
-            # try bundled engine as fallback
-            bundled = get_bundled_engine_path()
-            if bundled is not None:
-                self.engine_path = bundled
-                return None
-            self.report(
-                {"ERROR"},
-                "Engine path is not set. Set the path in the add-on preferences",
-            )
-            return {"CANCELLED"}
-
-        if not self.engine_path.is_file():
-            self.report({"ERROR"}, "Engine path doesn't exist")
-            return {"CANCELLED"}
-
-        if self.engine_path.stem != "uvgami":
-            self.report({"ERROR"}, "Engine path is incorrect")
-            return {"CANCELLED"}
-
-        return None
-
-    def _setup_wsl_engine_if_needed(self, prefs):
-        if (
-            platform.system() != "Windows"
-            or self.engine_path.suffix != ""
-            or prefs.is_wsl_setup
-        ):
-            return None
-
-        # wsl check
-        if shutil.which("wsl") is None:
-            self.report(
-                {"ERROR"},
-                "WSL is not installed. Either install WSL or use UVgami for Windows",
-            )
-            return {"CANCELLED"}
-
-        r = subprocess.run(["bash", "-c", "test -e ~/uvgami"]).returncode
-        if r == 1:
-            # copy uvgami to wsl
-            subprocess.run(["bash", "-c", f"cp {get_linux_path(self.engine_path)} ~/"])
-            prefs.is_wsl_setup = True
-        elif r == 0:
-            prefs.is_wsl_setup = True
-        else:
-            self.report({"ERROR"}, "Unknown error configuring engine in WSL")
-            return {"CANCELLED"}
-
-        return None
 
     def prepare_meshes(self, context):
         props = context.scene.uvgami
@@ -429,6 +370,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
             bpy.data.objects.remove(obj, do_unlink=True)
 
         if not manager.is_active:
+            manager.engine = self.engine
             manager.engine_path = self.engine_path
             manager.start()
         else:

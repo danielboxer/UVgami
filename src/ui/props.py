@@ -11,6 +11,12 @@ from ..utils.paths import get_addon_id, get_bundled_engine_path, get_preferences
 
 
 class UVGAMI_PG_properties(bpy.types.PropertyGroup):
+    engine: bpy.props.EnumProperty(
+        name="Engine",
+        description="The unwrapping engine to use",
+        items=(("UVGAMI", "UVgami", "The default UVgami unwrapping engine"),),
+        default="UVGAMI",
+    )
     quality: bpy.props.EnumProperty(
         name="Unwrap Quality",
         description=(

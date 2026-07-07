@@ -3,6 +3,7 @@
 
 import bpy
 
+from ..engines import get_engine
 from ..logger import logger
 from ..manager import manager
 from ..utils.paths import get_preferences
@@ -39,20 +40,28 @@ class UVGAMI_PT_main(bpy.types.Panel):
             box.separator()
 
         row = box.row()
-        row.label(icon="SOLO_OFF", text="Quality")
-        row.prop(props, "quality", text="")
+        row.label(icon="TOOL_SETTINGS", text="Engine")
+        row.prop(props, "engine", text="")
+
+        engine = get_engine(props.engine)
+
+        if engine.supports_quality:
+            row = box.row()
+            row.label(icon="SOLO_OFF", text="Quality")
+            row.prop(props, "quality", text="")
 
         split = box.split(factor=0.7)
         split.label(icon="IMPORT", text="Import UVs")
         split.prop(props, "import_uvs")
 
-        split = box.split(factor=0.7)
-        split.label(icon="MOD_TRIANGULATE", text="Preserve Mesh")
-        split.prop(props, "untriangulate")
+        if engine.supports_preserve:
+            split = box.split(factor=0.7)
+            split.label(icon="MOD_TRIANGULATE", text="Preserve Mesh")
+            split.prop(props, "untriangulate")
 
-        if props.untriangulate:
-            row = box.row()
-            row.prop(props, "maintain_mode", expand=True)
+            if props.untriangulate:
+                row = box.row()
+                row.prop(props, "maintain_mode", expand=True)
 
         split = box.split(factor=0.7)
         split.label(icon="UV_DATA", text="Transfer UVs")
@@ -187,9 +196,10 @@ class UVGAMI_PT_speed(bpy.types.Panel):
             split.label(icon="SYSTEM", text="Cores")
             split.prop(props, "max_cores", slider=True)
 
-        row = box.row()
-        row.label(text="Finish", icon="TEMP")
-        row.prop(props, "early_stop")
+        if get_engine(props.engine).supports_early_stop:
+            row = box.row()
+            row.label(text="Finish", icon="TEMP")
+            row.prop(props, "early_stop")
 
         row = box.row()
         row.label(text="Timeout", icon="TIME")

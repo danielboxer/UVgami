@@ -37,6 +37,7 @@ class UnwrapManager:
         self._running = []
         self._pack_output_objects = []
         self.input = {}
+        self.engine = None
         self.engine_path = None
         self.is_active = False
         self.is_viewer_active = False
