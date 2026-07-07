@@ -4,7 +4,11 @@ cmake_minimum_required(VERSION 3.10)
 # set(ENV{NVCC_PREPEND_FLAGS} "--allow-unsupported-compiler")
 # # (Optional) also initialize CMake's CUDA flags with it
 # set(CMAKE_CUDA_FLAGS_INIT "--allow-unsupported-compiler")
-set(CMAKE_CUDA_ARCHITECTURES 80 89 90 120)
+# default targets the RTX 3060 (sm_86), override with -DCMAKE_CUDA_ARCHITECTURES
+# or the CUDAARCHS env var
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT DEFINED ENV{CUDAARCHS})
+  set(CMAKE_CUDA_ARCHITECTURES 86)
+endif()
 if(NOT DEFINED CMAKE_CUDA_COMPILER)
   find_program(CMAKE_CUDA_COMPILER NAMES nvcc)
   if(NOT CMAKE_CUDA_COMPILER)

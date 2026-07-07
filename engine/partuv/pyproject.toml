@@ -9,12 +9,29 @@ description = "UV unwrapping pipeline with pybind11 bindings and preprocessing u
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Zhaoning Wang" }]
+# everything imported by the partuv.preprocess chain (partfield inference)
+# torch 2.3 wheels are built against numpy 1.x, so numpy<2
 dependencies = [
-  "numpy",
+  "numpy<2",
   "trimesh==4.9.0",
   "scipy",
-  "opencv-python",
-  "libigl",
+  "torch==2.3.0",
+  "torch-scatter",
+  "lightning==2.2",
+  "h5py",
+  "yacs",
+  "pytz",
+  "loguru",
+  "psutil",
+  "plyfile",
+  "einops",
+  "boto3",
+  "networkx",
+  "matplotlib",
+  "joblib",
+  "tqdm",
+  "scikit-learn",
+  "scikit-image",
 ]
 
 

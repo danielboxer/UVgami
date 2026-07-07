@@ -31,3 +31,37 @@
 ![Rhino](https://github.com/DanielBoxer/UVgami/assets/65575771/12b691fc-4ff6-4462-9dbc-b615a85bf7fc)
 
 The unwrapping engine is from [Optcuts](https://github.com/liminchen/OptCuts) by Minchen Li, licensed under the MIT License, and has been modified to work in Blender.
+
+## Developer CLI
+
+Blender-independent CLI for testing the engines with OBJ files. Needs [uv](https://docs.astral.sh/uv/).
+
+```powershell
+uv sync
+uv run uvgami unwrap model.obj --engine optcuts
+```
+
+- Output defaults to `<input stem>_uv.obj` next to the input, use `-o` and `--overwrite` to control it
+- `--json` prints one machine-readable result on stdout, all logs go to stderr
+- OptCuts options: `--quality`, `--seam-weight`, `--seam-weights`, `--import-uvs`, `--optcuts-path` (defaults to the bundled `engines/` binary)
+- Exit codes: 0 ok, 2 invalid input, 3 missing runtime files, 4 engine failure, 5 bad output
+
+### PartUV engine
+
+PartUV needs Linux with CUDA (WSL Ubuntu works) and a PartField checkpoint (untracked, download separately).
+
+```bash
+uv sync --extra partuv
+uv run uvgami unwrap model.obj --engine partuv --checkpoint model_objaverse.ckpt
+```
+
+- Building the `partuv` extension needs the CUDA 12.1 toolkit; it targets sm_86 (RTX 3060) by default, override with the `CUDAARCHS` env var
+- `--threshold` sets the distortion threshold (default 1.25), `--config` overrides `engine/partuv/config/config.yaml`
+
+### Tests
+
+```powershell
+uv run pytest              # unit tests + OptCuts smoke test
+uv run pytest -m "not smoke"
+uv run ruff check uvgami_cli tests
+```
