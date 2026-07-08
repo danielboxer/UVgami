@@ -36,7 +36,7 @@ target_include_directories(triangle_intersection
 # Link against required libraries
 target_link_libraries(triangle_intersection
     PUBLIC
-        CGAL                        # CGAL is needed by users of this library
+        CGAL::CGAL                  # CGAL is needed by users of this library
     PRIVATE
         OpenMP::OpenMP_CXX         # OpenMP is an implementation detail
         easy_profiler

@@ -846,7 +846,8 @@ std::vector<Component> merge_components_parallel(
             std::cout << "(" << pair.first << ", " << pair.second << ")" << std::endl;
         }
         #pragma omp parallel for 
-        for (std::size_t k = 0; k < mergePairs.size(); ++k)
+        // signed index: msvc openmp 2.0 rejects unsigned loop variables
+        for (int k = 0; k < static_cast<int>(mergePairs.size()); ++k)
         {
             auto [src, dst] = mergePairs[k];          // src → dst
             int succ = merge_B_to_A(allComponents[dst],allComponents[src],  threshold);            

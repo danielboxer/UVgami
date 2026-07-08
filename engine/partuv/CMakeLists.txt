@@ -24,7 +24,8 @@ project(partuv LANGUAGES CXX CUDA)
 set(CMAKE_CXX_STANDARD 17)
 
 
-set(CMAKE_CUDA_STANDARD 14)
+# cuda 13 (windows build) requires c++17 device code
+set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 # add_compile_definitions(CUDA_API_PER_THREAD_DEFAULT_STREAM=1)
 add_compile_definitions(CUDA_API_PER_THREAD_DEFAULT_STREAM)
@@ -37,11 +38,24 @@ set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the build type")
 # x86-64-v3 (avx2) instead of upstream's -march=native so the wheel runs on
 # other machines; PARTUV_NATIVE=ON restores the machine-tuned build
 option(PARTUV_NATIVE "Tune for the build machine cpu" OFF)
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -ffast-math -mfpmath=sse -Ofast -fno-omit-frame-pointer")
-if(PARTUV_NATIVE)
-  string(APPEND CMAKE_CXX_FLAGS_RELEASE " -march=native")
+if(MSVC)
+  # conformance mode: sources use gcc-default alternative tokens (not/and/or),
+  # and openabf gates code on a truthful __cplusplus
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/permissive-> $<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>)
+  # msvc's default openmp runtime is 2.0; pipeline.cpp needs 3.x api
+  # (omp_get_level etc.), only in the llvm runtime. needs cmake 3.30+
+  set(OpenMP_RUNTIME_MSVC "llvm")
+  # msvc hides M_PI (used by openabf) behind this
+  add_compile_definitions(_USE_MATH_DEFINES)
+  # avx2 matches x86-64-v3; cuda 13 headers reject the traditional preprocessor
+  string(APPEND CMAKE_CXX_FLAGS_RELEASE " /fp:fast /arch:AVX2 /Zc:preprocessor")
 else()
-  string(APPEND CMAKE_CXX_FLAGS_RELEASE " -march=x86-64-v3")
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -ffast-math -mfpmath=sse -Ofast -fno-omit-frame-pointer")
+  if(PARTUV_NATIVE)
+    string(APPEND CMAKE_CXX_FLAGS_RELEASE " -march=native")
+  else()
+    string(APPEND CMAKE_CXX_FLAGS_RELEASE " -march=x86-64-v3")
+  endif()
 endif()
 # if(CMAKE_BUILD_TYPE STREQUAL "Release")
 # elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -162,9 +176,9 @@ find_package(pybind11 CONFIG REQUIRED)
 
 # Add the LSCM library subdirectory
 add_subdirectory(${SRC_DIR}/lscm)
-target_compile_options(lscm_lib PUBLIC -fPIC)
+set_target_properties(lscm_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_subdirectory(${SRC_DIR}/triangle_intersection)
-target_compile_options(triangle_intersection PUBLIC -fPIC)
+set_target_properties(triangle_intersection PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 
 
@@ -213,9 +227,15 @@ target_compile_options(_core PRIVATE
   $<$<COMPILE_LANGUAGE:CUDA>:
     --expt-extended-lambda      # enable __device__ lambdas
     --expt-relaxed-constexpr    # (optional) allows constexpr on device
-    --default-stream=per-thread 
+    --default-stream=per-thread
   >
 )
+if(MSVC)
+  # cuda 13 headers reject msvc's traditional preprocessor in host passes too
+  target_compile_options(_core PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>
+  )
+endif()
 # Link the Python module with the same dependencies as the main executable
 target_link_libraries(_core
     PUBLIC

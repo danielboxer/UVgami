@@ -1,0 +1,10 @@
+{
+  "name": "partuv",
+  "version-string": "0.1.2.2",
+  "dependencies": [
+    "cgal",
+    "yaml-cpp",
+    "tbb"
+  ],
+  "builtin-baseline": "91d69d33e10b7ca9a478c363570a30edd1d4483b"
+}

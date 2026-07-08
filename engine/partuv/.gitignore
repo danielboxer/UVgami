@@ -100,3 +100,5 @@ datasets*/
 scripts-archive/
 
 !demo/meshes/*.obj
+vcpkg_installed/
+*.pyd

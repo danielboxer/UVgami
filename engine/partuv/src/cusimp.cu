@@ -10,8 +10,9 @@
 
 namespace cusimp
 {
-    const int BLOCK_SIZE = 512;
-    const float COST_RANGE = 10.0;
+    // constexpr: msvc-hosted nvcc doesn't fold plain const into device code
+    constexpr int BLOCK_SIZE = 512;
+    constexpr float COST_RANGE = 10.0;
 
 
 
@@ -686,7 +687,7 @@ namespace cusimp
             }
 
             // compute the area of the new triangle
-            Q_a += 1.0f - clamp(float(4.0f * sqrt(3) * triangle_area(new_v0, new_v1, new_v2) / pow(edge_length(new_v0, new_v1), 2) + pow(edge_length(new_v1, new_v2), 2) + pow(edge_length(new_v2, new_v0), 2) + 0.0000001f), 0.0f, 1.0f);
+            Q_a += 1.0f - clamp(float(4.0f * sqrt(3.0f) * triangle_area(new_v0, new_v1, new_v2) / pow(edge_length(new_v0, new_v1), 2) + pow(edge_length(new_v1, new_v2), 2) + pow(edge_length(new_v2, new_v0), 2) + 0.0000001f), 0.0f, 1.0f);
             num_tri++;
         }
 
@@ -726,7 +727,7 @@ namespace cusimp
             }
 
             // compute the area of the new triangle
-            Q_a += 1.0f - clamp(float(4.0f * sqrt(3) * triangle_area(new_v0, new_v1, new_v2) / pow(edge_length(new_v0, new_v1), 2) + pow(edge_length(new_v1, new_v2), 2) + pow(edge_length(new_v2, new_v0), 2) + 0.0000001f), 0.0f, 1.0f);
+            Q_a += 1.0f - clamp(float(4.0f * sqrt(3.0f) * triangle_area(new_v0, new_v1, new_v2) / pow(edge_length(new_v0, new_v1), 2) + pow(edge_length(new_v1, new_v2), 2) + pow(edge_length(new_v2, new_v0), 2) + 0.0000001f), 0.0f, 1.0f);
             num_tri++;
         }
 
