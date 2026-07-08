@@ -1,0 +1,99 @@
+name: PartUV build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - engine/partuv/vcpkg.json
+
+permissions:
+  contents: write
+
+env:
+  # every arch cuda 13 supports, sm_75 floor through blackwell
+  CUDAARCHS: "75-real;80-real;86-real;89-real;90-real;120"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04]
+        # 3.11 matches the cli venv, 3.13 matches blender's python
+        python: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8
+
+      - uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: "13.2.0"
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y libcgal-dev libyaml-cpp-dev libtbb-dev
+
+      # ninja needs cl.exe on PATH (the vs generator is not used, see pyproject)
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Point vcpkg at a cacheable binary dir
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> $GITHUB_ENV
+          echo "VCPKG_DEFAULT_BINARY_CACHE=${{ github.workspace }}/vcpkg-cache" >> $GITHUB_ENV
+          mkdir -p vcpkg-cache
+
+      # first uncached run compiles cgal and friends, about an hour
+      - name: Cache vcpkg binaries
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('engine/partuv/vcpkg.json') }}
+          # the version bump that triggers this workflow also changes the hash
+          restore-keys: vcpkg-${{ runner.os }}-
+
+      - name: Build wheel
+        run: uv build -p ${{ matrix.python }} --wheel engine/partuv -o dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: partuv-wheel-${{ matrix.os }}-py${{ matrix.python }}
+          path: dist/*.whl
+
+  upload:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get latest tag
+        id: previous_tag
+        uses: "WyriHaximus/github-action-get-previous-tag@v2"
+
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: partuv-wheel-*
+          merge-multiple: true
+          path: dist
+
+      # the addon install operator finds these by python tag and platform
+      - name: Upload wheels to latest release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.previous_tag.outputs.tag }}
+        run: gh release upload "$TAG" dist/*.whl --clobber

@@ -31,7 +31,8 @@ on:
 
 env:
   ADDON_NAME: "UVgami"
-  INCLUDED_FILES: "src LICENSE __init__.py blender_manifest.toml"
+  # uvgami_cli ships in the addon: installed-mode partuv runs python -m uvgami_cli
+  INCLUDED_FILES: "src uvgami_cli LICENSE __init__.py blender_manifest.toml"
   ENGINE_PREFIX: uvgami-engine
   BUNDLED_NAME: "UVgami-bundled-with-engines"
 
