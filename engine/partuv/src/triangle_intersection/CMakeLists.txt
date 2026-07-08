@@ -8,9 +8,13 @@
 # We don't need cmake_minimum_required or project() calls here since they're handled by the root CMakeLists.txt
 
 # Define the source files for the triangle intersection library
-find_package(easy_profiler REQUIRED
-    HINTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/easy_profiler/lib/cmake/easy_profiler"
-)  # STEP 1 #########################
+# the root CMakeLists provides a no-op easy_profiler target when the built
+# library is missing
+if(NOT TARGET easy_profiler)
+  find_package(easy_profiler REQUIRED
+      HINTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/easy_profiler/lib/cmake/easy_profiler"
+  )  # STEP 1 #########################
+endif()
 
 
 set(TRIANGLE_SOURCES

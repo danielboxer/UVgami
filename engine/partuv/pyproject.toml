@@ -1,12 +1,11 @@
 [build-system]
-requires = ["scikit-build-core>=0.10", "pybind11>=2.11", "numpy", "ninja"]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.11", "numpy"]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "partuv"
 version = "0.1.2.2"
 description = "UV unwrapping pipeline with pybind11 bindings and preprocessing utilities"
-readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Zhaoning Wang" }]
 # everything imported by the partuv.preprocess chain (partfield inference)
@@ -18,6 +17,8 @@ dependencies = [
   "torch==2.3.0",
   "torch-scatter",
   "lightning==2.2",
+  # lightning 2.2 imports pkg_resources; setuptools 81 removed it
+  "setuptools<81",
   "h5py",
   "yacs",
   "pytz",
@@ -37,11 +38,13 @@ dependencies = [
 
 
 [tool.scikit-build]
+# persistent build dir so interrupted builds resume incrementally
+build-dir = "build/{wheel_tag}"
 sdist.include = [
   "extern/easy_profiler/lib/libeasy_profiler.so",
   "extern/easy_profiler/lib/cmake/easy_profiler/**",
 ]
-cmake.verbose = true
+build.verbose = true
 ninja.make-fallback = true
 
 wheel.packages = ["partuv", "preprocess_utils"]

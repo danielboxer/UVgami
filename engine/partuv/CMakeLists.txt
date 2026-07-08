@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.10)
+# 3.18 needed for file(ARCHIVE_EXTRACT) in fetch_extern
+cmake_minimum_required(VERSION 3.18)
 
 
 # set(ENV{NVCC_PREPEND_FLAGS} "--allow-unsupported-compiler")
@@ -53,6 +54,36 @@ set(OPENABF_INCLUDE_DIR ${EXTERNAL_DIR}/OpenABF/include)
 set(STB_INCLUDE_DIR ${EXTERNAL_DIR}/stb)
 set(NLOHMANN_JSON_INCLUDE_DIR ${EXTERNAL_DIR}/json/include)
 
+# eigen, libigl and json are gitignored (large), download them when missing
+function(fetch_extern out_dir url dest extracted)
+  if(EXISTS "${out_dir}")
+    return()
+  endif()
+  set(archive "${CMAKE_CURRENT_BINARY_DIR}/${extracted}.archive")
+  message(STATUS "Downloading ${url}")
+  file(DOWNLOAD "${url}" "${archive}" STATUS dl_status)
+  list(GET dl_status 0 dl_code)
+  if(NOT dl_code EQUAL 0)
+    message(FATAL_ERROR "Failed to download ${url}")
+  endif()
+  file(ARCHIVE_EXTRACT INPUT "${archive}" DESTINATION "${dest}")
+  if(NOT "${dest}/${extracted}" STREQUAL "${out_dir}")
+    file(RENAME "${dest}/${extracted}" "${out_dir}")
+  endif()
+  file(REMOVE "${archive}")
+endfunction()
+
+fetch_extern("${EIGEN_INCLUDE_DIR}"
+  "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz"
+  "${EXTERNAL_DIR}" "eigen-3.4.0")
+# libigl 2.5 removed igl/slice_mask.h, so stay on 2.4
+fetch_extern("${EXTERNAL_DIR}/libigl"
+  "https://github.com/libigl/libigl/archive/refs/tags/v2.4.0.tar.gz"
+  "${EXTERNAL_DIR}" "libigl-2.4.0")
+fetch_extern("${NLOHMANN_JSON_INCLUDE_DIR}"
+  "https://github.com/nlohmann/json/releases/download/v3.11.3/include.zip"
+  "${EXTERNAL_DIR}/json" "include")
+
 # set(UVPSDK_ROOT "${EXTERNAL_DIR}/uvpackmaster"          # extern/uvpackmaster
 #     CACHE PATH "Path to UVPackmaster SDK (include/ + lib/)")
 # find_path(UVPCORE_INCLUDE_DIR
@@ -90,14 +121,26 @@ include_directories(
 # Find common dependencies
 
 find_package(CGAL REQUIRED)
-find_package(easy_profiler REQUIRED
-    HINTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/easy_profiler/lib/cmake/easy_profiler"
-) 
-get_target_property(_EP_SO easy_profiler IMPORTED_LOCATION_RELEASE)
-if(NOT _EP_SO)
-  get_target_property(_EP_SO easy_profiler IMPORTED_LOCATION)  # fallback if only generic set
+# the built library is optional: without it the EASY_ macros in the vendored
+# easy_profiler headers compile to no-ops. the cmake config errors on the
+# missing .so, so check for the library itself before find_package
+if(EXISTS "${EXTERNAL_DIR}/easy_profiler/lib/libeasy_profiler.so")
+  find_package(easy_profiler REQUIRED
+      HINTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/easy_profiler/lib/cmake/easy_profiler"
+  )
 endif()
-install(FILES "${_EP_SO}" DESTINATION partuv/.libs)
+if(TARGET easy_profiler)
+  get_target_property(_EP_SO easy_profiler IMPORTED_LOCATION_RELEASE)
+  if(NOT _EP_SO)
+    get_target_property(_EP_SO easy_profiler IMPORTED_LOCATION)  # fallback if only generic set
+  endif()
+  install(FILES "${_EP_SO}" DESTINATION partuv/.libs)
+else()
+  message(STATUS "easy_profiler library not found, profiling disabled")
+  add_library(easy_profiler INTERFACE)
+  target_include_directories(easy_profiler
+    INTERFACE "${EXTERNAL_DIR}/easy_profiler/include")
+endif()
 
 find_package(yaml-cpp REQUIRED)
 find_package(OpenMP REQUIRED)
@@ -144,7 +187,9 @@ set(ENV{OMP_NUM_THREADS} "8")
 
 # Create Python module
 # pybind11_add_module(partuv src/bindings.cpp)
-pybind11_add_module(_core bindings.cpp ${SOURCES})
+# NO_EXTRAS: pybind11's lto drops the cuda fatbin from the device-link object
+# (undefined symbol fatbinData at import)
+pybind11_add_module(_core NO_EXTRAS bindings.cpp ${SOURCES})
 
 # --- allow device‐side lambdas & cross‐TU __device__ calls ---
 set_target_properties(_core PROPERTIES

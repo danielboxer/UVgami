@@ -48,14 +48,27 @@ uv run uvgami unwrap model.obj --engine optcuts
 
 ### PartUV engine
 
-PartUV needs Linux with CUDA (WSL Ubuntu works) and a PartField checkpoint (untracked, download separately).
+PartUV needs Linux with CUDA (WSL Ubuntu works) and the [PartField checkpoint](https://huggingface.co/mikaelaangel/partfield-ckpt) (untracked).
+
+One-time WSL setup (Ubuntu 24.04):
 
 ```bash
+sudo apt install build-essential libcgal-dev libyaml-cpp-dev libtbb-dev
+# cuda toolkit from the nvidia wsl-ubuntu repo, then nvcc is at /usr/local/cuda-12.6/bin
+sudo apt install cuda-toolkit-12-6
+wget https://huggingface.co/mikaelaangel/partfield-ckpt/resolve/main/model_objaverse.ckpt
+```
+
+Build and run (from the repo, separate venv so the Windows `.venv` is untouched):
+
+```bash
+export PATH=/usr/local/cuda-12.6/bin:$PATH
+export UV_PROJECT_ENVIRONMENT=.venv-wsl
 uv sync --extra partuv
 uv run uvgami unwrap model.obj --engine partuv --checkpoint model_objaverse.ckpt
 ```
 
-- Building the `partuv` extension needs the CUDA 12.1 toolkit; it targets sm_86 (RTX 3060) by default, override with the `CUDAARCHS` env var
+- The extension targets sm_86 (RTX 3060) by default, override with the `CUDAARCHS` env var
 - `--threshold` sets the distortion threshold (default 1.25), `--config` overrides `engine/partuv/config/config.yaml`
 
 ### Tests
