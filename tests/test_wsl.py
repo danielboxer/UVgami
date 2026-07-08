@@ -48,7 +48,7 @@ def test_windows_bridges_to_wsl(triangle, tmp_path, fake_wsl):
     checkpoint = tmp_path / "model.ckpt"
     checkpoint.write_text("ckpt")
 
-    partuv.run(triangle, tmp_path / "out.obj", str(checkpoint), None, 1.5)
+    partuv.run([(triangle, tmp_path / "out.obj")], str(checkpoint), None, 1.5)
 
     unwrap_call = fake_wsl.calls[-1]
     assert unwrap_call[:6] == ["wsl.exe", "-d", "Ubuntu-24.04", "-e", "bash", "-lc"]
@@ -66,7 +66,7 @@ def test_env_overrides(triangle, tmp_path, fake_wsl, monkeypatch):
     checkpoint = tmp_path / "model.ckpt"
     checkpoint.write_text("ckpt")
 
-    partuv.run(triangle, tmp_path / "out.obj", str(checkpoint), None, 1.25)
+    partuv.run([(triangle, tmp_path / "out.obj")], str(checkpoint), None, 1.25)
 
     unwrap_call = fake_wsl.calls[-1]
     assert unwrap_call[1:3] == ["-d", "Ubuntu-22.04"]
@@ -74,20 +74,20 @@ def test_env_overrides(triangle, tmp_path, fake_wsl, monkeypatch):
 
 
 def test_geometric_bridge_omits_checkpoint(triangle, tmp_path, fake_wsl):
-    partuv.run(triangle, tmp_path / "out.obj", None, None, 1.25, "geometric")
+    partuv.run([(triangle, tmp_path / "out.obj")], None, None, 1.25, "geometric")
     command = fake_wsl.calls[-1][6]
     assert "--segmentation geometric" in command
     assert "--checkpoint" not in command
 
 
 def test_wsl_side_checkpoint_passes_through(triangle, tmp_path, fake_wsl):
-    partuv.run(triangle, tmp_path / "out.obj", "/root/model.ckpt", None, 1.25)
+    partuv.run([(triangle, tmp_path / "out.obj")], "/root/model.ckpt", None, 1.25)
     assert "--checkpoint /root/model.ckpt" in fake_wsl.calls[-1][6]
 
 
 def test_missing_checkpoint_errors(triangle, tmp_path, fake_wsl):
     with pytest.raises(UnwrapError) as error:
-        partuv.run(triangle, tmp_path / "out.obj", "C:\\nope\\model.ckpt", None, 1.25)
+        partuv.run([(triangle, tmp_path / "out.obj")], "C:\\nope\\model.ckpt", None, 1.25)
     assert error.value.exit_code == 3
 
 
@@ -96,7 +96,7 @@ def test_engine_exit_code_passthrough(triangle, tmp_path, fake_wsl):
     checkpoint = tmp_path / "model.ckpt"
     checkpoint.write_text("ckpt")
     with pytest.raises(UnwrapError) as error:
-        partuv.run(triangle, tmp_path / "out.obj", str(checkpoint), None, 1.25)
+        partuv.run([(triangle, tmp_path / "out.obj")], str(checkpoint), None, 1.25)
     assert error.value.exit_code == 4
 
 
@@ -105,8 +105,21 @@ def test_unknown_exit_code_maps_to_engine_failure(triangle, tmp_path, fake_wsl):
     checkpoint = tmp_path / "model.ckpt"
     checkpoint.write_text("ckpt")
     with pytest.raises(UnwrapError) as error:
-        partuv.run(triangle, tmp_path / "out.obj", str(checkpoint), None, 1.25)
+        partuv.run([(triangle, tmp_path / "out.obj")], str(checkpoint), None, 1.25)
     assert error.value.exit_code == 4
+
+
+def test_batch_bridges_every_pair(triangle, cube, tmp_path, fake_wsl):
+    checkpoint = tmp_path / "model.ckpt"
+    checkpoint.write_text("ckpt")
+
+    pairs = [(triangle, tmp_path / "a.obj"), (cube, tmp_path / "b.obj")]
+    partuv.run(pairs, str(checkpoint), None, 1.25)
+
+    command = fake_wsl.calls[-1][6]
+    assert "triangle.obj" in command
+    assert "cube.obj" in command
+    assert command.count(" -o ") == 2
 
 
 def test_wsl_missing_errors(triangle, tmp_path, monkeypatch):
@@ -119,5 +132,5 @@ def test_wsl_missing_errors(triangle, tmp_path, monkeypatch):
 
     monkeypatch.setattr(wsl.subprocess, "run", no_wsl)
     with pytest.raises(UnwrapError) as error:
-        partuv.run(triangle, tmp_path / "out.obj", "model.ckpt", None, 1.25)
+        partuv.run([(triangle, tmp_path / "out.obj")], "model.ckpt", None, 1.25)
     assert error.value.exit_code == 3

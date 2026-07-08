@@ -3,7 +3,7 @@ import json
 import time
 from pathlib import Path
 
-from .common import EXIT_INVALID_INPUT, UnwrapError, log
+from .common import EXIT_INVALID_INPUT, UnwrapError, log, unwrap_all
 
 ENGINE_FLAGS = {
     "optcuts": ("quality", "import_uvs", "seam_weights", "seam_weight", "optcuts_path"),
@@ -16,12 +16,27 @@ def build_parser():
         prog="uvgami", description="UV unwrap OBJ files with the UVgami engines"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    unwrap = subparsers.add_parser("unwrap", help="unwrap an OBJ file")
-    unwrap.add_argument("input", type=Path, help="input OBJ file")
+    unwrap = subparsers.add_parser("unwrap", help="unwrap OBJ files")
+    unwrap.add_argument("input", type=Path, nargs="+", help="input OBJ files")
     unwrap.add_argument("--engine", choices=["optcuts", "partuv"], required=True)
-    unwrap.add_argument("-o", "--output", type=Path, help="default: <input stem>_uv.obj")
+    unwrap.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        action="append",
+        help="output file, repeat once per input, default: <input stem>_uv.obj",
+    )
+    unwrap.add_argument(
+        "--output-dir",
+        type=Path,
+        help="write each output as <input stem>.obj in this directory",
+    )
     unwrap.add_argument("--overwrite", action="store_true", help="replace existing output")
-    unwrap.add_argument("--json", action="store_true", help="print a JSON result on stdout")
+    unwrap.add_argument(
+        "--json",
+        action="store_true",
+        help="print a JSON result on stdout (single input only)",
+    )
 
     # engine flag defaults are applied in validate() so that flags passed to the
     # wrong engine can be detected
@@ -63,16 +78,36 @@ def validate(args):
                 EXIT_INVALID_INPUT, f"{flag} is only valid with --engine {other}"
             )
 
-    if not args.input.is_file():
-        raise UnwrapError(EXIT_INVALID_INPUT, f"input not found: {args.input}")
-    if args.input.suffix.lower() != ".obj":
-        raise UnwrapError(EXIT_INVALID_INPUT, f"input must be an OBJ file: {args.input}")
-    if args.output is None:
-        args.output = args.input.with_name(f"{args.input.stem}_uv.obj")
-    if args.output.exists() and not args.overwrite:
+    for input_path in args.input:
+        # in a batch a missing input fails per mesh instead, so a cancelled
+        # mesh (its input file is deleted) doesn't abort the rest
+        if len(args.input) == 1 and not input_path.is_file():
+            raise UnwrapError(EXIT_INVALID_INPUT, f"input not found: {input_path}")
+        if input_path.suffix.lower() != ".obj":
+            raise UnwrapError(
+                EXIT_INVALID_INPUT, f"input must be an OBJ file: {input_path}"
+            )
+    if args.json and len(args.input) > 1:
+        raise UnwrapError(EXIT_INVALID_INPUT, "--json only supports a single input")
+    if args.output and args.output_dir:
         raise UnwrapError(
-            EXIT_INVALID_INPUT, f"output exists (use --overwrite): {args.output}"
+            EXIT_INVALID_INPUT, "-o and --output-dir are mutually exclusive"
         )
+    if args.output and len(args.output) != len(args.input):
+        raise UnwrapError(EXIT_INVALID_INPUT, "-o must be given once per input")
+    if args.output_dir is not None:
+        args.outputs = [args.output_dir / f"{p.stem}.obj" for p in args.input]
+    elif args.output:
+        args.outputs = list(args.output)
+    else:
+        args.outputs = [p.with_name(f"{p.stem}_uv.obj") for p in args.input]
+    if len(set(args.outputs)) != len(args.outputs):
+        raise UnwrapError(EXIT_INVALID_INPUT, "output paths collide, rename the inputs")
+    for output_path in args.outputs:
+        if output_path.exists() and not args.overwrite:
+            raise UnwrapError(
+                EXIT_INVALID_INPUT, f"output exists (use --overwrite): {output_path}"
+            )
 
     if args.engine == "optcuts":
         args.quality = args.quality or "medium"
@@ -99,25 +134,28 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         validate(args)
+        pairs = list(zip(args.input, args.outputs))
         start = time.perf_counter()
         if args.engine == "optcuts":
             from . import optcuts
 
-            optcuts.run(
-                args.input,
-                args.output,
-                args.quality,
-                args.import_uvs,
-                args.seam_weights,
-                args.seam_weight,
-                args.optcuts_path,
-            )
+            def unwrap_one(input_path, output_path):
+                optcuts.run(
+                    input_path,
+                    output_path,
+                    args.quality,
+                    args.import_uvs,
+                    args.seam_weights,
+                    args.seam_weight,
+                    args.optcuts_path,
+                )
+
+            code = unwrap_all(pairs, unwrap_one)
         else:
             from . import partuv
 
-            partuv.run(
-                args.input,
-                args.output,
+            code = partuv.run(
+                pairs,
                 args.checkpoint,
                 args.config,
                 args.threshold,
@@ -138,17 +176,20 @@ def main(argv=None):
             )
         return error.exit_code
 
-    log(f"wrote {args.output} in {elapsed:.1f}s")
-    if args.json:
-        print(
-            json.dumps(
-                {
-                    "status": "ok",
-                    "engine": args.engine,
-                    "input": str(args.input),
-                    "output": str(args.output),
-                    "seconds": round(elapsed, 2),
-                }
+    if len(pairs) == 1:
+        log(f"wrote {args.outputs[0]} in {elapsed:.1f}s")
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "status": "ok",
+                        "engine": args.engine,
+                        "input": str(args.input[0]),
+                        "output": str(args.outputs[0]),
+                        "seconds": round(elapsed, 2),
+                    }
+                )
             )
-        )
-    return 0
+    else:
+        log(f"batch finished in {elapsed:.1f}s")
+    return code

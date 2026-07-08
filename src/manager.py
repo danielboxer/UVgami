@@ -10,6 +10,8 @@ import bmesh
 import bpy
 import numpy
 
+from .batch import BatchProcess
+from .engines import get_engine
 from .job import Join
 from .logger import logger
 from .ops.grid import add_grid, make_grid_img, make_grid_mat
@@ -84,10 +86,34 @@ class UnwrapManager:
     def _fill_slots(self):
         """Start queued unwraps up to the concurrency limit."""
         props = bpy.context.scene.uvgami
-        max_concurrent = props.max_cores if props.concurrent else 1
+        engine = get_engine(props.engine)
+        if engine.wants_batch(props):
+            if any(u.batch_process is not None for u in self._running):
+                # wait for the running batch process to finish
+                return
+            if len(self._queue) > 1:
+                self._start_batch_process(engine, props)
+                return
+            # a single queued mesh runs the normal solo path
+        if props.concurrent and engine.allows_concurrent(props):
+            max_concurrent = props.max_cores
+        else:
+            max_concurrent = 1
         while len(self._running) < max_concurrent and self._queue:
             unwrap = self._queue.popleft()
             unwrap.start_unwrap()
+            self._running.append(unwrap)
+
+    def _start_batch_process(self, engine, props):
+        """Unwrap every queued mesh in one engine process."""
+        unwraps = list(self._queue)
+        self._queue.clear()
+        args = engine.build_batch_args(
+            self.engine_path, [u.path for u in unwraps], props
+        )
+        batch_process = BatchProcess(args, engine.build_env(self.engine_path))
+        for unwrap in unwraps:
+            unwrap.join_batch(batch_process)
             self._running.append(unwrap)
 
     def _dispatch(self):
@@ -140,7 +166,7 @@ class UnwrapManager:
                     failed.append((unwrap, -2))
 
                 # check process status
-                ret_code = unwrap.process.poll()
+                ret_code = unwrap.poll_engine()
                 if ret_code is not None:
                     if ret_code == 0 and unwrap.output_path.is_file():
                         completed.append(unwrap)
@@ -461,7 +487,7 @@ class UnwrapManager:
         # remove from running
         if unwrap in self._running:
             self._running.remove(unwrap)
-        unwrap.stop_process()
+        unwrap.release_engine()
         unwrap.cleanup()
 
         # if the invalid obj has jobs that are complete with the now reduced count
@@ -556,7 +582,7 @@ class UnwrapManager:
     def cancel_unwrap(self, unwrap):
         """Cancel a specific unwrap."""
         self.cancelled_count += 1
-        unwrap.stop_process()
+        unwrap.release_engine()
         self.remove_unwrap(unwrap)
         unwrap.cleanup()
         self.exit_viewer = True

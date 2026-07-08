@@ -34,6 +34,14 @@ class Engine:
         """Return (engine_path, None) if usable, else (None, error_message)."""
         raise NotImplementedError
 
+    def allows_concurrent(self, props):
+        """Whether multiple unwrap processes can run at once."""
+        return True
+
+    def wants_batch(self, props):
+        """Whether queued meshes should share one engine process."""
+        return False
+
     def build_args(self, engine_path, input_path, props):
         """Return the subprocess argv that unwraps input_path."""
         raise NotImplementedError
@@ -146,6 +154,15 @@ class PartuvEngine(Engine):
     # wheel from the install operator with blender's python
     mode = "dev"
 
+    def allows_concurrent(self, props):
+        # ai loads torch and the partfield model per process, more than
+        # one job oversubscribes vram and thrashes
+        return props.partuv_segmentation != "AI"
+
+    def wants_batch(self, props):
+        # one process loads the model once for every queued mesh
+        return props.partuv_segmentation == "AI"
+
     def validate(self, prefs):
         repo = find_partuv_dev_repo()
         if repo is not None:
@@ -157,16 +174,18 @@ class PartuvEngine(Engine):
         return None, "PartUV is not installed. Install it in the add-on preferences"
 
     def build_args(self, engine_path, input_path, props):
-        output_path = get_extension_dir_path() / "output" / f"{input_path.stem}.obj"
+        return self.build_batch_args(engine_path, [input_path], props)
+
+    def build_batch_args(self, engine_path, input_paths, props):
         if self.mode == "dev":
             base = ["uv", "run", "--project", str(engine_path), "--no-sync", "uvgami"]
         else:
             base = [sys.executable, "-m", "uvgami_cli"]
         return base + [
             "unwrap",
-            str(input_path),
-            "-o",
-            str(output_path),
+            *[str(path) for path in input_paths],
+            "--output-dir",
+            str(get_extension_dir_path() / "output"),
             "--overwrite",
             "--engine",
             "partuv",

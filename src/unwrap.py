@@ -73,8 +73,9 @@ class Unwrap:
         # unwrap state
         self.is_active = False
         self.progress = (0, 0, 1)
-        # unwrap process
+        # unwrap process, shared with other unwraps when part of a batch process
         self.process = None
+        self.batch_process = None
         # copy of input obj used for viewing
         self.viewer_obj = None
         self.viewing = False
@@ -105,9 +106,33 @@ class Unwrap:
         self.is_active = True
         self.started_at = time.monotonic()
 
+    def join_batch(self, batch_process):
+        """Run inside a shared batch process instead of spawning our own."""
+        self.batch_process = batch_process
+        self.process = batch_process.process
+        self.is_active = True
+
+    def poll_engine(self):
+        """None while running, 0 on success, or a failure code."""
+        if self.batch_process is None:
+            return self.process.poll()
+        # the engine reports when it reaches each mesh, the timeout clock
+        # starts then
+        if not hasattr(self, "started_at") and self.path.stem in self.batch_process.started:
+            self.started_at = time.monotonic()
+        return self.batch_process.poll_result(self.path.stem)
+
     def stop_process(self):
+        """Hard stop: for a batch member this kills the whole batch process."""
         if self.process is not None and self.process.poll() is None:
             manager.engine.stop(self.process, manager.engine_path)
+
+    def release_engine(self):
+        """This unwrap no longer needs the engine. A batch process is left
+        running for the other meshes; deleting our input file in cleanup()
+        is what makes the cli skip this mesh."""
+        if self.batch_process is None:
+            self.stop_process()
 
     def get_output(self):
         # get lines until there are no more left

@@ -13,7 +13,7 @@ def test_requires_linux(triangle, tmp_path, monkeypatch):
     checkpoint = tmp_path / "model.ckpt"
     checkpoint.write_text("ckpt")
     with pytest.raises(UnwrapError) as error:
-        partuv.run(triangle, tmp_path / "out.obj", checkpoint, None, 1.25)
+        partuv.run([(triangle, tmp_path / "out.obj")], checkpoint, None, 1.25)
     assert error.value.exit_code == 3
 
 
@@ -36,7 +36,7 @@ def test_resolve_checkpoint_precedence(tmp_path, monkeypatch):
 def test_missing_checkpoint(triangle, tmp_path, monkeypatch):
     monkeypatch.setattr(partuv.platform, "system", lambda: "Linux")
     with pytest.raises(UnwrapError) as error:
-        partuv.run(triangle, tmp_path / "out.obj", tmp_path / "nope.ckpt", None, 1.25)
+        partuv.run([(triangle, tmp_path / "out.obj")], tmp_path / "nope.ckpt", None, 1.25)
     assert error.value.exit_code == 3
 
 
@@ -45,8 +45,7 @@ def test_missing_config(triangle, tmp_path, monkeypatch):
     checkpoint = tmp_path / "model.ckpt"
     checkpoint.write_text("ckpt")
     with pytest.raises(UnwrapError) as error:
-        partuv.run(
-            triangle, tmp_path / "out.obj", checkpoint, tmp_path / "nope.yaml", 1.25
+        partuv.run([(triangle, tmp_path / "out.obj")], checkpoint, tmp_path / "nope.yaml", 1.25
         )
     assert error.value.exit_code == 3
 
@@ -75,6 +74,7 @@ def fake_partuv_runtime(monkeypatch, tmp_path):
     class FakeModel:
         def __init__(self, checkpoint_path, device):
             calls["model"] = (checkpoint_path, device)
+            calls["model_loads"] = calls.get("model_loads", 0) + 1
 
     def fake_preprocess(mesh_path, pf_model=None, output_path=None):
         calls["preprocess"] = mesh_path
@@ -112,7 +112,7 @@ def test_run_orchestration(triangle, tmp_path, fake_partuv_runtime):
     config.write_text("pipeline: {}")
     output = tmp_path / "out.obj"
 
-    partuv.run(triangle, output, checkpoint, config, 1.5)
+    partuv.run([(triangle, output)], checkpoint, config, 1.5)
 
     calls = fake_partuv_runtime
     assert calls["model"] == (str(checkpoint), "cuda")
@@ -128,13 +128,30 @@ def test_run_geometric_skips_torch_and_checkpoint(triangle, tmp_path, fake_partu
     config.write_text("pipeline: {}")
     output = tmp_path / "out.obj"
 
-    partuv.run(triangle, output, None, config, 1.25, "geometric")
+    partuv.run([(triangle, output)], None, config, 1.25, "geometric")
 
     calls = fake_partuv_runtime
     assert calls["geometric"] == str(triangle)
     assert "model" not in calls
     assert calls["pipeline"] == ({"tree": 2}, str(config), 1.25)
     assert output.is_file()
+
+
+def test_batch_loads_model_once(triangle, cube, tmp_path, fake_partuv_runtime, capsys):
+    checkpoint = tmp_path / "model.ckpt"
+    checkpoint.write_text("ckpt")
+    config = tmp_path / "config.yaml"
+    config.write_text("pipeline: {}")
+    pairs = [(triangle, tmp_path / "a.obj"), (cube, tmp_path / "b.obj")]
+
+    code = partuv.run(pairs, checkpoint, config, 1.5)
+
+    assert code == 0
+    assert fake_partuv_runtime["model_loads"] == 1
+    assert (tmp_path / "a.obj").is_file()
+    assert (tmp_path / "b.obj").is_file()
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == ["start: triangle", "done: triangle", "start: cube", "done: cube"]
 
 
 def test_windows_runs_native_when_partuv_installed(
@@ -146,7 +163,7 @@ def test_windows_runs_native_when_partuv_installed(
     config.write_text("pipeline: {}")
     output = tmp_path / "out.obj"
 
-    partuv.run(triangle, output, None, config, 1.25, "geometric")
+    partuv.run([(triangle, output)], None, config, 1.25, "geometric")
 
     assert fake_partuv_runtime["geometric"] == str(triangle)
     assert output.is_file()
@@ -160,7 +177,7 @@ def test_windows_env_var_forces_wsl(triangle, tmp_path, fake_partuv_runtime, mon
         "uvgami_cli.wsl.run", lambda *args: calls.setdefault("wsl", args)
     )
 
-    partuv.run(triangle, tmp_path / "out.obj", None, None, 1.25, "geometric")
+    partuv.run([(triangle, tmp_path / "out.obj")], None, None, 1.25, "geometric")
 
     assert "wsl" in calls
     assert fake_partuv_runtime == {}

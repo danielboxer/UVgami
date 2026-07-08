@@ -1,5 +1,6 @@
 import shutil
 import sys
+import traceback
 from pathlib import Path
 
 EXIT_INVALID_INPUT = 2
@@ -17,8 +18,50 @@ class UnwrapError(Exception):
 
 
 def log(message):
-    # stdout is reserved for --json output
+    # stdout is reserved for --json output and batch markers
     print(message, file=sys.stderr, flush=True)
+
+
+def emit(message):
+    """Machine-readable stdout marker consumed by the Blender add-on."""
+    print(message, flush=True)
+
+
+def unwrap_all(pairs, unwrap_one):
+    """Unwrap each (input, output) pair and return the first failing exit code.
+
+    With multiple pairs, failures are isolated per mesh and start/done/failed
+    markers are emitted so a caller can track progress per mesh. Deleting an
+    input file mid-batch cancels that mesh: it fails fast with no compute.
+    No stdin watcher for this on purpose: a thread blocked reading a stdin
+    pipe stalls native module imports for minutes on windows."""
+    batch = len(pairs) > 1
+    first_code = 0
+    for input_path, output_path in pairs:
+        if batch:
+            emit(f"start: {input_path.stem}")
+        try:
+            if not input_path.is_file():
+                raise UnwrapError(
+                    EXIT_INVALID_INPUT, f"input not found: {input_path}"
+                )
+            unwrap_one(input_path, output_path)
+        except Exception as error:
+            if not batch:
+                raise
+            if isinstance(error, UnwrapError):
+                code = error.exit_code
+            else:
+                code = EXIT_ENGINE_FAILURE
+                log(traceback.format_exc())
+            log(f"error: {input_path.name}: {error}")
+            emit(f"failed: {input_path.stem} {code}")
+            if first_code == 0:
+                first_code = code
+        else:
+            if batch:
+                emit(f"done: {input_path.stem}")
+    return first_code
 
 
 def validate_uv_obj(path):

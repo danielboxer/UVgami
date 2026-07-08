@@ -66,26 +66,27 @@ def wsl_checkpoint(distro, checkpoint):
     raise UnwrapError(EXIT_MISSING_RUNTIME, f"checkpoint not found: {checkpoint}")
 
 
-def run(input_path, output_path, checkpoint, config, threshold, segmentation="ai"):
+def run(pairs, checkpoint, config, threshold, segmentation="ai"):
     distro = pick_distro()
     log(f"running PartUV in WSL distro {distro}")
 
-    to_translate = [REPO_ROOT, input_path.resolve(), output_path.resolve()]
+    inputs = [input_path.resolve() for input_path, _ in pairs]
+    outputs = [output_path.resolve() for _, output_path in pairs]
+    to_translate = [REPO_ROOT, *inputs, *outputs]
     if config is not None:
         to_translate.append(Path(config).resolve())
     translated = to_wsl_paths(distro, to_translate)
-    repo, input_wsl, output_wsl = translated[:3]
+    repo = translated[0]
+    count = len(pairs)
+    inputs_wsl = translated[1 : 1 + count]
+    outputs_wsl = translated[1 + count : 1 + 2 * count]
 
-    # --overwrite because the Windows side already validated the output path
-    unwrap = [
-        "uv",
-        "run",
-        "--no-sync",
-        "uvgami",
-        "unwrap",
-        input_wsl,
-        "-o",
-        output_wsl,
+    # --overwrite because the Windows side already validated the output paths;
+    # batch markers from the inner cli stream through on inherited stdout
+    unwrap = ["uv", "run", "--no-sync", "uvgami", "unwrap", *inputs_wsl]
+    for output_wsl in outputs_wsl:
+        unwrap += ["-o", output_wsl]
+    unwrap += [
         "--overwrite",
         "--engine",
         "partuv",
@@ -97,7 +98,7 @@ def run(input_path, output_path, checkpoint, config, threshold, segmentation="ai
     if segmentation == "ai":
         unwrap += ["--checkpoint", wsl_checkpoint(distro, checkpoint)]
     if config is not None:
-        unwrap += ["--config", translated[3]]
+        unwrap += ["--config", translated[1 + 2 * count]]
 
     # default venv lives on ext4: torch imports from /mnt/c are far too slow
     venv = os.environ.get("UVGAMI_WSL_VENV")
@@ -111,3 +112,4 @@ def run(input_path, output_path, checkpoint, config, threshold, segmentation="ai
     if result.returncode != 0:
         code = result.returncode if result.returncode in EXIT_CODES else EXIT_ENGINE_FAILURE
         raise UnwrapError(code, "PartUV failed in WSL (see log above)")
+    return 0
