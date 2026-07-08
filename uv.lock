@@ -632,6 +632,16 @@ name = "partuv"
 version = "0.1.2.2"
 source = { editable = "engine/partuv" }
 dependencies = [
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pillow", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "scikit-learn", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "tqdm", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "trimesh", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.optional-dependencies]
+ai = [
     { name = "boto3", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "einops", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "h5py", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -640,45 +650,42 @@ dependencies = [
     { name = "loguru", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "matplotlib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "networkx", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "plyfile", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "psutil", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pytz", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "scikit-image", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "scikit-learn", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "setuptools", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "torch", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "torch-scatter", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "tqdm", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "trimesh", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "yacs", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "boto3" },
-    { name = "einops" },
-    { name = "h5py" },
-    { name = "joblib" },
-    { name = "lightning", specifier = "==2.2" },
-    { name = "loguru" },
-    { name = "matplotlib" },
-    { name = "networkx" },
+    { name = "boto3", marker = "extra == 'ai'" },
+    { name = "einops", marker = "extra == 'ai'" },
+    { name = "h5py", marker = "extra == 'ai'" },
+    { name = "joblib", marker = "extra == 'ai'" },
+    { name = "lightning", marker = "extra == 'ai'", specifier = "==2.2" },
+    { name = "loguru", marker = "extra == 'ai'" },
+    { name = "matplotlib", marker = "extra == 'ai'" },
+    { name = "networkx", marker = "extra == 'ai'" },
     { name = "numpy", specifier = "<2" },
-    { name = "plyfile" },
-    { name = "psutil" },
-    { name = "pytz" },
-    { name = "scikit-image" },
+    { name = "pillow" },
+    { name = "plyfile", marker = "extra == 'ai'" },
+    { name = "psutil", marker = "extra == 'ai'" },
+    { name = "pytz", marker = "extra == 'ai'" },
+    { name = "scikit-image", marker = "extra == 'ai'" },
     { name = "scikit-learn" },
     { name = "scipy" },
-    { name = "setuptools", specifier = "<81" },
-    { name = "torch", specifier = "==2.3.0", index = "https://download.pytorch.org/whl/cu121" },
-    { name = "torch-scatter", index = "https://data.pyg.org/whl/torch-2.3.0+cu121.html" },
+    { name = "setuptools", marker = "extra == 'ai'", specifier = "<81" },
+    { name = "torch", marker = "extra == 'ai'", specifier = "==2.3.0", index = "https://download.pytorch.org/whl/cu121" },
+    { name = "torch-scatter", marker = "extra == 'ai'", index = "https://data.pyg.org/whl/torch-2.3.0+cu121.html" },
     { name = "tqdm" },
     { name = "trimesh", specifier = "==4.9.0" },
-    { name = "yacs" },
+    { name = "yacs", marker = "extra == 'ai'" },
 ]
+provides-extras = ["ai"]
 
 [[package]]
 name = "pillow"
@@ -1118,6 +1125,9 @@ source = { editable = "." }
 
 [package.optional-dependencies]
 partuv = [
+    { name = "partuv", extra = ["ai"], marker = "sys_platform == 'linux'" },
+]
+partuv-lite = [
     { name = "partuv", marker = "sys_platform == 'linux'" },
 ]
 
@@ -1129,8 +1139,11 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "partuv", marker = "sys_platform == 'linux' and extra == 'partuv'", editable = "engine/partuv" }]
-provides-extras = ["partuv"]
+requires-dist = [
+    { name = "partuv", marker = "sys_platform == 'linux' and extra == 'partuv-lite'", editable = "engine/partuv" },
+    { name = "partuv", extras = ["ai"], marker = "sys_platform == 'linux' and extra == 'partuv'", editable = "engine/partuv" },
+]
+provides-extras = ["partuv", "partuv-lite"]
 
 [package.metadata.requires-dev]
 dev = [

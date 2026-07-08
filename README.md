@@ -48,7 +48,12 @@ uv run uvgami unwrap model.obj --engine optcuts
 
 ### PartUV engine
 
-PartUV needs Linux with CUDA (WSL Ubuntu works) and the [PartField checkpoint](https://huggingface.co/mikaelaangel/partfield-ckpt) (untracked).
+PartUV runs on Linux with CUDA. On Windows the CLI bridges to WSL by itself: the same `unwrap` command re-invokes the CLI inside the distro with paths translated.
+
+Two segmentation modes drive the part tree:
+
+- `--segmentation ai` (default): PartField inference, best quality; needs the torch stack (`--extra partuv`) and the [PartField checkpoint](https://huggingface.co/mikaelaangel/partfield-ckpt) (untracked)
+- `--segmentation geometric`: scikit-learn agglomerative clustering on face normals and centroids; no torch, no checkpoint, installs with `--extra partuv-lite`
 
 One-time WSL setup (Ubuntu 24.04):
 
@@ -56,19 +61,24 @@ One-time WSL setup (Ubuntu 24.04):
 sudo apt install build-essential libcgal-dev libyaml-cpp-dev libtbb-dev
 # cuda toolkit from the nvidia wsl-ubuntu repo, then nvcc is at /usr/local/cuda-12.6/bin
 sudo apt install cuda-toolkit-12-6
-wget https://huggingface.co/mikaelaangel/partfield-ckpt/resolve/main/model_objaverse.ckpt
+wget -P engine/partuv https://huggingface.co/mikaelaangel/partfield-ckpt/resolve/main/model_objaverse.ckpt
 ```
 
-Build and run (from the repo, separate venv so the Windows `.venv` is untouched):
+Build and run in WSL (from the repo):
 
 ```bash
 export PATH=/usr/local/cuda-12.6/bin:$PATH
-export UV_PROJECT_ENVIRONMENT=.venv-wsl
-uv sync --extra partuv
-uv run uvgami unwrap model.obj --engine partuv --checkpoint model_objaverse.ckpt
+# venv on ext4: keeps the Windows .venv untouched and torch imports fast
+export UV_PROJECT_ENVIRONMENT=~/uvgami-venv
+uv sync --extra partuv        # or --extra partuv-lite for geometric only
+uv run uvgami unwrap model.obj --engine partuv
 ```
 
-- The extension targets sm_86 (RTX 3060) by default, override with the `CUDAARCHS` env var
+After that, the same unwrap works from Windows directly (PowerShell, not Git Bash: MSYS mangles POSIX paths in env vars).
+
+- Checkpoint lookup order: `--checkpoint`, `$UVGAMI_PARTUV_CHECKPOINT`, `engine/partuv/model_objaverse.ckpt`. A WSL-side path like `/root/model.ckpt` passes through the bridge untranslated
+- Bridge env vars: `UVGAMI_WSL_DISTRO` (default: first non-Docker distro), `UVGAMI_WSL_VENV` (default: `~/uvgami-venv` in the distro)
+- The extension compiles to `/var/tmp/partuv-build` in WSL (compiling on `/mnt/c` is hopelessly slow) and targets sm_86 (RTX 3060) by default, override with the `CUDAARCHS` env var; `-DPARTUV_NATIVE=ON` restores upstream's `-march=native`
 - `--threshold` sets the distortion threshold (default 1.25), `--config` overrides `engine/partuv/config/config.yaml`
 
 ### Tests

@@ -74,8 +74,45 @@ def test_optcuts_flag_rejected_for_partuv(triangle):
     assert code == 2
 
 
-def test_partuv_requires_checkpoint(triangle):
+def test_partuv_requires_checkpoint(triangle, tmp_path, monkeypatch):
+    from uvgami_cli import partuv
+
+    monkeypatch.delenv("UVGAMI_PARTUV_CHECKPOINT", raising=False)
+    monkeypatch.setattr(partuv, "DEFAULT_CHECKPOINT", tmp_path / "missing.ckpt")
     assert cli.main(["unwrap", str(triangle), "--engine", "partuv"]) == 2
+
+
+def test_partuv_geometric_needs_no_checkpoint(triangle, tmp_path, monkeypatch):
+    from uvgami_cli import partuv
+
+    monkeypatch.delenv("UVGAMI_PARTUV_CHECKPOINT", raising=False)
+    monkeypatch.setattr(partuv, "DEFAULT_CHECKPOINT", tmp_path / "missing.ckpt")
+    calls = []
+    monkeypatch.setattr(partuv, "run", lambda *args: calls.append(args))
+    code = cli.main(
+        ["unwrap", str(triangle), "--engine", "partuv", "--segmentation", "geometric"]
+    )
+    assert code == 0
+    assert calls[0][2] is None
+    assert calls[0][5] == "geometric"
+
+
+def test_checkpoint_rejected_for_geometric(triangle, tmp_path):
+    checkpoint = tmp_path / "model.ckpt"
+    checkpoint.write_text("ckpt")
+    code = cli.main(
+        [
+            "unwrap",
+            str(triangle),
+            "--engine",
+            "partuv",
+            "--segmentation",
+            "geometric",
+            "--checkpoint",
+            str(checkpoint),
+        ]
+    )
+    assert code == 2
 
 
 def test_missing_seam_weights_file(triangle, tmp_path, fake_optcuts):

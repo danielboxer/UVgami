@@ -7,7 +7,7 @@ from .common import EXIT_INVALID_INPUT, UnwrapError, log
 
 ENGINE_FLAGS = {
     "optcuts": ("quality", "import_uvs", "seam_weights", "seam_weight", "optcuts_path"),
-    "partuv": ("threshold", "checkpoint", "config"),
+    "partuv": ("threshold", "checkpoint", "config", "segmentation"),
 }
 
 
@@ -38,8 +38,19 @@ def build_parser():
 
     partuv = unwrap.add_argument_group("partuv options")
     partuv.add_argument("--threshold", type=float, help="distortion threshold, default: 1.25")
-    partuv.add_argument("--checkpoint", type=Path, help="PartField model checkpoint (required)")
+    partuv.add_argument(
+        "--checkpoint",
+        type=Path,
+        help="PartField model checkpoint, default: $UVGAMI_PARTUV_CHECKPOINT"
+        " or engine/partuv/model_objaverse.ckpt",
+    )
     partuv.add_argument("--config", type=Path, help="default: engine/partuv/config/config.yaml")
+    partuv.add_argument(
+        "--segmentation",
+        choices=["ai", "geometric"],
+        help="part segmentation: ai (PartField, needs checkpoint + torch)"
+        " or geometric (normals-based, no checkpoint), default: ai",
+    )
     return parser
 
 
@@ -72,9 +83,14 @@ def validate(args):
                 EXIT_INVALID_INPUT, f"seam weights file not found: {args.seam_weights}"
             )
     else:
-        if args.checkpoint is None:
+        from . import partuv
+
+        args.segmentation = args.segmentation or "ai"
+        if args.segmentation == "ai":
+            args.checkpoint = partuv.resolve_checkpoint(args.checkpoint)
+        elif args.checkpoint is not None:
             raise UnwrapError(
-                EXIT_INVALID_INPUT, "--checkpoint is required with --engine partuv"
+                EXIT_INVALID_INPUT, "--checkpoint only applies to --segmentation ai"
             )
         args.threshold = args.threshold if args.threshold is not None else 1.25
 
@@ -100,7 +116,12 @@ def main(argv=None):
             from . import partuv
 
             partuv.run(
-                args.input, args.output, args.checkpoint, args.config, args.threshold
+                args.input,
+                args.output,
+                args.checkpoint,
+                args.config,
+                args.threshold,
+                args.segmentation,
             )
         elapsed = time.perf_counter() - start
     except UnwrapError as error:

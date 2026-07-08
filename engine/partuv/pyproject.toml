@@ -8,12 +8,21 @@ version = "0.1.2.2"
 description = "UV unwrapping pipeline with pybind11 bindings and preprocessing utilities"
 requires-python = ">=3.9"
 authors = [{ name = "Zhaoning Wang" }]
-# everything imported by the partuv.preprocess chain (partfield inference)
+# base deps cover the torch-free path (partuv.geometric + pipeline);
 # torch 2.3 wheels are built against numpy 1.x, so numpy<2
 dependencies = [
   "numpy<2",
   "trimesh==4.9.0",
+  # without pillow, trimesh silently drops vt lines from obj exports
+  "pillow",
   "scipy",
+  "scikit-learn",
+  "tqdm",
+]
+
+[project.optional-dependencies]
+# everything imported by the partuv.preprocess chain (partfield inference)
+ai = [
   "torch==2.3.0",
   "torch-scatter",
   "lightning==2.2",
@@ -30,21 +39,24 @@ dependencies = [
   "networkx",
   "matplotlib",
   "joblib",
-  "tqdm",
-  "scikit-learn",
   "scikit-image",
 ]
 
 
 
 [tool.scikit-build]
-# persistent build dir so interrupted builds resume incrementally
-build-dir = "build/{wheel_tag}"
+# persistent build dir so interrupted builds resume incrementally; absolute
+# path keeps objects on ext4 when the repo lives on /mnt/c in wsl (9p is
+# far too slow to compile on); /var/tmp not /tmp, which is cleared on boot
+build-dir = "/var/tmp/partuv-build/{wheel_tag}"
 sdist.include = [
   "extern/easy_profiler/lib/libeasy_profiler.so",
   "extern/easy_profiler/lib/cmake/easy_profiler/**",
 ]
 build.verbose = true
+# cgal/libigl TUs need >1GB each to compile; unbounded ninja parallelism
+# gets OOM-killed inside default-RAM WSL
+build.tool-args = ["-j4"]
 ninja.make-fallback = true
 
 wheel.packages = ["partuv", "preprocess_utils"]

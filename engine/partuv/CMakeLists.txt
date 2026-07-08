@@ -34,7 +34,15 @@ set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the build type")
 
 # message(STATUS "CMake build type: ${CMAKE_BUILD_TYPE}")
 
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -ffast-math -mfpmath=sse -Ofast -fno-omit-frame-pointer -march=native")
+# x86-64-v3 (avx2) instead of upstream's -march=native so the wheel runs on
+# other machines; PARTUV_NATIVE=ON restores the machine-tuned build
+option(PARTUV_NATIVE "Tune for the build machine cpu" OFF)
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -ffast-math -mfpmath=sse -Ofast -fno-omit-frame-pointer")
+if(PARTUV_NATIVE)
+  string(APPEND CMAKE_CXX_FLAGS_RELEASE " -march=native")
+else()
+  string(APPEND CMAKE_CXX_FLAGS_RELEASE " -march=x86-64-v3")
+endif()
 # if(CMAKE_BUILD_TYPE STREQUAL "Release")
 # elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
 #     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0")
