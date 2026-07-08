@@ -42,6 +42,7 @@ from .src.ops.grid import (
     UVGAMI_OT_add_grid,
     UVGAMI_OT_remove_grid,
 )
+from .src.ops.install import UVGAMI_OT_install_partuv
 from .src.ops.viewer import (
     UVGAMI_OT_view_unwrap,
     UVGAMI_OT_view_uvs,
@@ -101,6 +102,7 @@ classes = (
     UVGAMI_OT_clear_logs,
     UVGAMI_OT_copy_logs,
     UVGAMI_OT_setup_wsl,
+    UVGAMI_OT_install_partuv,
     UVGAMI_OT_view_uvs,
     UVGAMI_PT_main,
     UVGAMI_PT_guides,

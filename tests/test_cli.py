@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 
 import pytest
 
@@ -151,6 +153,30 @@ def test_json_error(triangle, monkeypatch, capsys):
 def test_stdout_empty_without_json(triangle, fake_optcuts, capsys):
     cli.main(["unwrap", str(triangle), "--engine", "optcuts"])
     assert capsys.readouterr().out == ""
+
+
+# the addon's installed mode runs the cli as python -m uvgami_cli
+def test_module_entry_point(triangle):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "uvgami_cli",
+            "unwrap",
+            str(triangle),
+            "--engine",
+            "partuv",
+            "--segmentation",
+            "geometric",
+            "--threshold",
+            "not-a-number",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    # argparse rejects the threshold before any engine import runs
+    assert result.returncode == 2
+    assert "invalid float value" in result.stderr
 
 
 def test_engine_error_code_passthrough(triangle, monkeypatch):

@@ -629,7 +629,7 @@ wheels = [
 
 [[package]]
 name = "partuv"
-version = "0.1.2.2"
+version = "0.1.2.3"
 source = { editable = "engine/partuv" }
 dependencies = [
     { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -650,6 +650,7 @@ ai = [
     { name = "loguru", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "matplotlib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "networkx", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "plyfile", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "psutil", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pytz", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -670,7 +671,8 @@ requires-dist = [
     { name = "loguru", marker = "extra == 'ai'" },
     { name = "matplotlib", marker = "extra == 'ai'" },
     { name = "networkx", marker = "extra == 'ai'" },
-    { name = "numpy", specifier = "<2" },
+    { name = "numpy" },
+    { name = "numpy", marker = "extra == 'ai'", specifier = "<2" },
     { name = "pillow" },
     { name = "plyfile", marker = "extra == 'ai'" },
     { name = "psutil", marker = "extra == 'ai'" },
@@ -1125,7 +1127,7 @@ source = { editable = "." }
 
 [package.optional-dependencies]
 partuv = [
-    { name = "partuv", extra = ["ai"], marker = "sys_platform == 'linux'" },
+    { name = "partuv", extra = ["ai"], marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 partuv-lite = [
     { name = "partuv", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1141,7 +1143,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "partuv", marker = "(sys_platform == 'linux' and extra == 'partuv-lite') or (sys_platform == 'win32' and extra == 'partuv-lite')", editable = "engine/partuv" },
-    { name = "partuv", extras = ["ai"], marker = "sys_platform == 'linux' and extra == 'partuv'", editable = "engine/partuv" },
+    { name = "partuv", extras = ["ai"], marker = "(sys_platform == 'linux' and extra == 'partuv') or (sys_platform == 'win32' and extra == 'partuv')", editable = "engine/partuv" },
 ]
 provides-extras = ["partuv", "partuv-lite"]
 

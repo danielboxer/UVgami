@@ -37,6 +37,11 @@ def get_extension_dir_path():
     return extension_folder
 
 
+def get_partuv_libs_path():
+    """Target dir where the install operator pip-installs the partuv wheel."""
+    return get_extension_dir_path() / "partuv"
+
+
 def get_linux_path(path):
     return f'"/mnt/c{str(pathlib.PurePosixPath(path))[3:]}"'
 

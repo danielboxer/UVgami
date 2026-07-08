@@ -95,6 +95,7 @@ class Unwrap:
             stdout=subprocess.PIPE,
             stdin=subprocess.PIPE,
             universal_newlines=True,
+            env=manager.engine.build_env(manager.engine_path),
         )
 
         # start reading thread

@@ -1,6 +1,6 @@
 {
   "name": "partuv",
-  "version-string": "0.1.2.2",
+  "version-string": "0.1.2.3",
   "dependencies": [
     "cgal",
     "yaml-cpp",

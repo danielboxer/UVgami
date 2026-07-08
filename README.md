@@ -50,6 +50,8 @@ uv run uvgami unwrap model.obj --engine optcuts
 
 PartUV needs CUDA. It builds natively on Windows and Linux; on Windows without a native install the CLI bridges to WSL by itself: the same `unwrap` command re-invokes the CLI inside the distro with paths translated. `UVGAMI_PARTUV_WSL=1` forces the bridge even when the native build exists.
 
+In the add-on, PartUV runs through this CLI: from a repo checkout it uses `uv run`, otherwise the install button in the add-on preferences downloads the wheel from the latest release and installs it with Blender's Python (`python -m pip install --target`), and unwraps run as `python -m uvgami_cli`.
+
 Two segmentation modes drive the part tree:
 
 - `--segmentation ai` (default): PartField inference, best quality; needs the torch stack (`--extra partuv`) and the [PartField checkpoint](https://huggingface.co/mikaelaangel/partfield-ckpt) (untracked)
@@ -59,7 +61,7 @@ One-time Windows setup:
 
 1. Visual Studio 2026 with the C++ workload (includes vcpkg, cmake, ninja)
 2. CUDA Toolkit 13.2+ (`winget install Nvidia.CUDA`), older versions don't support VS 2026
-3. From a VS dev shell (`Launch-VsDevShell.ps1 -Arch amd64`): `uv sync --extra partuv-lite`
+3. From a VS dev shell (`Launch-VsDevShell.ps1 -Arch amd64`): `uv sync --extra partuv` (or `--extra partuv-lite`)
 
 The vcpkg deps (cgal, yaml-cpp, tbb) build from source on the first run, about 50 minutes, and are binary-cached after. The wheel bundles the runtime DLLs; running it only needs the VC++ redistributable.
 

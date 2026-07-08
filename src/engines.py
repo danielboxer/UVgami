@@ -1,10 +1,12 @@
 # Copyright (C) 2022 Daniel Boxer
 # See __init__.py and LICENSE for more information
 
+import os
 import pathlib
 import platform
 import shutil
 import subprocess
+import sys
 
 from .utils.io import print_stdin
 from .utils.paths import (
@@ -12,6 +14,7 @@ from .utils.paths import (
     get_dir_path,
     get_extension_dir_path,
     get_linux_path,
+    get_partuv_libs_path,
 )
 
 
@@ -34,6 +37,10 @@ class Engine:
     def build_args(self, engine_path, input_path, props):
         """Return the subprocess argv that unwraps input_path."""
         raise NotImplementedError
+
+    def build_env(self, engine_path):
+        """Return the subprocess env, or None to inherit."""
+        return None
 
     def stop(self, process, engine_path):
         """Stop a running unwrap process."""
@@ -114,32 +121,48 @@ class UvgamiEngine(Engine):
             process.kill()
 
 
+def find_partuv_dev_repo():
+    """Return the repo path if the developer CLI is usable, else None."""
+    repo = get_dir_path()
+    if (
+        (repo / "uvgami_cli").is_dir()
+        and (repo / ".venv").is_dir()
+        and shutil.which("uv") is not None
+    ):
+        return repo
+    return None
+
+
+def is_partuv_installed():
+    return (get_partuv_libs_path() / "partuv").is_dir()
+
+
 class PartuvEngine(Engine):
     id = "PARTUV"
     label = "PartUV"
     uses_threshold = True
     uses_segmentation = True
+    # set by validate: dev runs the repo cli through uv, installed runs the
+    # wheel from the install operator with blender's python
+    mode = "dev"
 
     def validate(self, prefs):
-        # runs through the developer cli, so it needs the repo checkout and uv
-        repo = get_dir_path()
-        if not (repo / "uvgami_cli").is_dir():
-            return None, "PartUV needs the UVgami repo (run the add-on from source)"
-        if shutil.which("uv") is None:
-            return None, "PartUV needs uv installed (docs.astral.sh/uv)"
-        if not (repo / ".venv").is_dir():
-            return None, "PartUV needs the CLI set up (run 'uv sync' in the repo)"
-        return repo, None
+        repo = find_partuv_dev_repo()
+        if repo is not None:
+            self.mode = "dev"
+            return repo, None
+        if is_partuv_installed():
+            self.mode = "installed"
+            return get_partuv_libs_path(), None
+        return None, "PartUV is not installed. Install it in the add-on preferences"
 
     def build_args(self, engine_path, input_path, props):
         output_path = get_extension_dir_path() / "output" / f"{input_path.stem}.obj"
-        return [
-            "uv",
-            "run",
-            "--project",
-            str(engine_path),
-            "--no-sync",
-            "uvgami",
+        if self.mode == "dev":
+            base = ["uv", "run", "--project", str(engine_path), "--no-sync", "uvgami"]
+        else:
+            base = [sys.executable, "-m", "uvgami_cli"]
+        return base + [
             "unwrap",
             str(input_path),
             "-o",
@@ -152,6 +175,17 @@ class PartuvEngine(Engine):
             "--threshold",
             f"{props.partuv_threshold:.3f}",
         ]
+
+    def build_env(self, engine_path):
+        if self.mode == "dev":
+            return None
+        # uvgami_cli is resolved from the add-on dir, partuv from the libs dir
+        env = os.environ.copy()
+        paths = [str(engine_path), str(get_dir_path())]
+        if env.get("PYTHONPATH"):
+            paths.append(env["PYTHONPATH"])
+        env["PYTHONPATH"] = os.pathsep.join(paths)
+        return env
 
     def stop(self, process, engine_path):
         if platform.system() == "Windows":

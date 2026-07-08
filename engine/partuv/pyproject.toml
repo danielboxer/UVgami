@@ -4,14 +4,14 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "partuv"
-version = "0.1.2.2"
+version = "0.1.2.3"
 description = "UV unwrapping pipeline with pybind11 bindings and preprocessing utilities"
 requires-python = ">=3.9"
 authors = [{ name = "Zhaoning Wang" }]
 # base deps cover the torch-free path (partuv.geometric + pipeline);
-# torch 2.3 wheels are built against numpy 1.x, so numpy<2
+# numpy unpinned so the wheel installs on python 3.13 (no numpy 1.x wheels)
 dependencies = [
-  "numpy<2",
+  "numpy",
   "trimesh==4.9.0",
   # without pillow, trimesh silently drops vt lines from obj exports
   "pillow",
@@ -23,6 +23,8 @@ dependencies = [
 [project.optional-dependencies]
 # everything imported by the partuv.preprocess chain (partfield inference)
 ai = [
+  # torch 2.3 wheels are built against numpy 1.x
+  "numpy<2",
   "torch==2.3.0",
   "torch-scatter",
   "lightning==2.2",
