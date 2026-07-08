@@ -37,6 +37,8 @@ def fake_wsl(monkeypatch):
     monkeypatch.delenv("UVGAMI_WSL_DISTRO", raising=False)
     monkeypatch.delenv("UVGAMI_WSL_VENV", raising=False)
     monkeypatch.setattr(partuv.platform, "system", lambda: "Windows")
+    # force the bridge even when a native partuv is installed in the venv
+    monkeypatch.setattr(partuv, "_native_available", lambda: False)
     fake = FakeWsl()
     monkeypatch.setattr(wsl.subprocess, "run", fake)
     return fake
@@ -110,6 +112,7 @@ def test_unknown_exit_code_maps_to_engine_failure(triangle, tmp_path, fake_wsl):
 def test_wsl_missing_errors(triangle, tmp_path, monkeypatch):
     monkeypatch.delenv("UVGAMI_WSL_DISTRO", raising=False)
     monkeypatch.setattr(partuv.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(partuv, "_native_available", lambda: False)
 
     def no_wsl(cmd, **kwargs):
         raise FileNotFoundError("wsl.exe")

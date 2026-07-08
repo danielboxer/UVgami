@@ -33,14 +33,28 @@ def resolve_checkpoint(flag_value):
     )
 
 
+def _native_available():
+    try:
+        import partuv  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 def run(input_path, output_path, checkpoint, config, threshold, segmentation="ai"):
     system = platform.system()
     if system == "Windows":
-        from . import wsl
+        # UVGAMI_PARTUV_WSL=1 forces the bridge even when the native build exists
+        if os.environ.get("UVGAMI_PARTUV_WSL") or not _native_available():
+            from . import wsl
 
-        wsl.run(input_path, output_path, checkpoint, config, threshold, segmentation)
-        return
-    if system != "Linux":
+            wsl.run(
+                input_path, output_path, checkpoint, config, threshold, segmentation
+            )
+            return
+        log("using native Windows partuv")
+    elif system != "Linux":
         raise UnwrapError(
             EXIT_MISSING_RUNTIME,
             "PartUV requires Linux with CUDA (use WSL on Windows)",

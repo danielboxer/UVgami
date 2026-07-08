@@ -10,9 +10,15 @@ cmake_minimum_required(VERSION 3.18)
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT DEFINED ENV{CUDAARCHS})
   set(CMAKE_CUDA_ARCHITECTURES 86)
 endif()
+# windows deps come from vcpkg; VCPKG_ROOT is set in a vs dev shell
+if(WIN32 AND DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+  set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+endif()
 if(NOT DEFINED CMAKE_CUDA_COMPILER)
   find_program(CMAKE_CUDA_COMPILER NAMES nvcc)
-  if(NOT CMAKE_CUDA_COMPILER)
+  if(NOT CMAKE_CUDA_COMPILER AND DEFINED ENV{CUDA_PATH})
+    set(CMAKE_CUDA_COMPILER "$ENV{CUDA_PATH}/bin/nvcc.exe")
+  elseif(NOT CMAKE_CUDA_COMPILER)
     set(CMAKE_CUDA_COMPILER /usr/local/cuda-12.1/bin/nvcc)
     message(WARNING "Could not find 'nvcc' in PATH. Defaulting to /usr/local/cuda-12.1/bin/nvcc.")
   endif()
@@ -264,6 +270,19 @@ target_include_directories(_core PRIVATE
 # install(TARGETS _core LIBRARY DESTINATION partuv)
 install(TARGETS _core DESTINATION partuv)
 # install(FILES DESTINATION partuv/.libs)
+
+if(MSVC)
+  # bundle the non-system runtime dlls so the wheel imports anywhere;
+  # msvcp140/libomp140 come from the vc++ redistributable instead (libomp
+  # is nonredist in the vs tree), cudart is linked statically
+  set(_vcpkg_bin "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+  foreach(_dll gmp-10.dll mpfr-6.dll yaml-cpp.dll)
+    if(NOT EXISTS "${_vcpkg_bin}/${_dll}")
+      message(FATAL_ERROR "runtime dll not found: ${_vcpkg_bin}/${_dll}")
+    endif()
+    install(FILES "${_vcpkg_bin}/${_dll}" DESTINATION partuv/.libs)
+  endforeach()
+endif()
 
 install(FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/partuv/__init__.py

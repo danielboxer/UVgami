@@ -135,3 +135,32 @@ def test_run_geometric_skips_torch_and_checkpoint(triangle, tmp_path, fake_partu
     assert "model" not in calls
     assert calls["pipeline"] == ({"tree": 2}, str(config), 1.25)
     assert output.is_file()
+
+
+def test_windows_runs_native_when_partuv_installed(
+    triangle, tmp_path, fake_partuv_runtime, monkeypatch
+):
+    monkeypatch.setattr(partuv.platform, "system", lambda: "Windows")
+    monkeypatch.delenv("UVGAMI_PARTUV_WSL", raising=False)
+    config = tmp_path / "config.yaml"
+    config.write_text("pipeline: {}")
+    output = tmp_path / "out.obj"
+
+    partuv.run(triangle, output, None, config, 1.25, "geometric")
+
+    assert fake_partuv_runtime["geometric"] == str(triangle)
+    assert output.is_file()
+
+
+def test_windows_env_var_forces_wsl(triangle, tmp_path, fake_partuv_runtime, monkeypatch):
+    monkeypatch.setattr(partuv.platform, "system", lambda: "Windows")
+    monkeypatch.setenv("UVGAMI_PARTUV_WSL", "1")
+    calls = {}
+    monkeypatch.setattr(
+        "uvgami_cli.wsl.run", lambda *args: calls.setdefault("wsl", args)
+    )
+
+    partuv.run(triangle, tmp_path / "out.obj", None, None, 1.25, "geometric")
+
+    assert "wsl" in calls
+    assert fake_partuv_runtime == {}

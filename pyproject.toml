@@ -11,7 +11,8 @@ uvgami = "uvgami_cli.cli:main"
 [project.optional-dependencies]
 partuv = ["partuv[ai]; sys_platform == 'linux'"]
 # geometric segmentation only: no torch stack, no checkpoint
-partuv-lite = ["partuv; sys_platform == 'linux'"]
+# (builds from source on windows: needs msvc + cuda + vcpkg, see README)
+partuv-lite = ["partuv; sys_platform == 'linux' or sys_platform == 'win32'"]
 
 # numpy is imported by the partuv orchestration code under test
 [dependency-groups]

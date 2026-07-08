@@ -48,12 +48,20 @@ uv run uvgami unwrap model.obj --engine optcuts
 
 ### PartUV engine
 
-PartUV runs on Linux with CUDA. On Windows the CLI bridges to WSL by itself: the same `unwrap` command re-invokes the CLI inside the distro with paths translated.
+PartUV needs CUDA. It builds natively on Windows and Linux; on Windows without a native install the CLI bridges to WSL by itself: the same `unwrap` command re-invokes the CLI inside the distro with paths translated. `UVGAMI_PARTUV_WSL=1` forces the bridge even when the native build exists.
 
 Two segmentation modes drive the part tree:
 
 - `--segmentation ai` (default): PartField inference, best quality; needs the torch stack (`--extra partuv`) and the [PartField checkpoint](https://huggingface.co/mikaelaangel/partfield-ckpt) (untracked)
 - `--segmentation geometric`: scikit-learn agglomerative clustering on face normals and centroids; no torch, no checkpoint, installs with `--extra partuv-lite`
+
+One-time Windows setup:
+
+1. Visual Studio 2026 with the C++ workload (includes vcpkg, cmake, ninja)
+2. CUDA Toolkit 13.2+ (`winget install Nvidia.CUDA`), older versions don't support VS 2026
+3. From a VS dev shell (`Launch-VsDevShell.ps1 -Arch amd64`): `uv sync --extra partuv-lite`
+
+The vcpkg deps (cgal, yaml-cpp, tbb) build from source on the first run, about 50 minutes, and are binary-cached after. The wheel bundles the runtime DLLs; running it only needs the VC++ redistributable.
 
 One-time WSL setup (Ubuntu 24.04):
 
@@ -79,6 +87,7 @@ After that, the same unwrap works from Windows directly (PowerShell, not Git Bas
 - Checkpoint lookup order: `--checkpoint`, `$UVGAMI_PARTUV_CHECKPOINT`, `engine/partuv/model_objaverse.ckpt`. A WSL-side path like `/root/model.ckpt` passes through the bridge untranslated
 - Bridge env vars: `UVGAMI_WSL_DISTRO` (default: first non-Docker distro), `UVGAMI_WSL_VENV` (default: `~/uvgami-venv` in the distro)
 - The extension compiles to `/var/tmp/partuv-build` in WSL (compiling on `/mnt/c` is hopelessly slow) and targets sm_86 (RTX 3060) by default, override with the `CUDAARCHS` env var; `-DPARTUV_NATIVE=ON` restores upstream's `-march=native`
+- Release wheels should widen the CUDA targets: `CUDAARCHS="75-real;80-real;86-real;89-real;90-real;120"` with CUDA 13 (Windows; sm_75 is its floor), drop `120` on CUDA 12.6 (WSL; sm_90 is its ceiling)
 - `--threshold` sets the distortion threshold (default 1.25), `--config` overrides `engine/partuv/config/config.yaml`
 
 ### Tests
