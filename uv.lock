@@ -1128,7 +1128,7 @@ partuv = [
     { name = "partuv", extra = ["ai"], marker = "sys_platform == 'linux'" },
 ]
 partuv-lite = [
-    { name = "partuv", marker = "sys_platform == 'linux'" },
+    { name = "partuv", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.dev-dependencies]
@@ -1140,7 +1140,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "partuv", marker = "sys_platform == 'linux' and extra == 'partuv-lite'", editable = "engine/partuv" },
+    { name = "partuv", marker = "(sys_platform == 'linux' and extra == 'partuv-lite') or (sys_platform == 'win32' and extra == 'partuv-lite')", editable = "engine/partuv" },
     { name = "partuv", extras = ["ai"], marker = "sys_platform == 'linux' and extra == 'partuv'", editable = "engine/partuv" },
 ]
 provides-extras = ["partuv", "partuv-lite"]
