@@ -14,8 +14,39 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     engine: bpy.props.EnumProperty(
         name="Engine",
         description="The unwrapping engine to use",
-        items=(("UVGAMI", "UVgami", "The default UVgami unwrapping engine"),),
+        items=(
+            ("UVGAMI", "UVgami", "The default UVgami unwrapping engine"),
+            (
+                "PARTUV",
+                "PartUV",
+                "Part-based unwrapping engine with CUDA (runs from the repo CLI)",
+            ),
+        ),
         default="UVGAMI",
+    )
+    partuv_segmentation: bpy.props.EnumProperty(
+        name="Segmentation",
+        description="How PartUV splits the mesh into parts",
+        items=(
+            (
+                "GEOMETRIC",
+                "Geometric",
+                "Clustering on face normals and centroids. No AI model needed",
+            ),
+            (
+                "AI",
+                "AI",
+                "PartField inference. Needs the torch stack and the checkpoint",
+            ),
+        ),
+        default="GEOMETRIC",
+    )
+    partuv_threshold: bpy.props.FloatProperty(
+        name="",
+        description="Distortion threshold. Lower values cut the mesh into more charts",
+        default=1.25,
+        min=1.0,
+        max=10.0,
     )
     quality: bpy.props.EnumProperty(
         name="Unwrap Quality",

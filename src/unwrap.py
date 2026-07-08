@@ -3,7 +3,6 @@
 
 import collections
 import pathlib
-import platform
 import subprocess
 import threading
 import time
@@ -107,12 +106,7 @@ class Unwrap:
 
     def stop_process(self):
         if self.process is not None and self.process.poll() is None:
-            if platform.system() == "Windows" and manager.engine_path.suffix == "":
-                # wsl
-                print_stdin(self.process, "cancel")
-            else:
-                # windows
-                self.process.kill()
+            manager.engine.stop(self.process, manager.engine_path)
 
     def get_output(self):
         # get lines until there are no more left

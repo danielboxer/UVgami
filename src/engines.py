@@ -6,8 +6,10 @@ import platform
 import shutil
 import subprocess
 
+from .utils.io import print_stdin
 from .utils.paths import (
     get_bundled_engine_path,
+    get_dir_path,
     get_extension_dir_path,
     get_linux_path,
 )
@@ -23,6 +25,7 @@ class Engine:
     supports_early_stop = False
     supports_preserve = False
     uses_threshold = False
+    uses_segmentation = False
 
     def validate(self, prefs):
         """Return (engine_path, None) if usable, else (None, error_message)."""
@@ -31,6 +34,10 @@ class Engine:
     def build_args(self, engine_path, input_path, props):
         """Return the subprocess argv that unwraps input_path."""
         raise NotImplementedError
+
+    def stop(self, process, engine_path):
+        """Stop a running unwrap process."""
+        process.kill()
 
 
 class UvgamiEngine(Engine):
@@ -98,8 +105,66 @@ class UvgamiEngine(Engine):
             ]
         return [str(engine_path), "-i", str(input_path)] + shared_args.split()
 
+    def stop(self, process, engine_path):
+        if platform.system() == "Windows" and engine_path.suffix == "":
+            # wsl
+            print_stdin(process, "cancel")
+        else:
+            # windows
+            process.kill()
 
-ENGINES = {engine.id: engine for engine in (UvgamiEngine(),)}
+
+class PartuvEngine(Engine):
+    id = "PARTUV"
+    label = "PartUV"
+    uses_threshold = True
+    uses_segmentation = True
+
+    def validate(self, prefs):
+        # runs through the developer cli, so it needs the repo checkout and uv
+        repo = get_dir_path()
+        if not (repo / "uvgami_cli").is_dir():
+            return None, "PartUV needs the UVgami repo (run the add-on from source)"
+        if shutil.which("uv") is None:
+            return None, "PartUV needs uv installed (docs.astral.sh/uv)"
+        if not (repo / ".venv").is_dir():
+            return None, "PartUV needs the CLI set up (run 'uv sync' in the repo)"
+        return repo, None
+
+    def build_args(self, engine_path, input_path, props):
+        output_path = get_extension_dir_path() / "output" / f"{input_path.stem}.obj"
+        return [
+            "uv",
+            "run",
+            "--project",
+            str(engine_path),
+            "--no-sync",
+            "uvgami",
+            "unwrap",
+            str(input_path),
+            "-o",
+            str(output_path),
+            "--overwrite",
+            "--engine",
+            "partuv",
+            "--segmentation",
+            props.partuv_segmentation.lower(),
+            "--threshold",
+            f"{props.partuv_threshold:.3f}",
+        ]
+
+    def stop(self, process, engine_path):
+        if platform.system() == "Windows":
+            # kill the whole tree, uv spawns the engine as a child
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                capture_output=True,
+            )
+        else:
+            process.kill()
+
+
+ENGINES = {engine.id: engine for engine in (UvgamiEngine(), PartuvEngine())}
 
 
 def get_engine(engine_id):

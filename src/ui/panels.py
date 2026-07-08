@@ -50,6 +50,16 @@ class UVGAMI_PT_main(bpy.types.Panel):
             row.label(icon="SOLO_OFF", text="Quality")
             row.prop(props, "quality", text="")
 
+        if engine.uses_segmentation:
+            row = box.row()
+            row.label(icon="MOD_EXPLODE", text="Segmentation")
+            row.prop(props, "partuv_segmentation", text="")
+
+        if engine.uses_threshold:
+            row = box.row()
+            row.label(icon="MOD_LENGTH", text="Threshold")
+            row.prop(props, "partuv_threshold")
+
         split = box.split(factor=0.7)
         split.label(icon="IMPORT", text="Import UVs")
         split.prop(props, "import_uvs")
