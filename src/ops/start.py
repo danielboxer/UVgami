@@ -334,7 +334,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
             edge_path, new_edges = self._triangulate_mesh(obj, path, props)
 
-            export_obj(obj, path, props.import_uvs)
+            export_obj(obj, path, props.import_uvs and self.engine.supports_import_uvs)
 
             guide_path = self._create_guide_file(obj, path, props)
 
@@ -442,7 +442,11 @@ class UVGAMI_OT_start(bpy.types.Operator):
     def _create_guide_file(self, obj, path, props):
         """Create seam restriction guide file if guided mode is active."""
         guide_path = None
-        if props.use_guided_mode and SEAM_RESTRICTIONS_GROUP in obj.vertex_groups:
+        if (
+            self.engine.supports_guided
+            and props.use_guided_mode
+            and SEAM_RESTRICTIONS_GROUP in obj.vertex_groups
+        ):
             # get seam guide
             guide = ""
             group_idx = obj.vertex_groups[SEAM_RESTRICTIONS_GROUP].index

@@ -6,6 +6,8 @@ on:
     branches:
       - master
     paths:
+      # pyproject holds the wheel version: bumping it is the release trigger
+      - engine/partuv/pyproject.toml
       - engine/partuv/vcpkg.json
 
 permissions:

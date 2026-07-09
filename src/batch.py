@@ -82,6 +82,18 @@ class BatchProcess:
             else:
                 parser.feed(line)
 
+    def should_retry(self, stem):
+        """True when the process has died with this mesh never started and no
+        result, but at least one other mesh did start. A mid-batch death has
+        intact remaining work, while a startup crash starts nothing and must
+        keep failing so requeuing can't loop forever."""
+        return (
+            self.process.poll() is not None
+            and stem not in self.started
+            and stem not in self._results
+            and len(self.started) > 0
+        )
+
     def poll_result(self, stem):
         """None while pending, 0 when unwrapped, nonzero exit code on failure."""
         code = self._results.get(stem)

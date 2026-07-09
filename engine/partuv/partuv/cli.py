@@ -1,6 +1,9 @@
 import argparse
+import ctypes
+import functools
 import os
 import platform
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -126,15 +129,55 @@ def _native_available():
     return _CORE_ERROR is None
 
 
+@functools.lru_cache(maxsize=1)
+def _cuda_available():
+    """Probe the nvidia driver directly so the geometric path can decide on a
+    cpu fallback without importing torch."""
+    if platform.system() == "Windows":
+        loader, name = ctypes.WinDLL, "nvcuda.dll"
+    else:
+        loader, name = ctypes.CDLL, "libcuda.so.1"
+    try:
+        return loader(name).cuInit(0) == 0
+    except OSError:
+        return False
+
+
+def _config_without_pamo(config):
+    """Write a copy of config with the cuda mesh simplifier off, returning the
+    temp path. We own the format, so patch the pamo line without a yaml dep."""
+    text = re.sub(r"(?m)^(\s*pamo:\s*)true\b", r"\1false", config.read_text())
+    handle, name = tempfile.mkstemp(prefix="uvgami-config-", suffix=".yaml")
+    with os.fdopen(handle, "w") as file:
+        file.write(text)
+    return Path(name)
+
+
 def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
     """Unwrap (input, output) pairs, returning the first failing exit code."""
     system = platform.system()
     if system == "Windows":
-        # UVGAMI_PARTUV_WSL=1 forces the bridge even when the native build exists
-        if os.environ.get("UVGAMI_PARTUV_WSL") or not _native_available():
-            from . import wsl
+        from . import wsl
 
+        # UVGAMI_PARTUV_WSL=1 forces the bridge even when the native build exists
+        if os.environ.get("UVGAMI_PARTUV_WSL"):
             return wsl.run(pairs, checkpoint, config, threshold, segmentation, visual)
+        if not _native_available():
+            from . import _CORE_ERROR
+
+            log(f"native partuv failed to load: {_CORE_ERROR}")
+            # the wsl bridge is a dev fallback with no end-user provisioning,
+            # so only take it when a usable venv is actually present
+            if wsl.is_usable():
+                log("falling back to PartUV in WSL")
+                return wsl.run(
+                    pairs, checkpoint, config, threshold, segmentation, visual
+                )
+            raise UnwrapError(
+                EXIT_MISSING_RUNTIME,
+                f"the PartUV engine failed to load natively ({_CORE_ERROR});"
+                " reinstall PartUV in the add-on preferences",
+            )
         log("using native Windows partuv")
     elif system != "Linux":
         raise UnwrapError(
@@ -156,6 +199,14 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
             f"partuv is not installed ({error}), reinstall PartUV in the add-on"
             " preferences, or in dev: uv sync --extra partuv",
         ) from error
+
+    # the geometric path runs the cuda mesh simplifier (pamo) on big components;
+    # with no nvidia driver disable it so unwrapping stays on the cpu branch.
+    # the ai path is already covered by the torch.cuda check above.
+    cpu_config = None
+    if segmentation == "geometric" and not _cuda_available():
+        log("no NVIDIA GPU detected, unwrapping on CPU (slower)")
+        config = cpu_config = _config_without_pamo(config)
 
     model = None
     if segmentation == "ai":
@@ -217,7 +268,11 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
 
             deliver(work / "final_components.obj", output_path)
 
-    return unwrap_all(pairs, unwrap_one)
+    try:
+        return unwrap_all(pairs, unwrap_one)
+    finally:
+        if cpu_config is not None:
+            cpu_config.unlink(missing_ok=True)
 
 
 def main(argv=None):

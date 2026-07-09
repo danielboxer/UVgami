@@ -11,7 +11,7 @@ def utf16(names):
 
 
 class FakeWsl:
-    """Answers the three wsl.exe call shapes the bridge makes."""
+    """Answers the wsl.exe call shapes the bridge makes."""
 
     def __init__(self, unwrap_returncode=0):
         self.calls = []
@@ -29,6 +29,8 @@ class FakeWsl:
                 "/mnt/c/" + p.replace("\\", "/").replace(":", "") + "\n" for p in paths
             )
             return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+        if cmd[-1].startswith("test -x"):  # is_usable venv probe: venv present
+            return subprocess.CompletedProcess(cmd, 0)
         return subprocess.CompletedProcess(cmd, self.unwrap_returncode)
 
 
@@ -124,6 +126,36 @@ def test_batch_bridges_every_pair(triangle, cube, tmp_path, fake_wsl):
     assert "triangle.obj" in command
     assert "cube.obj" in command
     assert command.count(" -o ") == 2
+
+
+def test_is_usable_true_when_venv_python_exists(fake_wsl):
+    assert wsl.is_usable() is True
+
+
+def test_is_usable_false_when_no_distro(monkeypatch):
+    monkeypatch.delenv("UVGAMI_WSL_DISTRO", raising=False)
+
+    def no_wsl(cmd, **kwargs):
+        raise FileNotFoundError("wsl.exe")
+
+    monkeypatch.setattr(wsl.subprocess, "run", no_wsl)
+    assert wsl.is_usable() is False
+
+
+def test_is_usable_false_when_python_missing(monkeypatch):
+    monkeypatch.delenv("UVGAMI_WSL_DISTRO", raising=False)
+    monkeypatch.delenv("UVGAMI_WSL_VENV", raising=False)
+
+    def fake(cmd, **kwargs):
+        if cmd[1] == "--list":
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=utf16(["Ubuntu-24.04"]), stderr=b""
+            )
+        # test -x returns 1 when the venv python is absent
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr(wsl.subprocess, "run", fake)
+    assert wsl.is_usable() is False
 
 
 def test_wsl_missing_errors(triangle, tmp_path, monkeypatch):

@@ -12,6 +12,7 @@ import zipfile
 
 import bpy
 
+from ..utils.download import download_file
 from ..utils.paths import (
     get_partuv_checkpoint_path,
     get_partuv_venv_path,
@@ -41,6 +42,9 @@ UV_ARCHIVES = {
 # written by the install thread, read by the preferences ui
 install_state = {"running": False, "error": None}
 
+# must match engine/partuv/pyproject.toml
+PARTUV_VERSION = "0.1.2.3"
+
 
 def find_wheel_url():
     request = urllib.request.Request(
@@ -54,13 +58,14 @@ def find_wheel_url():
     for asset in release.get("assets", []):
         name = asset["name"]
         if (
-            name.startswith("partuv-")
+            name.startswith(f"partuv-{PARTUV_VERSION}-")
             and PARTUV_PY_TAG in name
             and name.endswith(f"{plat}.whl")
         ):
             return asset["browser_download_url"]
     raise RuntimeError(
-        f"the latest release has no partuv wheel for {PARTUV_PY_TAG} {plat}"
+        f"no partuv {PARTUV_VERSION} wheel for {PARTUV_PY_TAG} {plat} in the latest"
+        " release, update the add-on"
     )
 
 
@@ -80,8 +85,7 @@ def ensure_uv():
     url = f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/{archive_name}"
     uv.parent.mkdir(parents=True, exist_ok=True)
     tmp = uv.parent / archive_name
-    with urllib.request.urlopen(url, timeout=30) as response, open(tmp, "wb") as file:
-        shutil.copyfileobj(response, file)
+    download_file(url, tmp)
     # the archives nest the binary in a per-target folder, extract just uv
     if archive_name.endswith(".zip"):
         with zipfile.ZipFile(tmp) as archive:
@@ -129,12 +133,7 @@ def download_checkpoint():
     if target.is_file():
         return
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(".ckpt.part")
-    with urllib.request.urlopen(CHECKPOINT_URL, timeout=30) as response, open(
-        tmp, "wb"
-    ) as file:
-        shutil.copyfileobj(response, file)
-    tmp.replace(target)
+    download_file(CHECKPOINT_URL, target)
 
 
 class UVGAMI_OT_install_partuv(bpy.types.Operator):

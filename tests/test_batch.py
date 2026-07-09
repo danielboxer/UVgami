@@ -80,6 +80,56 @@ def test_pending_while_running():
         batch_process.process.kill()
 
 
+def wait_dead(batch_process, timeout=10):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if (
+            batch_process.process.poll() is not None
+            and not batch_process._reader.is_alive()
+        ):
+            return
+        time.sleep(0.05)
+    raise AssertionError("process did not exit")
+
+
+def test_should_retry_when_never_started_and_others_did():
+    batch_process = start("print('start: a')")
+    wait_dead(batch_process)
+    assert batch_process.should_retry("b")
+
+
+def test_should_not_retry_when_nothing_started():
+    batch_process = start("print('nothing')")
+    wait_dead(batch_process)
+    assert not batch_process.should_retry("a")
+
+
+def test_should_not_retry_when_stem_started():
+    batch_process = start("print('start: a')")
+    wait_dead(batch_process)
+    assert not batch_process.should_retry("a")
+
+
+def test_should_not_retry_while_running():
+    batch_process = start(
+        "import time;print('start: a',flush=True);time.sleep(30)"
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while "a" not in batch_process.started:
+            assert time.monotonic() < deadline, "start marker never arrived"
+            time.sleep(0.05)
+        assert not batch_process.should_retry("b")
+    finally:
+        batch_process.process.kill()
+
+
+def test_should_not_retry_when_result_exists():
+    batch_process = start("print('start: a');print('done: a')")
+    wait_dead(batch_process)
+    assert not batch_process.should_retry("a")
+
+
 def test_parser_uvgami_snapshot():
     sink = feed(
         [

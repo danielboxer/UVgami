@@ -113,6 +113,13 @@ class Unwrap:
         self.process = batch_process.process
         self.is_active = True
 
+    def leave_batch(self):
+        """Detach from a dead batch process so this mesh can be re-queued into
+        a fresh batch. Mirrors join_batch."""
+        self.batch_process = None
+        self.process = None
+        self.is_active = False
+
     def poll_engine(self):
         """None while running, 0 on success, or a failure code."""
         if self.batch_process is None:

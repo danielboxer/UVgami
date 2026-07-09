@@ -1,5 +1,6 @@
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -60,6 +61,9 @@ class FakeMesh:
 def fake_partuv_runtime(monkeypatch, tmp_path):
     """Install fake torch and partuv submodules so run() orchestration is exercised."""
     monkeypatch.setattr(cli.platform, "system", lambda: "Linux")
+    # default to a machine with a gpu so geometric tests keep the config as-is;
+    # cpu-fallback tests override this
+    monkeypatch.setattr(cli, "_cuda_available", lambda: True)
 
     torch = types.ModuleType("torch")
     torch.cuda = types.SimpleNamespace(is_available=lambda: True)
@@ -87,6 +91,8 @@ def fake_partuv_runtime(monkeypatch, tmp_path):
 
     def fake_pipeline_numpy(V, F, tree_dict, config_path, threshold, visual=False):
         calls["pipeline"] = (tree_dict, config_path, threshold)
+        # read now: a cpu-fallback temp config is deleted when run() returns
+        calls["config_text"] = Path(config_path).read_text()
         calls["visual"] = visual
         return "final", ["part0"]
 
@@ -140,6 +146,53 @@ def test_run_geometric_skips_torch_and_checkpoint(triangle, tmp_path, fake_partu
     assert output.is_file()
 
 
+def test_geometric_cpu_fallback_disables_pamo(
+    triangle, tmp_path, fake_partuv_runtime, monkeypatch
+):
+    monkeypatch.setattr(cli, "_cuda_available", lambda: False)
+    config = tmp_path / "config.yaml"
+    config.write_text("unwrap:\n  pamo: true\n  usePamoFaceThreshold: 1000\n")
+
+    cli.run([(triangle, tmp_path / "out.obj")], None, config, 1.25, "geometric")
+
+    calls = fake_partuv_runtime
+    # pipeline sees a rewritten temp config, not the original
+    assert calls["pipeline"][1] != str(config)
+    assert "pamo: false" in calls["config_text"]
+    assert "pamo: true" not in calls["config_text"]
+
+
+def test_geometric_gpu_keeps_config(
+    triangle, tmp_path, fake_partuv_runtime, monkeypatch
+):
+    monkeypatch.setattr(cli, "_cuda_available", lambda: True)
+    config = tmp_path / "config.yaml"
+    config.write_text("unwrap:\n  pamo: true\n")
+
+    cli.run([(triangle, tmp_path / "out.obj")], None, config, 1.25, "geometric")
+
+    calls = fake_partuv_runtime
+    assert calls["pipeline"][1] == str(config)
+    assert "pamo: true" in calls["config_text"]
+
+
+def test_ai_never_probes_cuda(triangle, tmp_path, fake_partuv_runtime, monkeypatch):
+    checkpoint = tmp_path / "model.ckpt"
+    checkpoint.write_text("ckpt")
+    config = tmp_path / "config.yaml"
+    config.write_text("unwrap:\n  pamo: true\n")
+    probed = []
+    monkeypatch.setattr(cli, "_cuda_available", lambda: probed.append(True) or True)
+
+    cli.run([(triangle, tmp_path / "out.obj")], checkpoint, config, 1.5)
+
+    calls = fake_partuv_runtime
+    # torch.cuda already gates the ai path, so the driver probe stays untouched
+    assert probed == []
+    assert calls["pipeline"][1] == str(config)
+    assert "pamo: true" in calls["config_text"]
+
+
 def test_visual_reaches_pipeline(triangle, tmp_path, fake_partuv_runtime):
     config = tmp_path / "config.yaml"
     config.write_text("pipeline: {}")
@@ -190,8 +243,47 @@ def test_windows_env_var_forces_wsl(triangle, tmp_path, fake_partuv_runtime, mon
     monkeypatch.setattr(
         "partuv.wsl.run", lambda *args: calls.setdefault("wsl", args)
     )
+    # the dev override must not gate on is_usable
+    def boom():
+        raise AssertionError("is_usable consulted for the dev override")
+
+    monkeypatch.setattr("partuv.wsl.is_usable", boom)
 
     cli.run([(triangle, tmp_path / "out.obj")], None, None, 1.25, "geometric")
 
     assert "wsl" in calls
     assert fake_partuv_runtime == {}
+
+
+def test_windows_wsl_fallback_when_usable(triangle, tmp_path, monkeypatch):
+    monkeypatch.setattr(cli.platform, "system", lambda: "Windows")
+    monkeypatch.delenv("UVGAMI_PARTUV_WSL", raising=False)
+    # a non-None core error makes _native_available() report the native miss
+    monkeypatch.setattr("partuv._CORE_ERROR", ImportError("no _core.pyd"))
+    monkeypatch.setattr("partuv.wsl.is_usable", lambda: True)
+    calls = {}
+    monkeypatch.setattr("partuv.wsl.run", lambda *args: calls.setdefault("wsl", args))
+
+    cli.run([(triangle, tmp_path / "out.obj")], None, None, 1.25, "geometric")
+
+    assert "wsl" in calls
+
+
+def test_windows_reinstall_hint_when_wsl_unusable(triangle, tmp_path, monkeypatch):
+    monkeypatch.setattr(cli.platform, "system", lambda: "Windows")
+    monkeypatch.delenv("UVGAMI_PARTUV_WSL", raising=False)
+    monkeypatch.setattr("partuv._CORE_ERROR", ImportError("msvcp140 missing"))
+    monkeypatch.setattr("partuv.wsl.is_usable", lambda: False)
+
+    def fail(*args):
+        raise AssertionError("wsl.run should not be called")
+
+    monkeypatch.setattr("partuv.wsl.run", fail)
+
+    with pytest.raises(UnwrapError) as error:
+        cli.run([(triangle, tmp_path / "out.obj")], None, None, 1.25, "geometric")
+
+    assert error.value.exit_code == 3
+    message = str(error.value)
+    assert "reinstall PartUV" in message
+    assert "msvcp140 missing" in message

@@ -40,6 +40,30 @@ def pick_distro():
     return distros[0]
 
 
+def venv_arg():
+    """Shell-ready venv path for the login shell, ext4 by default: torch imports
+    from /mnt/c are far too slow."""
+    venv = os.environ.get("UVGAMI_WSL_VENV")
+    # keep $HOME out of shlex.join so the login shell still expands it
+    return shlex.quote(venv) if venv else '"$HOME"/uvgami-venv'
+
+
+def is_usable():
+    """True only when a distro can be picked and its venv python exists. Runs on
+    the native-failure path, so keep it to a single cheap wsl call."""
+    try:
+        distro = pick_distro()
+    except UnwrapError:
+        return False
+    check = f"test -x {venv_arg()}/bin/python"
+    try:
+        # login shell so $HOME in venv_arg expands
+        result = subprocess.run(["wsl.exe", "-d", distro, "-e", "bash", "-lc", check])
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
 def to_wsl_paths(distro, paths):
     script = 'for p in "$@"; do wslpath -a "$p"; done'
     result = subprocess.run(
@@ -98,11 +122,7 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
     if visual:
         unwrap.append("--visual")
 
-    # default venv lives on ext4: torch imports from /mnt/c are far too slow
-    venv = os.environ.get("UVGAMI_WSL_VENV")
-    venv_arg = shlex.quote(venv) if venv else '"$HOME"/uvgami-venv'
-    # keep $HOME out of shlex.join so the login shell still expands it
-    command = f"{venv_arg}/bin/python {shlex.join(unwrap)}"
+    command = f"{venv_arg()}/bin/python {shlex.join(unwrap)}"
     # login shell so $HOME expands and the venv interpreter resolves
     result = subprocess.run(["wsl.exe", "-d", distro, "-e", "bash", "-lc", command])
     if result.returncode != 0:

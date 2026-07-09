@@ -28,6 +28,7 @@ class Engine:
     supports_viewer = False
     supports_early_stop = False
     supports_preserve = False
+    supports_import_uvs = False
     uses_threshold = False
     uses_segmentation = False
 
@@ -64,6 +65,7 @@ class UvgamiEngine(Engine):
     supports_viewer = True
     supports_early_stop = True
     supports_preserve = True
+    supports_import_uvs = True
 
     def validate(self, prefs):
         raw = pathlib.Path(prefs.engine_path)

@@ -1,0 +1,130 @@
+import importlib.util
+import re
+import threading
+import tomllib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load(relpath, name):
+    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / relpath)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# install.py imports bpy so it can't load under pytest; the download helper is
+# bpy-free and loaded directly from its file
+download = _load("src/utils/download.py", "uvgami_download")
+
+CONTENT = bytes(range(256)) * 40  # 10240 bytes
+
+
+class RangeHandler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        server = self.server
+        rng = self.headers.get("Range")
+        server.requests.append(rng)
+        if server.ignore_range:
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(CONTENT)))
+            self.end_headers()
+            self.wfile.write(CONTENT)
+            return
+        start = int(rng.split("=")[1].split("-")[0]) if rng else 0
+        body = CONTENT[start:]
+        if start:
+            self.send_response(206)
+            self.send_header(
+                "Content-Range", f"bytes {start}-{len(CONTENT) - 1}/{len(CONTENT)}"
+            )
+        else:
+            self.send_response(200)
+        # declare the full remaining length, then truncate the body to simulate
+        # a mid-transfer drop for the first `drop_requests` responses
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if len(server.requests) <= server.drop_requests:
+            self.wfile.write(body[: len(body) // 2])
+            return
+        self.wfile.write(body)
+
+
+@pytest.fixture
+def server():
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), RangeHandler)
+    srv.requests = []
+    srv.ignore_range = False
+    srv.drop_requests = 0
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    yield srv
+    srv.shutdown()
+
+
+def url_for(server):
+    host, port = server.server_address
+    return f"http://{host}:{port}/model.ckpt"
+
+
+def test_resume_via_range(server, tmp_path):
+    server.drop_requests = 1
+    dest = tmp_path / "model.ckpt"
+
+    download.download_file(url_for(server), dest, backoff=0)
+
+    assert dest.read_bytes() == CONTENT
+    assert not dest.with_name(dest.name + ".part").exists()
+    # first request carried no range, the retry resumed with one
+    assert server.requests[0] is None
+    assert server.requests[1].startswith("bytes=")
+
+
+def test_size_mismatch_triggers_retry(server, tmp_path):
+    server.drop_requests = 1
+    dest = tmp_path / "model.ckpt"
+
+    download.download_file(url_for(server), dest, backoff=0)
+
+    # the truncated first response was rejected, forcing a second attempt
+    assert len(server.requests) == 2
+
+
+def test_200_response_restarts_file(server, tmp_path):
+    server.ignore_range = True
+    dest = tmp_path / "model.ckpt"
+    part = dest.with_name(dest.name + ".part")
+    part.write_bytes(b"stale-garbage-bytes")
+
+    download.download_file(url_for(server), dest, backoff=0)
+
+    # a range was requested but the 200 reply discarded the stale bytes
+    assert server.requests[0].startswith("bytes=")
+    assert dest.read_bytes() == CONTENT
+
+
+def test_exhausts_attempts_and_raises(server, tmp_path):
+    server.drop_requests = 99
+    dest = tmp_path / "model.ckpt"
+
+    with pytest.raises(download.DownloadError):
+        download.download_file(url_for(server), dest, attempts=3, backoff=0)
+
+    assert not dest.exists()
+    assert len(server.requests) == 3
+
+
+def test_partuv_version_matches_pyproject():
+    pyproject = REPO_ROOT / "engine" / "partuv" / "pyproject.toml"
+    version = tomllib.loads(pyproject.read_text())["project"]["version"]
+    install_src = (REPO_ROOT / "src" / "ops" / "install.py").read_text()
+    match = re.search(r'PARTUV_VERSION = "([^"]+)"', install_src)
+    assert match, "PARTUV_VERSION constant not found in install.py"
+    assert match.group(1) == version

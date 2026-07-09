@@ -130,6 +130,7 @@ class UnwrapManager:
             prefs = get_preferences()
             completed = []
             failed = []
+            requeued = []
 
             for unwrap in list(self._running):
                 # update progress
@@ -172,6 +173,9 @@ class UnwrapManager:
                 ):
                     unwrap.stop_process()
                     failed.append((unwrap, -2))
+                    # already failed this tick, don't let the poll below re-add
+                    # it once the killed process reports an exit code
+                    continue
 
                 # check process status
                 ret_code = unwrap.poll_engine()
@@ -179,7 +183,18 @@ class UnwrapManager:
                     if ret_code == 0 and unwrap.output_path.is_file():
                         completed.append(unwrap)
                     elif ret_code != 0:
-                        failed.append((unwrap, ret_code))
+                        # a batched mesh that never started and still has its
+                        # input goes back to the queue for a fresh batch instead
+                        # of inheriting the dead process's exit code
+                        stem = unwrap.path.stem
+                        if (
+                            unwrap.batch_process is not None
+                            and unwrap.batch_process.should_retry(stem)
+                            and unwrap.path.is_file()
+                        ):
+                            requeued.append(unwrap)
+                        else:
+                            failed.append((unwrap, ret_code))
 
             logger.update_time()
 
@@ -214,6 +229,15 @@ class UnwrapManager:
                     if unwrap in self._running:
                         self._running.remove(unwrap)
                     unwrap.cleanup()
+
+            # requeue detached batch members so _fill_slots re-batches them
+            for unwrap in requeued:
+                if unwrap in self._running:
+                    self._running.remove(unwrap)
+                unwrap.leave_batch()
+                self._queue.append(unwrap)
+            if requeued:
+                print(f"UVgami: requeued {len(requeued)} mesh(es) after batch ended")
 
             # fill empty slots from queue
             self._fill_slots()

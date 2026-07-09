@@ -60,9 +60,10 @@ class UVGAMI_PT_main(bpy.types.Panel):
             row.label(icon="MOD_LENGTH", text="Threshold")
             row.prop(props, "partuv_threshold")
 
-        split = box.split(factor=0.7)
-        split.label(icon="IMPORT", text="Import UVs")
-        split.prop(props, "import_uvs")
+        if engine.supports_import_uvs:
+            split = box.split(factor=0.7)
+            split.label(icon="IMPORT", text="Import UVs")
+            split.prop(props, "import_uvs")
 
         if engine.supports_preserve:
             split = box.split(factor=0.7)
@@ -246,6 +247,10 @@ class UVGAMI_PT_guides(bpy.types.Panel):
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return get_engine(context.scene.uvgami.engine).supports_guided
 
     def draw_header(self, context):
         self.layout.prop(context.scene.uvgami, "use_guided_mode")
