@@ -82,7 +82,7 @@ def run(input_path, output_path, quality, import_uvs, seam_weights, seam_weight,
             shutil.copyfile(seam_weights, in_dir / f"{input_path.stem}_weights")
 
         args = build_args(engine, work_input, out_dir, quality, seam_weight, import_uvs)
-        log(f"running: {' '.join(args)}")
+        log(f"running: {' '.join(args)}", style="step")
         process = subprocess.Popen(
             args,
             stdout=subprocess.PIPE,

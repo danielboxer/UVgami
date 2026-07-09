@@ -108,7 +108,7 @@ def main(argv=None):
         code = unwrap_all(pairs, unwrap_one)
         elapsed = time.perf_counter() - start
     except UnwrapError as error:
-        log(f"error: {error}")
+        log(f"error: {error}", style="error")
         if args.json:
             print(
                 json.dumps(
@@ -122,7 +122,7 @@ def main(argv=None):
         return error.exit_code
 
     if len(pairs) == 1:
-        log(f"wrote {args.outputs[0]} in {elapsed:.1f}s")
+        log(f"wrote {args.outputs[0]} in {elapsed:.1f}s", style="success")
         if args.json:
             print(
                 json.dumps(
@@ -136,5 +136,8 @@ def main(argv=None):
                 )
             )
     else:
-        log(f"batch finished in {elapsed:.1f}s")
+        log(
+            f"batch finished in {elapsed:.1f}s, {code.ok} ok, {code.failed} failed",
+            style="error" if code.failed else "success",
+        )
     return code

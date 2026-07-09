@@ -229,7 +229,7 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
         from .preprocess import preprocess as pf_preprocess
 
         # loaded once, shared by every mesh in the batch
-        log("loading PartField model")
+        log("loading PartField model", style="step")
         if visual:
             # tiny blue nudges so the bar leaves its full-red not-started state
             # long before the engine reports real face fractions
@@ -239,7 +239,7 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
     def unwrap_one(input_path, output_path):
         with tempfile.TemporaryDirectory(prefix="uvgami-") as tmp:
             work = Path(tmp)
-            log(f"preprocessing {input_path.name}")
+            log(f"preprocessing {input_path.name}", style="step")
             if visual:
                 emit("progress: 0.02 0 0.98")
             if segmentation == "geometric":
@@ -253,7 +253,7 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
                     output_path=str(work / "pre" / input_path.name),
                 )
 
-            log("running PartUV pipeline")
+            log("running PartUV pipeline", style="step")
             if visual:
                 emit("progress: 0.05 0 0.95")
             final_part, individual_parts = pipeline_numpy(
@@ -291,11 +291,20 @@ def main(argv=None):
         )
         elapsed = time.perf_counter() - start
     except UnwrapError as error:
-        log(f"error: {error}")
+        log(f"error: {error}", style="error")
         return error.exit_code
 
     if len(pairs) == 1:
-        log(f"wrote {args.outputs[0]} in {elapsed:.1f}s")
+        log(f"wrote {args.outputs[0]} in {elapsed:.1f}s", style="success")
     else:
-        log(f"batch finished in {elapsed:.1f}s")
+        # the wsl bridge returns a plain exit code with no tallies, so omit the
+        # counts rather than guess them
+        failed = getattr(code, "failed", None)
+        if failed is None:
+            log(f"batch finished in {elapsed:.1f}s")
+        else:
+            log(
+                f"batch finished in {elapsed:.1f}s, {code.ok} ok, {failed} failed",
+                style="error" if failed else "success",
+            )
     return code
