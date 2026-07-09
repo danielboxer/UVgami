@@ -55,5 +55,7 @@ extend-exclude = ["engine", "src", "/__init__.py"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["smoke: runs the real engine binary"]
+# the partuv driver source (no built _core) must import for the wheel tests
+pythonpath = ["engine/partuv"]
 # the plugin keeps pytest from importing the blender addon root __init__.py
 addopts = "--import-mode=importlib -p uvgami_cli._pytest_plugin"

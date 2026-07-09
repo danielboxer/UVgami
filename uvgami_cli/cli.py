@@ -5,20 +5,14 @@ from pathlib import Path
 
 from .common import EXIT_INVALID_INPUT, UnwrapError, log, unwrap_all
 
-ENGINE_FLAGS = {
-    "optcuts": ("quality", "import_uvs", "seam_weights", "seam_weight", "optcuts_path"),
-    "partuv": ("threshold", "checkpoint", "config", "segmentation", "visual"),
-}
-
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        prog="uvgami", description="UV unwrap OBJ files with the UVgami engines"
+        prog="uvgami", description="UV unwrap OBJ files with the UVgami OptCuts engine"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     unwrap = subparsers.add_parser("unwrap", help="unwrap OBJ files")
     unwrap.add_argument("input", type=Path, nargs="+", help="input OBJ files")
-    unwrap.add_argument("--engine", choices=["optcuts", "partuv"], required=True)
     unwrap.add_argument(
         "-o",
         "--output",
@@ -38,8 +32,6 @@ def build_parser():
         help="print a JSON result on stdout (single input only)",
     )
 
-    # engine flag defaults are applied in validate() so that flags passed to the
-    # wrong engine can be detected
     optcuts = unwrap.add_argument_group("optcuts options")
     optcuts.add_argument("--quality", choices=["high", "medium", "low"], help="default: medium")
     optcuts.add_argument(
@@ -50,40 +42,10 @@ def build_parser():
         "--seam-weight", type=int, choices=range(1, 6), help="seam weight level, default: 3"
     )
     optcuts.add_argument("--optcuts-path", type=Path, help="default: bundled binary")
-
-    partuv = unwrap.add_argument_group("partuv options")
-    partuv.add_argument("--threshold", type=float, help="distortion threshold, default: 1.25")
-    partuv.add_argument(
-        "--checkpoint",
-        type=Path,
-        help="PartField model checkpoint, default: $UVGAMI_PARTUV_CHECKPOINT"
-        " or engine/partuv/model_objaverse.ckpt",
-    )
-    partuv.add_argument("--config", type=Path, help="default: engine/partuv/config/config.yaml")
-    partuv.add_argument(
-        "--segmentation",
-        choices=["ai", "geometric"],
-        help="part segmentation: ai (PartField, needs checkpoint + torch)"
-        " or geometric (normals-based, no checkpoint), default: ai",
-    )
-    partuv.add_argument(
-        "--visual",
-        action="store_true",
-        default=None,
-        help="stream finished charts and progress on stdout for live viewing",
-    )
     return parser
 
 
 def validate(args):
-    other = "partuv" if args.engine == "optcuts" else "optcuts"
-    for name in ENGINE_FLAGS[other]:
-        if getattr(args, name) is not None:
-            flag = "--" + name.replace("_", "-")
-            raise UnwrapError(
-                EXIT_INVALID_INPUT, f"{flag} is only valid with --engine {other}"
-            )
-
     for input_path in args.input:
         # in a batch a missing input fails per mesh instead, so a cancelled
         # mesh (its input file is deleted) doesn't abort the rest
@@ -115,26 +77,13 @@ def validate(args):
                 EXIT_INVALID_INPUT, f"output exists (use --overwrite): {output_path}"
             )
 
-    if args.engine == "optcuts":
-        args.quality = args.quality or "medium"
-        args.import_uvs = bool(args.import_uvs)
-        args.seam_weight = args.seam_weight or 3
-        if args.seam_weights is not None and not args.seam_weights.is_file():
-            raise UnwrapError(
-                EXIT_INVALID_INPUT, f"seam weights file not found: {args.seam_weights}"
-            )
-    else:
-        from . import partuv
-
-        args.segmentation = args.segmentation or "ai"
-        if args.segmentation == "ai":
-            args.checkpoint = partuv.resolve_checkpoint(args.checkpoint)
-        elif args.checkpoint is not None:
-            raise UnwrapError(
-                EXIT_INVALID_INPUT, "--checkpoint only applies to --segmentation ai"
-            )
-        args.threshold = args.threshold if args.threshold is not None else 1.25
-        args.visual = bool(args.visual)
+    args.quality = args.quality or "medium"
+    args.import_uvs = bool(args.import_uvs)
+    args.seam_weight = args.seam_weight or 3
+    if args.seam_weights is not None and not args.seam_weights.is_file():
+        raise UnwrapError(
+            EXIT_INVALID_INPUT, f"seam weights file not found: {args.seam_weights}"
+        )
 
 
 def main(argv=None):
@@ -143,32 +92,20 @@ def main(argv=None):
         validate(args)
         pairs = list(zip(args.input, args.outputs))
         start = time.perf_counter()
-        if args.engine == "optcuts":
-            from . import optcuts
+        from . import optcuts
 
-            def unwrap_one(input_path, output_path):
-                optcuts.run(
-                    input_path,
-                    output_path,
-                    args.quality,
-                    args.import_uvs,
-                    args.seam_weights,
-                    args.seam_weight,
-                    args.optcuts_path,
-                )
-
-            code = unwrap_all(pairs, unwrap_one)
-        else:
-            from . import partuv
-
-            code = partuv.run(
-                pairs,
-                args.checkpoint,
-                args.config,
-                args.threshold,
-                args.segmentation,
-                args.visual,
+        def unwrap_one(input_path, output_path):
+            optcuts.run(
+                input_path,
+                output_path,
+                args.quality,
+                args.import_uvs,
+                args.seam_weights,
+                args.seam_weight,
+                args.optcuts_path,
             )
+
+        code = unwrap_all(pairs, unwrap_one)
         elapsed = time.perf_counter() - start
     except UnwrapError as error:
         log(f"error: {error}")
@@ -191,7 +128,7 @@ def main(argv=None):
                 json.dumps(
                     {
                         "status": "ok",
-                        "engine": args.engine,
+                        "engine": "optcuts",
                         "input": str(args.input[0]),
                         "output": str(args.outputs[0]),
                         "seconds": round(elapsed, 2),

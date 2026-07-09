@@ -38,7 +38,7 @@ Blender-independent CLI for testing the engines with OBJ files. Needs [uv](https
 
 ```powershell
 uv sync
-uv run uvgami unwrap model.obj --engine optcuts
+uv run uvgami unwrap model.obj
 ```
 
 - Output defaults to `<input stem>_uv.obj` next to the input, use `-o` and `--overwrite` to control it
@@ -48,9 +48,9 @@ uv run uvgami unwrap model.obj --engine optcuts
 
 ### PartUV engine
 
-PartUV needs CUDA. It builds natively on Windows and Linux; on Windows without a native install the CLI bridges to WSL by itself: the same `unwrap` command re-invokes the CLI inside the distro with paths translated. `UVGAMI_PARTUV_WSL=1` forces the bridge even when the native build exists.
+PartUV needs CUDA. It builds natively on Windows and Linux; on Windows without a native install the driver bridges to WSL by itself: the same `python -m partuv` command re-invokes inside the distro with paths translated. `UVGAMI_PARTUV_WSL=1` forces the bridge even when the native build exists.
 
-In the add-on, PartUV runs through this CLI: from a repo checkout it uses `uv run`, otherwise the install button in the add-on preferences downloads the wheel from the latest release and installs it with Blender's Python (`python -m pip install --target`), and unwraps run as `python -m uvgami_cli`.
+In the add-on, PartUV runs `python -m partuv` from the wheel: from a repo checkout it uses `uv run`, otherwise the install button in the add-on preferences downloads the wheel from the latest release and installs it into a managed venv.
 
 Two segmentation modes drive the part tree:
 
@@ -81,7 +81,7 @@ export PATH=/usr/local/cuda-12.6/bin:$PATH
 # venv on ext4: keeps the Windows .venv untouched and torch imports fast
 export UV_PROJECT_ENVIRONMENT=~/uvgami-venv
 uv sync --extra partuv        # or --extra partuv-lite for geometric only
-uv run uvgami unwrap model.obj --engine partuv
+uv run python -m partuv model.obj
 ```
 
 After that, the same unwrap works from Windows directly (PowerShell, not Git Bash: MSYS mangles POSIX paths in env vars).

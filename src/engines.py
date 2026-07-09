@@ -6,7 +6,6 @@ import pathlib
 import platform
 import shutil
 import subprocess
-import sys
 
 from .utils.io import print_stdin
 from .utils.paths import (
@@ -14,7 +13,9 @@ from .utils.paths import (
     get_dir_path,
     get_extension_dir_path,
     get_linux_path,
-    get_partuv_libs_path,
+    get_partuv_checkpoint_path,
+    get_partuv_venv_path,
+    get_partuv_venv_python,
 )
 
 
@@ -142,7 +143,11 @@ def find_partuv_dev_repo():
 
 
 def is_partuv_installed():
-    return (get_partuv_libs_path() / "partuv").is_dir()
+    return get_partuv_venv_python().is_file()
+
+
+def is_partuv_ai_installed():
+    return is_partuv_installed() and get_partuv_checkpoint_path().is_file()
 
 
 class PartuvEngine(Engine):
@@ -150,8 +155,8 @@ class PartuvEngine(Engine):
     label = "PartUV"
     uses_threshold = True
     uses_segmentation = True
-    # set by validate: dev runs the repo cli through uv, installed runs the
-    # wheel from the install operator with blender's python
+    # set by validate: dev runs the workspace partuv through uv, installed runs
+    # the wheel's python -m partuv from the install operator's venv
     mode = "dev"
 
     def allows_concurrent(self, props):
@@ -170,7 +175,7 @@ class PartuvEngine(Engine):
             return repo, None
         if is_partuv_installed():
             self.mode = "installed"
-            return get_partuv_libs_path(), None
+            return get_partuv_venv_path(), None
         return None, "PartUV is not installed. Install it in the add-on preferences"
 
     def build_args(self, engine_path, input_path, props):
@@ -178,17 +183,14 @@ class PartuvEngine(Engine):
 
     def build_batch_args(self, engine_path, input_paths, props):
         if self.mode == "dev":
-            base = ["uv", "run", "--project", str(engine_path), "--no-sync", "uvgami"]
+            base = ["uv", "run", "--project", str(engine_path), "--no-sync", "python", "-m", "partuv"]
         else:
-            base = [sys.executable, "-m", "uvgami_cli"]
+            base = [str(get_partuv_venv_python()), "-m", "partuv"]
         return base + [
-            "unwrap",
             *[str(path) for path in input_paths],
             "--output-dir",
             str(get_extension_dir_path() / "output"),
             "--overwrite",
-            "--engine",
-            "partuv",
             "--segmentation",
             props.partuv_segmentation.lower(),
             "--threshold",
@@ -200,12 +202,10 @@ class PartuvEngine(Engine):
     def build_env(self, engine_path):
         if self.mode == "dev":
             return None
-        # uvgami_cli is resolved from the add-on dir, partuv from the libs dir
         env = os.environ.copy()
-        paths = [str(engine_path), str(get_dir_path())]
-        if env.get("PYTHONPATH"):
-            paths.append(env["PYTHONPATH"])
-        env["PYTHONPATH"] = os.pathsep.join(paths)
+        # the checkpoint isn't shipped in the wheel, so partuv can't find it by
+        # its default path; point it at the downloaded one
+        env["UVGAMI_PARTUV_CHECKPOINT"] = str(get_partuv_checkpoint_path())
         return env
 
     def stop(self, process, engine_path):

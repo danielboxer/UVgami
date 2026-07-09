@@ -3,49 +3,50 @@ import types
 
 import pytest
 
-from uvgami_cli import partuv
-from uvgami_cli.common import UnwrapError
+from partuv import cli
+from partuv.common import UnwrapError
 
 
 # windows now bridges to wsl (see test_wsl.py), other systems still error
 def test_requires_linux(triangle, tmp_path, monkeypatch):
-    monkeypatch.setattr(partuv.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(cli.platform, "system", lambda: "Darwin")
     checkpoint = tmp_path / "model.ckpt"
     checkpoint.write_text("ckpt")
     with pytest.raises(UnwrapError) as error:
-        partuv.run([(triangle, tmp_path / "out.obj")], checkpoint, None, 1.25)
+        cli.run([(triangle, tmp_path / "out.obj")], checkpoint, None, 1.25)
     assert error.value.exit_code == 3
 
 
 def test_resolve_checkpoint_precedence(tmp_path, monkeypatch):
     flagged = tmp_path / "flag.ckpt"
     monkeypatch.setenv("UVGAMI_PARTUV_CHECKPOINT", "/root/env.ckpt")
-    assert partuv.resolve_checkpoint(flagged) == str(flagged)
-    assert partuv.resolve_checkpoint(None) == "/root/env.ckpt"
+    assert cli.resolve_checkpoint(flagged) == str(flagged)
+    assert cli.resolve_checkpoint(None) == "/root/env.ckpt"
 
     monkeypatch.delenv("UVGAMI_PARTUV_CHECKPOINT")
     default = tmp_path / "model_objaverse.ckpt"
-    monkeypatch.setattr(partuv, "DEFAULT_CHECKPOINT", default)
+    monkeypatch.setattr(cli, "DEFAULT_CHECKPOINT", default)
     with pytest.raises(UnwrapError) as error:
-        partuv.resolve_checkpoint(None)
+        cli.resolve_checkpoint(None)
     assert error.value.exit_code == 2
     default.write_text("ckpt")
-    assert partuv.resolve_checkpoint(None) == str(default)
+    assert cli.resolve_checkpoint(None) == str(default)
 
 
-def test_missing_checkpoint(triangle, tmp_path, monkeypatch):
-    monkeypatch.setattr(partuv.platform, "system", lambda: "Linux")
+def test_missing_checkpoint(triangle, tmp_path, monkeypatch, fake_partuv_runtime):
+    config = tmp_path / "config.yaml"
+    config.write_text("pipeline: {}")
     with pytest.raises(UnwrapError) as error:
-        partuv.run([(triangle, tmp_path / "out.obj")], tmp_path / "nope.ckpt", None, 1.25)
+        cli.run([(triangle, tmp_path / "out.obj")], tmp_path / "nope.ckpt", config, 1.25)
     assert error.value.exit_code == 3
 
 
 def test_missing_config(triangle, tmp_path, monkeypatch):
-    monkeypatch.setattr(partuv.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(cli.platform, "system", lambda: "Linux")
     checkpoint = tmp_path / "model.ckpt"
     checkpoint.write_text("ckpt")
     with pytest.raises(UnwrapError) as error:
-        partuv.run([(triangle, tmp_path / "out.obj")], checkpoint, tmp_path / "nope.yaml", 1.25
+        cli.run([(triangle, tmp_path / "out.obj")], checkpoint, tmp_path / "nope.yaml", 1.25
         )
     assert error.value.exit_code == 3
 
@@ -57,8 +58,8 @@ class FakeMesh:
 
 @pytest.fixture
 def fake_partuv_runtime(monkeypatch, tmp_path):
-    """Install fake torch and partuv modules so run() orchestration is exercised."""
-    monkeypatch.setattr(partuv.platform, "system", lambda: "Linux")
+    """Install fake torch and partuv submodules so run() orchestration is exercised."""
+    monkeypatch.setattr(cli.platform, "system", lambda: "Linux")
 
     torch = types.ModuleType("torch")
     torch.cuda = types.SimpleNamespace(is_available=lambda: True)
@@ -66,7 +67,7 @@ def fake_partuv_runtime(monkeypatch, tmp_path):
 
     calls = {}
 
-    fake = types.ModuleType("partuv")
+    core_module = types.ModuleType("partuv._core")
     preprocess_module = types.ModuleType("partuv.preprocess")
     output_module = types.ModuleType("partuv.output")
     geometric_module = types.ModuleType("partuv.geometric")
@@ -94,12 +95,12 @@ def fake_partuv_runtime(monkeypatch, tmp_path):
         result = output_dir / "final_components.obj"
         result.write_text("v 0 0 0\nvt 0 0\nf 1/1 1/1 1/1\n")
 
-    fake.pipeline_numpy = fake_pipeline_numpy
+    core_module.pipeline_numpy = fake_pipeline_numpy
     preprocess_module.preprocess = fake_preprocess
     preprocess_module.PFInferenceModel = FakeModel
     output_module.save_results = fake_save_results
     geometric_module.preprocess_geometric = fake_preprocess_geometric
-    monkeypatch.setitem(sys.modules, "partuv", fake)
+    monkeypatch.setitem(sys.modules, "partuv._core", core_module)
     monkeypatch.setitem(sys.modules, "partuv.preprocess", preprocess_module)
     monkeypatch.setitem(sys.modules, "partuv.output", output_module)
     monkeypatch.setitem(sys.modules, "partuv.geometric", geometric_module)
@@ -113,7 +114,7 @@ def test_run_orchestration(triangle, tmp_path, fake_partuv_runtime):
     config.write_text("pipeline: {}")
     output = tmp_path / "out.obj"
 
-    partuv.run([(triangle, output)], checkpoint, config, 1.5)
+    cli.run([(triangle, output)], checkpoint, config, 1.5)
 
     calls = fake_partuv_runtime
     assert calls["model"] == (str(checkpoint), "cuda")
@@ -130,7 +131,7 @@ def test_run_geometric_skips_torch_and_checkpoint(triangle, tmp_path, fake_partu
     config.write_text("pipeline: {}")
     output = tmp_path / "out.obj"
 
-    partuv.run([(triangle, output)], None, config, 1.25, "geometric")
+    cli.run([(triangle, output)], None, config, 1.25, "geometric")
 
     calls = fake_partuv_runtime
     assert calls["geometric"] == str(triangle)
@@ -143,7 +144,7 @@ def test_visual_reaches_pipeline(triangle, tmp_path, fake_partuv_runtime):
     config = tmp_path / "config.yaml"
     config.write_text("pipeline: {}")
 
-    partuv.run([(triangle, tmp_path / "out.obj")], None, config, 1.25, "geometric", True)
+    cli.run([(triangle, tmp_path / "out.obj")], None, config, 1.25, "geometric", True)
 
     assert fake_partuv_runtime["visual"] is True
 
@@ -155,7 +156,7 @@ def test_batch_loads_model_once(triangle, cube, tmp_path, fake_partuv_runtime, c
     config.write_text("pipeline: {}")
     pairs = [(triangle, tmp_path / "a.obj"), (cube, tmp_path / "b.obj")]
 
-    code = partuv.run(pairs, checkpoint, config, 1.5)
+    code = cli.run(pairs, checkpoint, config, 1.5)
 
     assert code == 0
     assert fake_partuv_runtime["model_loads"] == 1
@@ -168,27 +169,29 @@ def test_batch_loads_model_once(triangle, cube, tmp_path, fake_partuv_runtime, c
 def test_windows_runs_native_when_partuv_installed(
     triangle, tmp_path, fake_partuv_runtime, monkeypatch
 ):
-    monkeypatch.setattr(partuv.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(cli.platform, "system", lambda: "Windows")
     monkeypatch.delenv("UVGAMI_PARTUV_WSL", raising=False)
+    # a loadable core is the native-vs-wsl routing knob
+    monkeypatch.setattr("partuv._CORE_ERROR", None)
     config = tmp_path / "config.yaml"
     config.write_text("pipeline: {}")
     output = tmp_path / "out.obj"
 
-    partuv.run([(triangle, output)], None, config, 1.25, "geometric")
+    cli.run([(triangle, output)], None, config, 1.25, "geometric")
 
     assert fake_partuv_runtime["geometric"] == str(triangle)
     assert output.is_file()
 
 
 def test_windows_env_var_forces_wsl(triangle, tmp_path, fake_partuv_runtime, monkeypatch):
-    monkeypatch.setattr(partuv.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(cli.platform, "system", lambda: "Windows")
     monkeypatch.setenv("UVGAMI_PARTUV_WSL", "1")
     calls = {}
     monkeypatch.setattr(
-        "uvgami_cli.wsl.run", lambda *args: calls.setdefault("wsl", args)
+        "partuv.wsl.run", lambda *args: calls.setdefault("wsl", args)
     )
 
-    partuv.run([(triangle, tmp_path / "out.obj")], None, None, 1.25, "geometric")
+    cli.run([(triangle, tmp_path / "out.obj")], None, None, 1.25, "geometric")
 
     assert "wsl" in calls
     assert fake_partuv_runtime == {}

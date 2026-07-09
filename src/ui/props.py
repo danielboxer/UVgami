@@ -7,7 +7,7 @@ import platform
 
 import bpy
 
-from ..engines import find_partuv_dev_repo, is_partuv_installed
+from ..engines import find_partuv_dev_repo, is_partuv_ai_installed, is_partuv_installed
 from ..ops.install import install_state
 from ..utils.paths import get_addon_id, get_bundled_engine_path, get_preferences
 
@@ -350,18 +350,31 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
             row.label(text="Using bundled engine", icon="CHECKMARK")
 
         box = layout.box()
-        row = box.row()
         if find_partuv_dev_repo() is not None:
-            row.label(text="PartUV: using the repo CLI", icon="CHECKMARK")
-        elif is_partuv_installed():
-            row.label(text="PartUV engine installed", icon="CHECKMARK")
-            row.operator("uvgami.install_partuv", text="Update")
+            box.row().label(text="PartUV: using the repo CLI", icon="CHECKMARK")
         else:
+            row = box.row()
+            if is_partuv_ai_installed():
+                row.label(text="PartUV installed (AI ready)", icon="CHECKMARK")
+            elif is_partuv_installed():
+                row.label(text="PartUV installed (Geometric)", icon="CHECKMARK")
+            else:
+                row.label(text="PartUV not installed")
+
+            row = box.row()
             row.scale_y = 1.5
-            row.operator("uvgami.install_partuv", icon="IMPORT")
+            geometric = row.operator(
+                "uvgami.install_partuv", text="Geometric", icon="IMPORT"
+            )
+            geometric.tier = "GEOMETRIC"
+            ai = row.operator("uvgami.install_partuv", text="AI (~5 GB)", icon="IMPORT")
+            ai.tier = "AI"
         if install_state["running"]:
             row = box.row()
-            row.label(text="Installing PartUV, this can take a few minutes", icon="SORTTIME")
+            row.label(
+                text="Installing PartUV, the AI tier downloads several GB",
+                icon="SORTTIME",
+            )
         elif install_state["error"] is not None:
             row = box.row()
             row.label(text=install_state["error"], icon="ERROR")

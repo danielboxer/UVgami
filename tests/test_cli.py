@@ -1,11 +1,15 @@
 import json
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from uvgami_cli import cli, optcuts
 from uvgami_cli.common import UnwrapError
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -23,18 +27,18 @@ def fake_optcuts(monkeypatch):
 
 
 def test_default_output_name(triangle, fake_optcuts):
-    assert cli.main(["unwrap", str(triangle), "--engine", "optcuts"]) == 0
+    assert cli.main(["unwrap", str(triangle)]) == 0
     assert (triangle.parent / "triangle_uv.obj").is_file()
 
 
 def test_explicit_output(triangle, tmp_path, fake_optcuts):
     out = tmp_path / "result" / "custom.obj"
-    assert cli.main(["unwrap", str(triangle), "--engine", "optcuts", "-o", str(out)]) == 0
+    assert cli.main(["unwrap", str(triangle), "-o", str(out)]) == 0
     assert fake_optcuts[0][1] == out
 
 
 def test_optcuts_defaults(triangle, fake_optcuts):
-    cli.main(["unwrap", str(triangle), "--engine", "optcuts"])
+    cli.main(["unwrap", str(triangle)])
     _, _, quality, import_uvs, seam_weights, seam_weight, engine_path = fake_optcuts[0]
     assert quality == "medium"
     assert import_uvs is False
@@ -44,106 +48,21 @@ def test_optcuts_defaults(triangle, fake_optcuts):
 
 
 def test_missing_input(tmp_path, fake_optcuts):
-    code = cli.main(["unwrap", str(tmp_path / "nope.obj"), "--engine", "optcuts"])
+    code = cli.main(["unwrap", str(tmp_path / "nope.obj")])
     assert code == 2
 
 
 def test_non_obj_input(tmp_path, fake_optcuts):
     bad = tmp_path / "mesh.stl"
     bad.write_text("solid")
-    assert cli.main(["unwrap", str(bad), "--engine", "optcuts"]) == 2
+    assert cli.main(["unwrap", str(bad)]) == 2
 
 
 def test_overwrite_protection(triangle, fake_optcuts):
     existing = triangle.parent / "triangle_uv.obj"
     existing.write_text("v 0 0 0\n")
-    assert cli.main(["unwrap", str(triangle), "--engine", "optcuts"]) == 2
-    assert cli.main(["unwrap", str(triangle), "--engine", "optcuts", "--overwrite"]) == 0
-
-
-def test_partuv_flag_rejected_for_optcuts(triangle, fake_optcuts):
-    code = cli.main(
-        ["unwrap", str(triangle), "--engine", "optcuts", "--threshold", "1.5"]
-    )
-    assert code == 2
-    assert not fake_optcuts
-
-
-def test_optcuts_flag_rejected_for_partuv(triangle):
-    code = cli.main(
-        ["unwrap", str(triangle), "--engine", "partuv", "--quality", "high"]
-    )
-    assert code == 2
-
-
-def test_partuv_requires_checkpoint(triangle, tmp_path, monkeypatch):
-    from uvgami_cli import partuv
-
-    monkeypatch.delenv("UVGAMI_PARTUV_CHECKPOINT", raising=False)
-    monkeypatch.setattr(partuv, "DEFAULT_CHECKPOINT", tmp_path / "missing.ckpt")
-    assert cli.main(["unwrap", str(triangle), "--engine", "partuv"]) == 2
-
-
-def test_partuv_geometric_needs_no_checkpoint(triangle, tmp_path, monkeypatch):
-    from uvgami_cli import partuv
-
-    monkeypatch.delenv("UVGAMI_PARTUV_CHECKPOINT", raising=False)
-    monkeypatch.setattr(partuv, "DEFAULT_CHECKPOINT", tmp_path / "missing.ckpt")
-    calls = []
-    monkeypatch.setattr(partuv, "run", lambda *args: calls.append(args) or 0)
-    code = cli.main(
-        ["unwrap", str(triangle), "--engine", "partuv", "--segmentation", "geometric"]
-    )
-    assert code == 0
-    pairs, checkpoint, _, _, segmentation, visual = calls[0]
-    assert pairs == [(triangle, triangle.parent / "triangle_uv.obj")]
-    assert checkpoint is None
-    assert segmentation == "geometric"
-    assert visual is False
-
-
-def test_visual_flag_forwarded(triangle, monkeypatch):
-    from uvgami_cli import partuv
-
-    calls = []
-    monkeypatch.setattr(partuv, "run", lambda *args: calls.append(args) or 0)
-    code = cli.main(
-        [
-            "unwrap",
-            str(triangle),
-            "--engine",
-            "partuv",
-            "--segmentation",
-            "geometric",
-            "--visual",
-        ]
-    )
-    assert code == 0
-    assert calls[0][-1] is True
-
-
-def test_visual_rejected_for_optcuts(triangle, fake_optcuts):
-    code = cli.main(["unwrap", str(triangle), "--engine", "optcuts", "--visual"])
-    assert code == 2
-    assert not fake_optcuts
-
-
-def test_checkpoint_rejected_for_geometric(triangle, tmp_path):
-    checkpoint = tmp_path / "model.ckpt"
-    checkpoint.write_text("ckpt")
-    code = cli.main(
-        [
-            "unwrap",
-            str(triangle),
-            "--engine",
-            "partuv",
-            "--segmentation",
-            "geometric",
-            "--checkpoint",
-            str(checkpoint),
-        ]
-    )
-    assert code == 2
+    assert cli.main(["unwrap", str(triangle)]) == 2
+    assert cli.main(["unwrap", str(triangle), "--overwrite"]) == 0
 
 
 def test_missing_seam_weights_file(triangle, tmp_path, fake_optcuts):
@@ -151,8 +70,6 @@ def test_missing_seam_weights_file(triangle, tmp_path, fake_optcuts):
         [
             "unwrap",
             str(triangle),
-            "--engine",
-            "optcuts",
             "--seam-weights",
             str(tmp_path / "nope_weights"),
         ]
@@ -161,7 +78,7 @@ def test_missing_seam_weights_file(triangle, tmp_path, fake_optcuts):
 
 
 def test_json_success(triangle, fake_optcuts, capsys):
-    assert cli.main(["unwrap", str(triangle), "--engine", "optcuts", "--json"]) == 0
+    assert cli.main(["unwrap", str(triangle), "--json"]) == 0
     out = capsys.readouterr().out
     result = json.loads(out)
     assert result["status"] == "ok"
@@ -174,17 +91,17 @@ def test_json_error(triangle, monkeypatch, capsys):
         raise UnwrapError(4, "engine blew up")
 
     monkeypatch.setattr(optcuts, "run", fail)
-    assert cli.main(["unwrap", str(triangle), "--engine", "optcuts", "--json"]) == 4
+    assert cli.main(["unwrap", str(triangle), "--json"]) == 4
     result = json.loads(capsys.readouterr().out)
     assert result == {"status": "error", "exit_code": 4, "message": "engine blew up"}
 
 
 def test_stdout_empty_without_json(triangle, fake_optcuts, capsys):
-    cli.main(["unwrap", str(triangle), "--engine", "optcuts"])
+    cli.main(["unwrap", str(triangle)])
     assert capsys.readouterr().out == ""
 
 
-# the addon's installed mode runs the cli as python -m uvgami_cli
+# the addon's optcuts path runs the cli as python -m uvgami_cli
 def test_module_entry_point(triangle):
     result = subprocess.run(
         [
@@ -193,17 +110,38 @@ def test_module_entry_point(triangle):
             "uvgami_cli",
             "unwrap",
             str(triangle),
-            "--engine",
-            "partuv",
-            "--segmentation",
-            "geometric",
-            "--threshold",
+            "--seam-weight",
             "not-a-number",
         ],
         capture_output=True,
         text=True,
     )
-    # argparse rejects the threshold before any engine import runs
+    # argparse rejects the seam weight before any engine import runs
+    assert result.returncode == 2
+    assert "invalid int value" in result.stderr
+
+
+# the addon's partuv path runs the wheel as python -m partuv
+def test_partuv_module_entry_point(triangle):
+    env = os.environ.copy()
+    engine = str(REPO_ROOT / "engine" / "partuv")
+    env["PYTHONPATH"] = os.pathsep.join(
+        [engine, env["PYTHONPATH"]] if env.get("PYTHONPATH") else [engine]
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "partuv",
+            str(triangle),
+            "--threshold",
+            "not-a-number",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    # argparse rejects the threshold before the compiled core is touched
     assert result.returncode == 2
     assert "invalid float value" in result.stderr
 
@@ -213,13 +151,13 @@ def test_engine_error_code_passthrough(triangle, monkeypatch):
         raise UnwrapError(5, "no output")
 
     monkeypatch.setattr(optcuts, "run", fail)
-    assert cli.main(["unwrap", str(triangle), "--engine", "optcuts"]) == 5
+    assert cli.main(["unwrap", str(triangle)]) == 5
 
 
 def test_batch_markers_and_output_dir(triangle, cube, tmp_path, fake_optcuts, capsys):
     out_dir = tmp_path / "out"
     code = cli.main(
-        ["unwrap", str(triangle), str(cube), "--engine", "optcuts", "--output-dir", str(out_dir)]
+        ["unwrap", str(triangle), str(cube), "--output-dir", str(out_dir)]
     )
     assert code == 0
     lines = capsys.readouterr().out.splitlines()
@@ -236,7 +174,7 @@ def test_batch_isolates_failures(triangle, cube, monkeypatch, capsys):
         output_path.write_text("v 0 0 0\nvt 0 0\nf 1/1 1/1 1/1\n")
 
     monkeypatch.setattr(optcuts, "run", run)
-    code = cli.main(["unwrap", str(triangle), str(cube), "--engine", "optcuts"])
+    code = cli.main(["unwrap", str(triangle), str(cube)])
     assert code == 4
     lines = capsys.readouterr().out.splitlines()
     assert "failed: triangle 4" in lines
@@ -251,7 +189,7 @@ def test_batch_isolates_unexpected_exceptions(triangle, cube, monkeypatch, capsy
         output_path.write_text("v 0 0 0\nvt 0 0\nf 1/1 1/1 1/1\n")
 
     monkeypatch.setattr(optcuts, "run", run)
-    code = cli.main(["unwrap", str(triangle), str(cube), "--engine", "optcuts"])
+    code = cli.main(["unwrap", str(triangle), str(cube)])
     assert code == 4
     lines = capsys.readouterr().out.splitlines()
     assert "done: triangle" in lines
@@ -261,7 +199,7 @@ def test_batch_isolates_unexpected_exceptions(triangle, cube, monkeypatch, capsy
 def test_single_input_emits_no_markers(triangle, tmp_path, fake_optcuts, capsys):
     out_dir = tmp_path / "out"
     code = cli.main(
-        ["unwrap", str(triangle), "--engine", "optcuts", "--output-dir", str(out_dir)]
+        ["unwrap", str(triangle), "--output-dir", str(out_dir)]
     )
     assert code == 0
     assert capsys.readouterr().out == ""
@@ -270,7 +208,7 @@ def test_single_input_emits_no_markers(triangle, tmp_path, fake_optcuts, capsys)
 
 def test_output_count_mismatch(triangle, cube, tmp_path, fake_optcuts):
     code = cli.main(
-        ["unwrap", str(triangle), str(cube), "--engine", "optcuts", "-o", str(tmp_path / "x.obj")]
+        ["unwrap", str(triangle), str(cube), "-o", str(tmp_path / "x.obj")]
     )
     assert code == 2
     assert not fake_optcuts
@@ -281,8 +219,6 @@ def test_output_and_output_dir_conflict(triangle, tmp_path, fake_optcuts):
         [
             "unwrap",
             str(triangle),
-            "--engine",
-            "optcuts",
             "-o",
             str(tmp_path / "x.obj"),
             "--output-dir",
@@ -293,13 +229,13 @@ def test_output_and_output_dir_conflict(triangle, tmp_path, fake_optcuts):
 
 
 def test_json_rejected_for_multiple_inputs(triangle, cube, fake_optcuts):
-    code = cli.main(["unwrap", str(triangle), str(cube), "--engine", "optcuts", "--json"])
+    code = cli.main(["unwrap", str(triangle), str(cube), "--json"])
     assert code == 2
 
 
 def test_batch_missing_input_fails_per_mesh(triangle, tmp_path, fake_optcuts, capsys):
     missing = tmp_path / "gone.obj"
-    code = cli.main(["unwrap", str(triangle), str(missing), "--engine", "optcuts"])
+    code = cli.main(["unwrap", str(triangle), str(missing)])
     assert code == 2
     lines = capsys.readouterr().out.splitlines()
     assert "done: triangle" in lines
@@ -342,8 +278,6 @@ def test_colliding_outputs_rejected(triangle, tmp_path, fake_optcuts):
             "unwrap",
             str(triangle),
             str(other),
-            "--engine",
-            "optcuts",
             "--output-dir",
             str(tmp_path / "out"),
         ]

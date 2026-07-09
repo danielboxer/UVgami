@@ -273,8 +273,9 @@ install(TARGETS _core DESTINATION partuv)
 
 if(MSVC)
   # bundle the non-system runtime dlls so the wheel imports anywhere;
-  # msvcp140/libomp140 come from the vc++ redistributable instead (libomp
-  # is nonredist in the vs tree), cudart is linked statically
+  # msvcp140 comes from the vc++ redistributable, cudart is linked statically.
+  # libomp140 is nonredist in the vs tree, so ci bundles upstream llvm's
+  # libomp into .libs instead (see partuv-build.yml repair windows wheel)
   set(_vcpkg_bin "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
   foreach(_dll gmp-10.dll mpfr-6.dll yaml-cpp.dll)
     if(NOT EXISTS "${_vcpkg_bin}/${_dll}")
@@ -286,8 +287,18 @@ endif()
 
 install(FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/partuv/__init__.py
+  ${CMAKE_CURRENT_SOURCE_DIR}/partuv/__main__.py
+  ${CMAKE_CURRENT_SOURCE_DIR}/partuv/cli.py
+  ${CMAKE_CURRENT_SOURCE_DIR}/partuv/common.py
+  ${CMAKE_CURRENT_SOURCE_DIR}/partuv/wsl.py
   ${CMAKE_CURRENT_SOURCE_DIR}/partuv/preprocess.py
+  ${CMAKE_CURRENT_SOURCE_DIR}/partuv/output.py
+  ${CMAKE_CURRENT_SOURCE_DIR}/partuv/geometric.py
   DESTINATION partuv)
+
+install(FILES
+  ${CMAKE_CURRENT_SOURCE_DIR}/config/config.yaml
+  DESTINATION partuv/config)
 
 install(DIRECTORY
   ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_utils/
