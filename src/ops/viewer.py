@@ -56,7 +56,15 @@ class UVGAMI_OT_view_unwrap(bpy.types.Operator):
 
         # make viewer
         if unwrap.viewer_obj is None or not check_exists(unwrap.viewer_obj):
-            viewer = import_obj(unwrap.path, f"{unwrap.name}_viewer")
+            if manager.engine.viewer_push:
+                # starts empty, charts stream in as the engine finishes them
+                mesh = bpy.data.meshes.new(f"{unwrap.name}_viewer")
+                viewer = bpy.data.objects.new(f"{unwrap.name}_viewer", mesh)
+                # charts shown in a previous viewer object need to be rebuilt
+                unwrap.charts.extendleft(reversed(unwrap.applied_charts))
+                unwrap.applied_charts.clear()
+            else:
+                viewer = import_obj(unwrap.path, f"{unwrap.name}_viewer")
             unwrap.viewer_obj = viewer
 
             # scale viewer down

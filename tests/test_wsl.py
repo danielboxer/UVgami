@@ -78,6 +78,12 @@ def test_geometric_bridge_omits_checkpoint(triangle, tmp_path, fake_wsl):
     command = fake_wsl.calls[-1][6]
     assert "--segmentation geometric" in command
     assert "--checkpoint" not in command
+    assert "--visual" not in command
+
+
+def test_visual_forwarded_to_wsl(triangle, tmp_path, fake_wsl):
+    partuv.run([(triangle, tmp_path / "out.obj")], None, None, 1.25, "geometric", True)
+    assert "--visual" in fake_wsl.calls[-1][6]
 
 
 def test_wsl_side_checkpoint_passes_through(triangle, tmp_path, fake_wsl):

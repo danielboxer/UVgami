@@ -136,7 +136,7 @@ class UVGAMI_PT_main(bpy.types.Panel):
 
             # group stop and cancel button
             if expand_layout:
-                if is_active:
+                if is_active and manager.engine.supports_early_stop:
                     stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
                     stop_op.start_idx = cancel_index
                     stop_op.end_idx = cancel_index + len(group)
@@ -156,16 +156,23 @@ class UVGAMI_PT_main(bpy.types.Panel):
                             icon=f"LAYER_{'ACTIVE' if item.is_active else 'USED'}",
                         )
 
-                    if item.progress != (0, 0, 1):
+                    # push engines can stream charts before any progress arrives
+                    if item.progress != (0, 0, 1) or (
+                        manager.engine.viewer_push and item.is_active
+                    ):
                         # viewer button
-                        view_op = row.operator(
-                            "uvgami.view_unwrap", text="", icon="HIDE_OFF"
-                        )
-                        view_op.index = manager.active.index(item)
-                        # stop button
-                        stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
-                        stop_op.start_idx = cancel_index
-                        stop_op.end_idx = cancel_index + 1
+                        if manager.engine.supports_viewer:
+                            view_op = row.operator(
+                                "uvgami.view_unwrap", text="", icon="HIDE_OFF"
+                            )
+                            view_op.index = manager.active.index(item)
+                        # stop button, partuv can't finish early with a result
+                        if manager.engine.supports_early_stop:
+                            stop_op = row.operator(
+                                "uvgami.stop", text="", icon="SNAP_FACE"
+                            )
+                            stop_op.start_idx = cancel_index
+                            stop_op.end_idx = cancel_index + 1
                     # cancel button
                     cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
                     cancel_op.start_idx = cancel_index

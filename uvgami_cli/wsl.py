@@ -66,7 +66,7 @@ def wsl_checkpoint(distro, checkpoint):
     raise UnwrapError(EXIT_MISSING_RUNTIME, f"checkpoint not found: {checkpoint}")
 
 
-def run(pairs, checkpoint, config, threshold, segmentation="ai"):
+def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
     distro = pick_distro()
     log(f"running PartUV in WSL distro {distro}")
 
@@ -99,6 +99,8 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai"):
         unwrap += ["--checkpoint", wsl_checkpoint(distro, checkpoint)]
     if config is not None:
         unwrap += ["--config", translated[1 + 2 * count]]
+    if visual:
+        unwrap.append("--visual")
 
     # default venv lives on ext4: torch imports from /mnt/c are far too slow
     venv = os.environ.get("UVGAMI_WSL_VENV")

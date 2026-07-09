@@ -7,7 +7,7 @@ from .common import EXIT_INVALID_INPUT, UnwrapError, log, unwrap_all
 
 ENGINE_FLAGS = {
     "optcuts": ("quality", "import_uvs", "seam_weights", "seam_weight", "optcuts_path"),
-    "partuv": ("threshold", "checkpoint", "config", "segmentation"),
+    "partuv": ("threshold", "checkpoint", "config", "segmentation", "visual"),
 }
 
 
@@ -65,6 +65,12 @@ def build_parser():
         choices=["ai", "geometric"],
         help="part segmentation: ai (PartField, needs checkpoint + torch)"
         " or geometric (normals-based, no checkpoint), default: ai",
+    )
+    partuv.add_argument(
+        "--visual",
+        action="store_true",
+        default=None,
+        help="stream finished charts and progress on stdout for live viewing",
     )
     return parser
 
@@ -128,6 +134,7 @@ def validate(args):
                 EXIT_INVALID_INPUT, "--checkpoint only applies to --segmentation ai"
             )
         args.threshold = args.threshold if args.threshold is not None else 1.25
+        args.visual = bool(args.visual)
 
 
 def main(argv=None):
@@ -160,6 +167,7 @@ def main(argv=None):
                 args.config,
                 args.threshold,
                 args.segmentation,
+                args.visual,
             )
         elapsed = time.perf_counter() - start
     except UnwrapError as error:

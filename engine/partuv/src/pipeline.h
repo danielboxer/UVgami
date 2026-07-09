@@ -218,6 +218,7 @@ UVParts pipeline(const Eigen::MatrixXd& V,
     const std::string& configPath,
     double threshold,
     bool pack_final_mesh,
+    bool visual,
     std::vector<UVParts>& individual_parts);
 /**
  * @brief Sets the global mesh data and threshold for the pipeline.

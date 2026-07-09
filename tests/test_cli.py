@@ -95,10 +95,37 @@ def test_partuv_geometric_needs_no_checkpoint(triangle, tmp_path, monkeypatch):
         ["unwrap", str(triangle), "--engine", "partuv", "--segmentation", "geometric"]
     )
     assert code == 0
-    pairs, checkpoint, _, _, segmentation = calls[0]
+    pairs, checkpoint, _, _, segmentation, visual = calls[0]
     assert pairs == [(triangle, triangle.parent / "triangle_uv.obj")]
     assert checkpoint is None
     assert segmentation == "geometric"
+    assert visual is False
+
+
+def test_visual_flag_forwarded(triangle, monkeypatch):
+    from uvgami_cli import partuv
+
+    calls = []
+    monkeypatch.setattr(partuv, "run", lambda *args: calls.append(args) or 0)
+    code = cli.main(
+        [
+            "unwrap",
+            str(triangle),
+            "--engine",
+            "partuv",
+            "--segmentation",
+            "geometric",
+            "--visual",
+        ]
+    )
+    assert code == 0
+    assert calls[0][-1] is True
+
+
+def test_visual_rejected_for_optcuts(triangle, fake_optcuts):
+    code = cli.main(["unwrap", str(triangle), "--engine", "optcuts", "--visual"])
+    assert code == 2
+    assert not fake_optcuts
 
 
 def test_checkpoint_rejected_for_geometric(triangle, tmp_path):

@@ -9,6 +9,7 @@ from .common import (
     REPO_ROOT,
     UnwrapError,
     deliver,
+    emit,
     log,
     unwrap_all,
 )
@@ -43,7 +44,7 @@ def _native_available():
         return False
 
 
-def run(pairs, checkpoint, config, threshold, segmentation="ai"):
+def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
     """Unwrap (input, output) pairs, returning the first failing exit code."""
     system = platform.system()
     if system == "Windows":
@@ -51,7 +52,7 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai"):
         if os.environ.get("UVGAMI_PARTUV_WSL") or not _native_available():
             from . import wsl
 
-            return wsl.run(pairs, checkpoint, config, threshold, segmentation)
+            return wsl.run(pairs, checkpoint, config, threshold, segmentation, visual)
         log("using native Windows partuv")
     elif system != "Linux":
         raise UnwrapError(
@@ -94,12 +95,18 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai"):
 
         # loaded once, shared by every mesh in the batch
         log("loading PartField model")
+        if visual:
+            # tiny stage heartbeats so the bar leaves its not-started state
+            # long before the engine reports real face fractions
+            emit("progress: 0 0.01 0")
         model = PFInferenceModel(checkpoint_path=str(checkpoint), device="cuda")
 
     def unwrap_one(input_path, output_path):
         with tempfile.TemporaryDirectory(prefix="uvgami-") as tmp:
             work = Path(tmp)
             log(f"preprocessing {input_path.name}")
+            if visual:
+                emit("progress: 0 0.02 0")
             if segmentation == "geometric":
                 from partuv.geometric import preprocess_geometric
 
@@ -112,12 +119,15 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai"):
                 )
 
             log("running PartUV pipeline")
+            if visual:
+                emit("progress: 0 0.05 0")
             final_part, individual_parts = partuv.pipeline_numpy(
                 np.asarray(mesh.vertices, dtype=np.float64),
                 np.asarray(mesh.faces, dtype=np.int32),
                 tree_dict,
                 str(config),
                 threshold,
+                visual=visual,
             )
             save_results(work, final_part, individual_parts)
 

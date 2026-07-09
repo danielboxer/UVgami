@@ -111,7 +111,11 @@ class UnwrapManager:
         args = engine.build_batch_args(
             self.engine_path, [u.path for u in unwraps], props
         )
-        batch_process = BatchProcess(args, engine.build_env(self.engine_path))
+        batch_process = BatchProcess(
+            args,
+            engine.build_env(self.engine_path),
+            {unwrap.path.stem: unwrap for unwrap in unwraps},
+        )
         for unwrap in unwraps:
             unwrap.join_batch(batch_process)
             self._running.append(unwrap)
@@ -133,7 +137,11 @@ class UnwrapManager:
 
                 # check early stop
                 early_stop = bpy.context.scene.uvgami.early_stop
-                if early_stop != 100 and unwrap.progress[0] >= early_stop / 100:
+                if (
+                    self.engine.supports_early_stop
+                    and early_stop != 100
+                    and unwrap.progress[0] >= early_stop / 100
+                ):
                     unwrap.is_stopped = True
 
                 # update viewer

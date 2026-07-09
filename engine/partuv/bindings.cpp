@@ -3,7 +3,7 @@
 #include <pybind11/eigen.h>
 #include <omp.h>
 
-#include "pipeline.h"   // now declares the new signature
+#include "pipeline.h"
 #include "Component.h"
 #include "Config.h"
 
@@ -62,12 +62,13 @@ pipeline_numpy_py(const Eigen::Ref<const Eigen::MatrixXd>& V,
                   const py::dict&                          tree_dict,
                   const std::string&                       configPath,
                   double                                   threshold,
-                  bool                                     pack_final_mesh)
+                  bool                                     pack_final_mesh,
+                  bool                                     visual)
 {
     std::pair<UVParts, std::vector<UVParts>> out;
     std::vector<NodeRecord> nodes = nodes_from_py_dict(tree_dict);
     std::vector<UVParts> parts;
-    UVParts final_part = pipeline(V, F, nodes, configPath, threshold, pack_final_mesh, parts);
+    UVParts final_part = pipeline(V, F, nodes, configPath, threshold, pack_final_mesh, visual, parts);
     out = {final_part, std::move(parts)};
     return out;
 }
@@ -141,6 +142,7 @@ Returns (final_part, individual_parts).
           py::arg("configPath"),
           py::arg("threshold") = 1.25,
           py::arg("pack_final_mesh") = false,
+          py::arg("visual") = false,
           R"pbdoc(
 Run the UV‑unwrapping pipeline directly on numpy arrays V (Nx3) and F (Mx3).
 Returns (final_part, individual_parts).

@@ -331,8 +331,10 @@ class Model(pl.LightningModule):
         if mesh is None:
             mesh = trimesh.load(filename, force='mesh', process=False)
         else:
-            mesh = mesh
-        
+            # copy so the normalization below doesn't mutate the caller's mesh,
+            # which is unwrapped and saved with its original coordinates
+            mesh = mesh.copy()
+
 
         # normalize mesh
         mesh_scale = 0.9

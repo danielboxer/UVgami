@@ -84,8 +84,9 @@ def fake_partuv_runtime(monkeypatch, tmp_path):
         calls["geometric"] = mesh_path
         return FakeMesh(), {"tree": 2}
 
-    def fake_pipeline_numpy(V, F, tree_dict, config_path, threshold):
+    def fake_pipeline_numpy(V, F, tree_dict, config_path, threshold, visual=False):
         calls["pipeline"] = (tree_dict, config_path, threshold)
+        calls["visual"] = visual
         return "final", ["part0"]
 
     def fake_save_results(output_dir, final_part, individual_parts):
@@ -118,6 +119,7 @@ def test_run_orchestration(triangle, tmp_path, fake_partuv_runtime):
     assert calls["model"] == (str(checkpoint), "cuda")
     assert calls["preprocess"] == str(triangle)
     assert calls["pipeline"] == ({"tree": 1}, str(config), 1.5)
+    assert calls["visual"] is False
     assert calls["save"] == ("final", ["part0"])
     assert output.is_file()
     assert "vt 0 0" in output.read_text()
@@ -135,6 +137,15 @@ def test_run_geometric_skips_torch_and_checkpoint(triangle, tmp_path, fake_partu
     assert "model" not in calls
     assert calls["pipeline"] == ({"tree": 2}, str(config), 1.25)
     assert output.is_file()
+
+
+def test_visual_reaches_pipeline(triangle, tmp_path, fake_partuv_runtime):
+    config = tmp_path / "config.yaml"
+    config.write_text("pipeline: {}")
+
+    partuv.run([(triangle, tmp_path / "out.obj")], None, config, 1.25, "geometric", True)
+
+    assert fake_partuv_runtime["visual"] is True
 
 
 def test_batch_loads_model_once(triangle, cube, tmp_path, fake_partuv_runtime, capsys):
