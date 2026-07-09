@@ -17,7 +17,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         name="Engine",
         description="The unwrapping engine to use",
         items=(
-            ("UVGAMI", "UVgami", "The default UVgami unwrapping engine"),
+            ("UVGAMI", "Optcuts", "The default Optcuts unwrapping engine"),
             (
                 "PARTUV",
                 "PartUV",
@@ -41,7 +41,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
                 "PartField inference. Needs the torch stack and the checkpoint",
             ),
         ),
-        default="GEOMETRIC",
+        default="AI",
     )
     partuv_threshold: bpy.props.FloatProperty(
         name="",

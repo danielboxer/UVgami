@@ -29,8 +29,6 @@ class Engine:
     supports_preserve = False
     uses_threshold = False
     uses_segmentation = False
-    # pushes finished charts on stdout instead of answering stdin snapshots
-    viewer_push = False
 
     def validate(self, prefs):
         """Return (engine_path, None) if usable, else (None, error_message)."""
@@ -150,10 +148,8 @@ def is_partuv_installed():
 class PartuvEngine(Engine):
     id = "PARTUV"
     label = "PartUV"
-    supports_viewer = True
     uses_threshold = True
     uses_segmentation = True
-    viewer_push = True
     # set by validate: dev runs the repo cli through uv, installed runs the
     # wheel from the install operator with blender's python
     mode = "dev"

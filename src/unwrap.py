@@ -18,11 +18,6 @@ from .utils.io import print_stdin
 from .utils.mesh import check_exists
 from .utils.paths import get_extension_dir_path
 
-# grid layout for incoming partuv charts in the viewer
-CHART_COLS = 4
-CHART_CELL = 0.25
-CHART_MARGIN = 0.02
-
 
 class Unwrap:
     def __init__(
@@ -90,10 +85,6 @@ class Unwrap:
         self.uv_co = collections.deque()
         self.uv_indices = collections.deque()
         self.is_uv_data_ready = False
-        # finished partuv charts as raw chart_begin block strings; consumed
-        # into applied_charts once shown in the viewer
-        self.charts = collections.deque()
-        self.applied_charts = []
         self.is_stopped = False
         self.stop_requested_at = None
 
@@ -164,9 +155,6 @@ class Unwrap:
                 return
 
     def update_viewer(self):
-        if manager.engine.viewer_push:
-            self._apply_charts()
-            return
         print_stdin(self.process, "snapshot")
         if self.is_uv_data_ready:
             uvs = list(self.uv_co)
@@ -186,48 +174,6 @@ class Unwrap:
 
             # need to use update_edit_mesh, don't call bm.free(), it will crash
             bmesh.update_edit_mesh(self.viewer_obj.data)
-
-    def _apply_charts(self):
-        """Add newly finished partuv charts to the viewer mesh."""
-        if not self.charts:
-            return
-        bm = bmesh.from_edit_mesh(self.viewer_obj.data)
-        uv_map = bm.loops.layers.uv.verify()
-        while self.charts:
-            chart = self.charts.popleft()
-            self._add_chart(bm, uv_map, chart, len(self.applied_charts))
-            self.applied_charts.append(chart)
-        bmesh.update_edit_mesh(self.viewer_obj.data)
-
-    def _add_chart(self, bm, uv_map, chart, index):
-        verts, uvs, tris = [], [], []
-        for line in chart.splitlines():
-            values = line.split()
-            if values[0] == "v":
-                verts.append((float(values[1]), float(values[2]), float(values[3])))
-            elif values[0] == "vt":
-                uvs.append((float(values[1]), float(values[2])))
-            elif values[0] == "f":
-                tris.append((int(values[1]), int(values[2]), int(values[3])))
-        if not tris or len(uvs) != len(verts):
-            return
-        # fit the chart into its own grid cell so charts don't stack
-        min_u = min(u for u, _ in uvs)
-        min_v = min(v for _, v in uvs)
-        size = max(max(u for u, _ in uvs) - min_u, max(v for _, v in uvs) - min_v)
-        scale = (CHART_CELL - 2 * CHART_MARGIN) / max(size, 1e-12)
-        cell_u = (index % CHART_COLS) * CHART_CELL + CHART_MARGIN
-        cell_v = (index // CHART_COLS) * CHART_CELL + CHART_MARGIN
-
-        bm_verts = [bm.verts.new(co) for co in verts]
-        for tri in tris:
-            face = bm.faces.new([bm_verts[i] for i in tri])
-            for loop, vert_idx in zip(face.loops, tri):
-                u, v = uvs[vert_idx]
-                loop[uv_map].uv = (
-                    cell_u + (u - min_u) * scale,
-                    cell_v + (v - min_v) * scale,
-                )
 
     def cleanup(self):
         """Clean up files and viewer objects."""

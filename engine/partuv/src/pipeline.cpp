@@ -109,10 +109,9 @@ namespace
 
     static Hierarchy g_hierarchy;
 
-    // stream finished charts on stdout for the blender add-on's live viewer
+    // emit progress: lines on stdout for the blender add-on's progress bar
     static bool gVisual = false;
     static int gVisualFacesDone = 0;
-    static int gVisualFacesIdentified = 0;
 
 }
 #ifdef ENABLE_PROFILING
@@ -134,7 +133,6 @@ void clear_global_data(){
     g_hierarchy = Hierarchy();
     gVisual = false;
     gVisualFacesDone = 0;
-    gVisualFacesIdentified = 0;
 }
 
 void set_global_mesh(const Eigen::MatrixXd& V,
@@ -611,55 +609,25 @@ void get_individual_parts(std::vector<UVParts> &individual_parts){
     individual_parts = allParts;
 }
 
-// finished faces are the blue bar segment, identified-but-unfinished the
-// green one. assumes the caller holds the visual critical section.
+// blue is finished faces, red is the rest. partuv finishing a chart is
+// binary, so there is no green in-progress segment.
+// assumes the caller holds the visual critical section.
 void print_visual_progress()
 {
     if (gF.rows() == 0) return;
-    std::cout << "progress: " << (double)gVisualFacesDone / gF.rows() << " "
-              << (double)(gVisualFacesIdentified - gVisualFacesDone) / gF.rows()
-              << " 0" << std::endl;
+    double done = (double)gVisualFacesDone / gF.rows();
+    std::cout << "progress: " << done << " 0 " << (1.0 - done) << std::endl;
 }
 
-// reports a part identified during the top-down descent, well before its
-// charts are refined and saved, so progress moves early.
+// counts a finished part's faces toward progress and emits a progress line.
 // must not be called from inside another unnamed critical section.
-void emit_identified_visual(size_t face_count)
+void advance_visual_progress(const UVParts &part)
 {
     if (!gVisual) return;
     #pragma omp critical
     {
-        gVisualFacesIdentified += (int)face_count;
-        print_visual_progress();
-    }
-}
-
-// prints every chart of a finished part (chart_begin:/v/vt/f/chart_end:)
-// followed by a progress line, for the blender add-on's live viewer.
-// must not be called from inside another unnamed critical section.
-void emit_part_visual(const UVParts &part)
-{
-    if (!gVisual) return;
-    #pragma omp critical
-    {
-        for (const Component &chart : part.components) {
-            // failed charts (empty UV) still count toward progress
+        for (const Component &chart : part.components)
             gVisualFacesDone += chart.F.rows();
-            if (chart.F.rows() == 0 || chart.UV.rows() != chart.V.rows()) continue;
-            std::cout << "chart_begin:\n";
-            for (int i = 0; i < chart.V.rows(); ++i)
-                std::cout << "v " << chart.V(i, 0) << " " << chart.V(i, 1)
-                          << " " << chart.V(i, 2) << "\n";
-            for (int i = 0; i < chart.UV.rows(); ++i)
-                std::cout << "vt " << chart.UV(i, 0) << " " << chart.UV(i, 1) << "\n";
-            for (int i = 0; i < chart.F.rows(); ++i)
-                std::cout << "f " << chart.F(i, 0) << " " << chart.F(i, 1)
-                          << " " << chart.F(i, 2) << "\n";
-            std::cout << "chart_end:" << std::endl;
-        }
-        // single-leaf parts skip identification, keep the green segment >= 0
-        if (gVisualFacesIdentified < gVisualFacesDone)
-            gVisualFacesIdentified = gVisualFacesDone;
         print_visual_progress();
     }
 }
@@ -675,7 +643,7 @@ UVParts pipeline_helper(std::vector<int> leaves, Tree tree, int root, double cha
         ExtractSubmesh(leaves, gF, gV, Fc, Vc);
         UVParts single_part(unwrap_aligning_one(Vc, Fc, gThreshold, false, 1));
         // at part level this single face never reaches save_part below
-        if (chart_limit == NO_CHART_LIMIT) emit_part_visual(single_part);
+        if (chart_limit == NO_CHART_LIMIT) advance_visual_progress(single_part);
         return single_part;
     }
     if(chart_limit != NO_CHART_LIMIT & chart_limit < 1)
@@ -738,7 +706,6 @@ UVParts pipeline_helper(std::vector<int> leaves, Tree tree, int root, double cha
             // This is first time getting here, resembling a PART here
             num_parts++;
             save_part = true;
-            emit_identified_visual(leaves.size());
             map_root_to_part[root] = num_parts;
             check_overlap = true;
             chart_limit = curr_uv_parts.num_components ;
@@ -858,7 +825,7 @@ UVParts pipeline_helper(std::vector<int> leaves, Tree tree, int root, double cha
                 }
             }
             std::cout << "PART: " << allParts.size()-1 << " created with charts: " << curr_uv_parts.num_components << std::endl;
-            emit_part_visual(curr_uv_parts);
+            advance_visual_progress(curr_uv_parts);
 
 
             if (CONFIG_verbose) {

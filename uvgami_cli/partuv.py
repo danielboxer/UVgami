@@ -96,9 +96,9 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
         # loaded once, shared by every mesh in the batch
         log("loading PartField model")
         if visual:
-            # tiny stage heartbeats so the bar leaves its not-started state
+            # tiny blue nudges so the bar leaves its full-red not-started state
             # long before the engine reports real face fractions
-            emit("progress: 0 0.01 0")
+            emit("progress: 0.01 0 0.99")
         model = PFInferenceModel(checkpoint_path=str(checkpoint), device="cuda")
 
     def unwrap_one(input_path, output_path):
@@ -106,7 +106,7 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
             work = Path(tmp)
             log(f"preprocessing {input_path.name}")
             if visual:
-                emit("progress: 0 0.02 0")
+                emit("progress: 0.02 0 0.98")
             if segmentation == "geometric":
                 from partuv.geometric import preprocess_geometric
 
@@ -120,7 +120,7 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
 
             log("running PartUV pipeline")
             if visual:
-                emit("progress: 0 0.05 0")
+                emit("progress: 0.05 0 0.95")
             final_part, individual_parts = partuv.pipeline_numpy(
                 np.asarray(mesh.vertices, dtype=np.float64),
                 np.asarray(mesh.faces, dtype=np.int32),

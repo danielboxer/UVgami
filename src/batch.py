@@ -7,14 +7,11 @@ import threading
 class EngineOutput:
     """Parses engine stdout lines into an unwrap-like sink.
 
-    Two grammars: the uvgami engine answers stdin snapshot requests with a
-    full uv map (visual_begin:/vt/f/visual_end:), partuv pushes each finished
-    chart as its own geometry (chart_begin:/v/vt/f/chart_end:). Chart blocks
-    are stored as one raw string and only parsed if the viewer shows them."""
+    The optcuts engine answers stdin snapshot requests with a full uv map
+    (visual_begin:/vt/f/visual_end:); both engines emit progress: lines."""
 
     def __init__(self, sink=None):
         self.sink = sink
-        self._chart_lines = None
         self._in_visual = False
 
     def feed(self, line):
@@ -23,15 +20,6 @@ class EngineOutput:
             return
         if line.startswith("progress: "):
             sink.progress_data.append(line[10:])
-        elif line == "chart_begin:\n":
-            self._chart_lines = []
-        elif line == "chart_end:\n":
-            if self._chart_lines is not None:
-                sink.charts.append("".join(self._chart_lines))
-            self._chart_lines = None
-        elif self._chart_lines is not None:
-            if line.startswith(("v ", "vt ", "f ")):
-                self._chart_lines.append(line)
         elif line == "visual_begin:\n":
             sink.uv_co.clear()
             sink.uv_indices.clear()

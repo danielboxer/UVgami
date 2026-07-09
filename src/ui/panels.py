@@ -156,10 +156,7 @@ class UVGAMI_PT_main(bpy.types.Panel):
                             icon=f"LAYER_{'ACTIVE' if item.is_active else 'USED'}",
                         )
 
-                    # push engines can stream charts before any progress arrives
-                    if item.progress != (0, 0, 1) or (
-                        manager.engine.viewer_push and item.is_active
-                    ):
+                    if item.progress != (0, 0, 1):
                         # viewer button
                         if manager.engine.supports_viewer:
                             view_op = row.operator(
