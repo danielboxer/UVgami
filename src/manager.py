@@ -11,7 +11,6 @@ import bpy
 import numpy
 
 from .batch import BatchProcess
-from .engines import get_engine
 from .job import Join
 from .logger import logger
 from .ops.grid import add_grid, make_grid_img, make_grid_mat
@@ -86,7 +85,7 @@ class UnwrapManager:
     def _fill_slots(self):
         """Start queued unwraps up to the concurrency limit."""
         props = bpy.context.scene.uvgami
-        engine = get_engine(props.engine)
+        engine = self.engine
         if engine.wants_batch(props):
             if any(u.batch_process is not None for u in self._running):
                 # wait for the running batch process to finish
@@ -163,6 +162,9 @@ class UnwrapManager:
                     ):
                         unwrap.stop_process()
                         failed.append((unwrap, -3))
+                        # already failed this tick, don't let the poll below re-add
+                        # it once the killed process reports an exit code
+                        continue
 
                 # check if unwrap has exceeded the timeout
                 timeout_minutes = bpy.context.scene.uvgami.unwrap_timeout

@@ -210,9 +210,6 @@ else()
 endif()
 
 
-
-set(ENV{OMP_NUM_THREADS} "8")
-
 # Create Python module
 # pybind11_add_module(partuv src/bindings.cpp)
 # NO_EXTRAS: pybind11's lto drops the cuda fatbin from the device-link object

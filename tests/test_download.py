@@ -32,6 +32,11 @@ class RangeHandler(BaseHTTPRequestHandler):
         server = self.server
         rng = self.headers.get("Range")
         server.requests.append(rng)
+        if len(server.requests) <= server.fail_416:
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{len(CONTENT)}")
+            self.end_headers()
+            return
         if server.ignore_range:
             self.send_response(200)
             self.send_header("Content-Length", str(len(CONTENT)))
@@ -63,6 +68,7 @@ def server():
     srv.requests = []
     srv.ignore_range = False
     srv.drop_requests = 0
+    srv.fail_416 = 0
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
     thread.start()
     yield srv
@@ -108,6 +114,22 @@ def test_200_response_restarts_file(server, tmp_path):
     # a range was requested but the 200 reply discarded the stale bytes
     assert server.requests[0].startswith("bytes=")
     assert dest.read_bytes() == CONTENT
+
+
+def test_full_part_416_refetches_from_scratch(server, tmp_path):
+    server.fail_416 = 1
+    dest = tmp_path / "model.ckpt"
+    part = dest.with_name(dest.name + ".part")
+    part.write_bytes(CONTENT)  # full-size leftover makes the resume range unsatisfiable
+
+    download.download_file(url_for(server), dest, backoff=0)
+
+    assert dest.read_bytes() == CONTENT
+    assert not part.exists()
+    # first attempt ranged for the full file and got 416, clearing the part
+    assert server.requests[0].startswith("bytes=")
+    # the retry sent no range and pulled a fresh 200
+    assert server.requests[1] is None
 
 
 def test_exhausts_attempts_and_raises(server, tmp_path):

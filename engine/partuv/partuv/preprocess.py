@@ -1,16 +1,8 @@
-import subprocess, os, time
+import os, time
 from .preprocess_utils.partfield_official.run_PF import PFInferenceModel
 from .preprocess_utils.PartField_pipeline import PF_pipeline
 from .preprocess_utils.manifold import fix_mesh_trimesh
 from .preprocess_utils.merge_V_obj import load_mesh_and_merge
-import shutil
-
-import argparse
-        
-        
-from pathlib import Path
-import trimesh
-import numpy as np
 
 def preprocess(mesh_path, pf_model=None, output_path=None, save_tree_file=False, save_processed_mesh=False, sample_on_faces=10, sample_batch_size=100_000, merge_vertices_epsilon=1e-7):
     stem, _ = os.path.splitext(os.path.basename(mesh_path))
@@ -70,10 +62,3 @@ def preprocess(mesh_path, pf_model=None, output_path=None, save_tree_file=False,
 
 # moved to output.py so the torch-free path can use them; re-exported for compat
 from .output import _tm_mesh, save_results  # noqa: E402,F401
-
-
-def main():
-    preprocess("./archive/mug.obj", "./test_preprocess/mug_preprocessed.obj")
-
-if __name__ == "__main__":
-    main()
