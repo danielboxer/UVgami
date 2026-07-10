@@ -1,8 +1,8 @@
 name: Mirror PartField checkpoint
 
-# one-off: copy the 1.24GB checkpoint from Hugging Face onto our own latest
-# release so the addon install doesn't depend on the HF repo or its main branch.
-# rerun only when the upstream checkpoint changes.
+# one-off: copy the 1.24GB checkpoint from Hugging Face onto the fixed
+# `checkpoint` release so the addon install doesn't depend on the HF repo or its
+# main branch. rerun only when the upstream checkpoint changes.
 on:
   workflow_dispatch:
 
@@ -13,21 +13,15 @@ jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Get latest tag
-        id: previous_tag
-        uses: WyriHaximus/github-action-get-previous-tag@v2
-
       - name: Download checkpoint from Hugging Face
         run: |
           curl -fL -o model_objaverse.ckpt \
             https://huggingface.co/mikaelaangel/partfield-ckpt/resolve/main/model_objaverse.ckpt
 
-      - name: Upload to latest release
+      - name: Upload to the checkpoint release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.previous_tag.outputs.tag }}
-        run: gh release upload "$TAG" model_objaverse.ckpt --clobber
+        run: |
+          gh release view checkpoint -R ${{ github.repository }} >/dev/null 2>&1 \
+            || gh release create checkpoint -R ${{ github.repository }} --latest=false --title checkpoint --notes "PartField checkpoint mirror"
+          gh release upload checkpoint -R ${{ github.repository }} model_objaverse.ckpt --clobber
