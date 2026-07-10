@@ -14,7 +14,6 @@ import mathutils
 from .batch import EngineOutput
 from .logger import logger
 from .manager import manager
-from .utils.io import print_stdin
 from .utils.mesh import check_exists
 from .utils.paths import get_extension_dir_path
 
@@ -162,7 +161,7 @@ class Unwrap:
                 return
 
     def update_viewer(self):
-        print_stdin(self.process, "snapshot")
+        manager.engine.request_snapshot(self.process)
         if self.is_uv_data_ready:
             uvs = list(self.uv_co)
             uv_idcs = list(self.uv_indices)

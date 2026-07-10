@@ -23,6 +23,8 @@ class Engine:
     id = ""
     label = ""
     # feature flags drive UI gating and post-processing compatibility
+    # supports_* are optional capabilities the ui gates on, uses_* are
+    # engine-specific params it configures
     supports_quality = False
     supports_guided = False
     supports_viewer = False
@@ -48,9 +50,29 @@ class Engine:
         """Return the subprocess argv that unwraps input_path."""
         raise NotImplementedError
 
+    def build_batch_args(self, engine_path, input_paths, props):
+        """Return the argv unwrapping all input_paths in one process. Must be
+        implemented when wants_batch can return True."""
+        raise NotImplementedError
+
     def build_env(self, engine_path):
         """Return the subprocess env, or None to inherit."""
         return None
+
+    def describe_failure(self, code):
+        """Map an engine exit code to (message, move_to_invalid), or None if the
+        engine does not recognize it (caller shows a generic unknown-error)."""
+        return None
+
+    def request_early_stop(self, process):
+        """Ask a running process to stop and finish with its current result.
+        Returns True if delivered; engines that cannot stop gracefully return False."""
+        return False
+
+    def request_snapshot(self, process):
+        """Ask a running process to emit a uv snapshot for the live viewer. No-op
+        for engines without a viewer."""
+        pass
 
     def stop(self, process, engine_path):
         """Stop a running unwrap process."""
@@ -122,6 +144,21 @@ class UvgamiEngine(Engine):
                 f"~/uvgami -i {input_arg} -o {output_arg}/ {shared_args}",
             ]
         return [str(engine_path), "-i", str(input_path)] + shared_args.split()
+
+    def describe_failure(self, code):
+        return {
+            -1: ("Mesh needs cleanup", True),
+            101: ("Non Manifold Edges", True),
+            102: ("Non Manifold Vertices", True),
+            105: ("Invalid Geometry", True),
+            107: ("Invalid UV Input", True),
+        }.get(code)
+
+    def request_early_stop(self, process):
+        return print_stdin(process, "stop")
+
+    def request_snapshot(self, process):
+        print_stdin(process, "snapshot")
 
     def stop(self, process, engine_path):
         if platform.system() == "Windows" and engine_path.suffix == "":
@@ -210,6 +247,15 @@ class PartuvEngine(Engine):
         env["UVGAMI_PARTUV_CHECKPOINT"] = str(get_partuv_checkpoint_path())
         return env
 
+    def describe_failure(self, code):
+        # partuv cli exit codes
+        return {
+            2: ("Invalid input mesh", True),
+            3: ("PartUV runtime error, reinstall in preferences", False),
+            4: ("PartUV failed on this mesh", True),
+            5: ("PartUV produced invalid output", True),
+        }.get(code)
+
     def stop(self, process, engine_path):
         if platform.system() == "Windows":
             # kill the whole tree, uv spawns the engine as a child
@@ -225,4 +271,5 @@ ENGINES = {engine.id: engine for engine in (UvgamiEngine(), PartuvEngine())}
 
 
 def get_engine(engine_id):
+    # default to uvgami so a stale or removed engine id in an old file still loads
     return ENGINES.get(engine_id, ENGINES["UVGAMI"])

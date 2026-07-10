@@ -5,7 +5,7 @@ import bpy
 
 from ..job import Join
 from ..manager import manager
-from ..utils.io import import_obj, print_stdin
+from ..utils.io import import_obj
 from ..utils.mesh import check_collection, move_to_collection
 from ..utils.paths import get_preferences
 
@@ -22,7 +22,7 @@ class UVGAMI_OT_stop(bpy.types.Operator):
         for unwrap in manager.active[self.start_idx : self.end_idx]:
             if unwrap.process is not None:
                 # send stop command
-                if not print_stdin(unwrap.process, "stop"):
+                if not manager.engine.request_early_stop(unwrap.process):
                     self.report({"ERROR"}, "Could not stop unwrap")
             else:
                 unwrap.is_stopped = True

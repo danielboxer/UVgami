@@ -18,7 +18,7 @@ from .ops.uv import pack, show_seams
 from .progress_bar import progress_bar
 from .reroute_seams import reroute_seams
 from .utils.geometry import set_origin
-from .utils.io import import_obj, print_stdin
+from .utils.io import import_obj
 from .utils.mesh import (
     check_collection,
     check_exists,
@@ -73,7 +73,7 @@ class UnwrapManager:
         self.finished_count = 0
         self.cancelled_count = 0
         self.error_code = 0
-        self.license_error = None
+        self.error_messages = []
         self.current_viewer = None
         self.is_viewer_active = False
         self.exit_viewer = False
@@ -150,7 +150,7 @@ class UnwrapManager:
 
                 # if part of batch unwrap, hasn't started and stop button pressed
                 if unwrap.is_stopped:
-                    print_stdin(unwrap.process, "stop")
+                    self.engine.request_early_stop(unwrap.process)
                     # track when stop was first requested
                     if unwrap.stop_requested_at is None:
                         unwrap.stop_requested_at = time.monotonic()
@@ -468,30 +468,22 @@ class UnwrapManager:
             ret_code -= ADJUSTMENT
 
         move_to_invalid = False
-        if ret_code == -1:
-            msg = "Mesh needs cleanup"
-            move_to_invalid = True
-        elif ret_code == -2:
+        # manager-synthetic codes for timeout and force-kill
+        if ret_code == -2:
             elapsed = (time.monotonic() - unwrap.started_at) / 60
             msg = f"Timed out after {elapsed:.1f} minutes"
             move_to_invalid = True
         elif ret_code == -3:
             msg = "Stop timed out (force killed)"
             move_to_invalid = True
-        elif ret_code == 101:
-            msg = "Non Manifold Edges"
-            move_to_invalid = True
-        elif ret_code == 102:
-            msg = "Non Manifold Vertices"
-            move_to_invalid = True
-        elif ret_code == 105:
-            msg = "Invalid Geometry"
-            move_to_invalid = True
-        elif ret_code == 107:
-            msg = "Invalid UV Input"
-            move_to_invalid = True
         else:
-            self.error_code = ret_code
+            described = self.engine.describe_failure(ret_code)
+            if described is not None:
+                msg, move_to_invalid = described
+                if not move_to_invalid:
+                    self.error_messages.append(msg)
+            else:
+                self.error_code = ret_code
 
         if move_to_invalid:
             if prefs.invalid_collection:
@@ -577,9 +569,9 @@ class UnwrapManager:
                     msg.append(err_msg)
                     logger.add_data("errors", err_msg)
 
-                if self.license_error is not None:
-                    msg.append(self.license_error)
-                    logger.add_data("errors", self.license_error)
+                for err in self.error_messages:
+                    msg.append(err)
+                    logger.add_data("errors", err)
 
                 popup(msg, "UVgami", "INFO")
         else:
