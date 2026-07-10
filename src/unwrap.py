@@ -11,7 +11,7 @@ import bmesh
 import bpy
 import mathutils
 
-from .batch import EngineOutput
+from .batch import EngineOutput, read_stderr_tail
 from .logger import logger
 from .manager import manager
 from .utils.mesh import check_exists
@@ -86,6 +86,9 @@ class Unwrap:
         self.is_uv_data_ready = False
         self.is_stopped = False
         self.stop_requested_at = None
+        # bounded tail of the solo process's stderr, drained by a reader thread
+        self.stderr_tail = collections.deque(maxlen=10)
+        self._stderr_thread = None
 
     def start_unwrap(self):
         props = bpy.context.scene.uvgami
@@ -95,6 +98,7 @@ class Unwrap:
             args,
             stdout=subprocess.PIPE,
             stdin=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             universal_newlines=True,
             env=manager.engine.build_env(manager.engine_path),
         )
@@ -102,6 +106,14 @@ class Unwrap:
         # start reading thread
         thread = threading.Thread(target=self.get_output)
         thread.start()
+
+        # drain stderr separately so it stays out of the stdout protocol
+        self._stderr_thread = threading.Thread(
+            target=read_stderr_tail,
+            args=(self.process.stderr, self.stderr_tail),
+            daemon=True,
+        )
+        self._stderr_thread.start()
 
         self.is_active = True
         self.started_at = time.monotonic()
@@ -140,6 +152,14 @@ class Unwrap:
         is what makes the cli skip this mesh."""
         if self.batch_process is None:
             self.stop_process()
+
+    def get_stderr_tail(self):
+        """Last stderr lines from this unwrap's process, batch or solo."""
+        if self.batch_process is not None:
+            return self.batch_process.stderr_lines()
+        if self._stderr_thread is not None:
+            self._stderr_thread.join(timeout=1)
+        return self.stderr_tail
 
     def get_output(self):
         parser = EngineOutput(self)

@@ -33,6 +33,8 @@ class Engine:
     supports_import_uvs = False
     uses_threshold = False
     uses_segmentation = False
+    # whether pack-after-unwrap starts enabled when this engine is selected
+    pack_by_default = False
 
     def validate(self, prefs):
         """Return (engine_path, None) if usable, else (None, error_message)."""
@@ -194,6 +196,7 @@ class PartuvEngine(Engine):
     label = "PartUV"
     uses_threshold = True
     uses_segmentation = True
+    pack_by_default = True
     # set by validate: dev runs the workspace partuv through uv, installed runs
     # the wheel's python -m partuv from the install operator's venv
     mode = "dev"
@@ -222,7 +225,16 @@ class PartuvEngine(Engine):
 
     def build_batch_args(self, engine_path, input_paths, props):
         if self.mode == "dev":
-            base = ["uv", "run", "--project", str(engine_path), "--no-sync", "python", "-m", "partuv"]
+            base = [
+                "uv",
+                "run",
+                "--project",
+                str(engine_path),
+                "--no-sync",
+                "python",
+                "-m",
+                "partuv",
+            ]
         else:
             base = [str(get_partuv_venv_python()), "-m", "partuv"]
         return base + [
@@ -239,12 +251,15 @@ class PartuvEngine(Engine):
         ]
 
     def build_env(self, engine_path):
-        if self.mode == "dev":
-            return None
         env = os.environ.copy()
-        # the checkpoint isn't shipped in the wheel, so partuv can't find it by
-        # its default path; point it at the downloaded one
-        env["UVGAMI_PARTUV_CHECKPOINT"] = str(get_partuv_checkpoint_path())
+        # the checkpoint isn't shipped in the wheel, and the cli's source-tree
+        # default resolves relative to the installed package, so point at the
+        # repo copy in dev mode and the downloaded one in installed mode
+        if self.mode == "dev":
+            checkpoint = engine_path / "engine" / "partuv" / "model_objaverse.ckpt"
+        else:
+            checkpoint = get_partuv_checkpoint_path()
+        env["UVGAMI_PARTUV_CHECKPOINT"] = str(checkpoint)
         return env
 
     def describe_failure(self, code):

@@ -10,7 +10,7 @@ import bmesh
 import bpy
 import numpy
 
-from .batch import BatchProcess
+from .batch import BatchProcess, last_meaningful_line
 from .job import Join
 from .logger import logger
 from .ops.grid import add_grid, make_grid_img, make_grid_mat
@@ -73,6 +73,7 @@ class UnwrapManager:
         self.finished_count = 0
         self.cancelled_count = 0
         self.error_code = 0
+        self.error_stderr = ""
         self.error_messages = []
         self.current_viewer = None
         self.is_viewer_active = False
@@ -484,6 +485,15 @@ class UnwrapManager:
                     self.error_messages.append(msg)
             else:
                 self.error_code = ret_code
+                tail = unwrap.get_stderr_tail()
+                last = last_meaningful_line(tail)
+                if last:
+                    self.error_stderr = last
+                if tail:
+                    # full tail to the console so the whole traceback is findable
+                    print(f"UVgami engine stderr (exit {ret_code}):")
+                    for line in tail:
+                        print(line)
 
         if move_to_invalid:
             if prefs.invalid_collection:
@@ -566,6 +576,8 @@ class UnwrapManager:
 
                 if self.error_code != 0:
                     err_msg = f"An unknown error occurred: {self.error_code}"
+                    if self.error_stderr:
+                        err_msg += f" ({self.error_stderr})"
                     msg.append(err_msg)
                     logger.add_data("errors", err_msg)
 

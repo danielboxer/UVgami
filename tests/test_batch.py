@@ -160,6 +160,39 @@ def test_parser_ignores_loose_geometry_lines():
     assert not sink.uv_indices
 
 
+def test_stderr_tail_captured_on_failure():
+    batch_process = start(
+        "import sys;"
+        "print('start: a');"
+        "print('No module named partuv.__main__', file=sys.stderr);"
+        "sys.exit(1)"
+    )
+    assert wait_result(batch_process, "a") != 0
+    tail = list(batch_process.stderr_lines())
+    assert addon_batch.last_meaningful_line(tail) == "No module named partuv.__main__"
+
+
+def test_stderr_does_not_pollute_stdout_protocol():
+    sinks = {"a": Sink()}
+    batch_process = start(
+        "import sys;"
+        "print('start: a');"
+        "print('progress: 0.5 0 0.5');"
+        "print('noise on stderr', file=sys.stderr);"
+        "print('done: a')",
+        sinks,
+    )
+    assert wait_result(batch_process, "a") == 0
+    assert sinks["a"].progress_data.popleft() == "0.5 0 0.5\n"
+
+
+def test_last_meaningful_line_skips_blank():
+    assert addon_batch.last_meaningful_line(deque(["real error", "  ", "\t", ""])) == (
+        "real error"
+    )
+    assert addon_batch.last_meaningful_line(deque()) == ""
+
+
 def test_batch_routes_output_to_sinks():
     sinks = {"a": Sink(), "b": Sink()}
     batch_process = start(

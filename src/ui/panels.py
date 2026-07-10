@@ -202,16 +202,17 @@ class UVGAMI_PT_speed(bpy.types.Panel):
         row.alignment = "CENTER"
         row.label(text="Speed", icon="SORTTIME")
 
-        allows_concurrent = get_engine(props.engine).allows_concurrent(props)
-        split = box.split(factor=0.7)
-        split.enabled = allows_concurrent
-        split.label(icon="CON_ROTLIKE", text="Concurrent")
-        split.prop(props, "concurrent")
+        # hidden instead of grayed out: ai mode batches all meshes into one
+        # process, so concurrency doesn't apply
+        if get_engine(props.engine).allows_concurrent(props):
+            split = box.split(factor=0.7)
+            split.label(icon="CON_ROTLIKE", text="Concurrent")
+            split.prop(props, "concurrent")
 
-        if props.concurrent and allows_concurrent:
-            split = box.split()
-            split.label(icon="SYSTEM", text="Cores")
-            split.prop(props, "max_cores", slider=True)
+            if props.concurrent:
+                split = box.split()
+                split.label(icon="SYSTEM", text="Cores")
+                split.prop(props, "max_cores", slider=True)
 
         if get_engine(props.engine).supports_early_stop:
             row = box.row()

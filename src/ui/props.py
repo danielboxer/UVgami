@@ -7,9 +7,19 @@ import platform
 
 import bpy
 
-from ..engines import find_partuv_dev_repo, is_partuv_ai_installed, is_partuv_installed
+from ..engines import (
+    find_partuv_dev_repo,
+    get_engine,
+    is_partuv_ai_installed,
+    is_partuv_installed,
+)
 from ..ops.install import install_state
 from ..utils.paths import get_addon_id, get_bundled_engine_path, get_preferences
+
+
+def update_engine(self, context):
+    # reset pack-after-unwrap to the new engine's default when switching
+    self.pack_after_unwrap = get_engine(self.engine).pack_by_default
 
 
 class UVGAMI_PG_properties(bpy.types.PropertyGroup):
@@ -25,6 +35,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
             ),
         ),
         default="UVGAMI",
+        update=update_engine,
     )
     partuv_segmentation: bpy.props.EnumProperty(
         name="Segmentation",

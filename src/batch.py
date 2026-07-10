@@ -1,7 +1,24 @@
 # no bpy imports here so the classes stay testable outside blender
 
+import collections
 import subprocess
 import threading
+
+
+def read_stderr_tail(stderr, tail):
+    """Drain a process's stderr into a bounded tail of decoded lines."""
+    for line in iter(stderr.readline, ""):
+        tail.append(line.rstrip("\r\n"))
+
+
+def last_meaningful_line(tail):
+    """Newest non-empty stderr line, or empty string. tqdm and torch write
+    carriage-return progress bars to stderr, so skip whitespace-only lines."""
+    for line in reversed(tail):
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
 
 
 class EngineOutput:
@@ -54,6 +71,7 @@ class BatchProcess:
             args,
             stdout=subprocess.PIPE,
             stdin=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             universal_newlines=True,
             env=env,
         )
@@ -61,6 +79,15 @@ class BatchProcess:
         self._results = {}
         self._reader = threading.Thread(target=self._read_output, daemon=True)
         self._reader.start()
+        # stderr is kept separate from the stdout protocol, drained by its own
+        # thread into a bounded tail shared by every mesh in the batch
+        self.stderr_tail = collections.deque(maxlen=10)
+        self._stderr_reader = threading.Thread(
+            target=read_stderr_tail,
+            args=(self.process.stderr, self.stderr_tail),
+            daemon=True,
+        )
+        self._stderr_reader.start()
 
     def _read_output(self):
         parser = EngineOutput()
@@ -81,6 +108,11 @@ class BatchProcess:
                 parser.sink = None
             else:
                 parser.feed(line)
+
+    def stderr_lines(self):
+        """Last stderr lines, waiting briefly for the reader to drain."""
+        self._stderr_reader.join(timeout=1)
+        return self.stderr_tail
 
     def should_retry(self, stem):
         """True when the process has died with this mesh never started and no
