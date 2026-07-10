@@ -1,5 +1,5 @@
 __pycache__/
-.venv/
+.venv*/
 .ruff_cache/
 
 .vscode/
@@ -12,3 +12,8 @@ output/
 
 # bundled engine binaries
 engines/
+
+# benchmark artifacts
+bench/models/
+bench/out/
+bench/results.csv
