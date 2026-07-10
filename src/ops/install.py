@@ -20,11 +20,13 @@ from ..utils.paths import (
     get_uv_path,
 )
 
-RELEASES_API = "https://api.github.com/repos/DanielBoxer/UVgami/releases/latest"
-# mirrored onto our own release so installs don't depend on the HF repo staying
-# up or its main branch not moving (see .github/workflows/mirror-checkpoint.yml)
+# must match engine/partuv/pyproject.toml
+PARTUV_VERSION = "0.1.2.3"
+PARTUV_RELEASE_API = f"https://api.github.com/repos/DanielBoxer/UVgami/releases/tags/partuv-v{PARTUV_VERSION}"
+# mirrored onto the fixed `checkpoint` release so installs don't depend on the HF
+# repo staying up or its main branch not moving (see mirror-checkpoint.yml)
 CHECKPOINT_URL = (
-    "https://github.com/DanielBoxer/UVgami/releases/latest/download/model_objaverse.ckpt"
+    "https://github.com/DanielBoxer/UVgami/releases/download/checkpoint/model_objaverse.ckpt"
 )
 # the ai extra pins torch 2.3.0 (cu121); torch-scatter has no matching pypi
 # wheel, so pip must be pointed at the pyg wheel index to avoid a source build
@@ -42,13 +44,10 @@ UV_ARCHIVES = {
 # written by the install thread, read by the preferences ui
 install_state = {"running": False, "error": None}
 
-# must match engine/partuv/pyproject.toml
-PARTUV_VERSION = "0.1.2.3"
-
 
 def find_wheel_url():
     request = urllib.request.Request(
-        RELEASES_API, headers={"Accept": "application/vnd.github+json"}
+        PARTUV_RELEASE_API, headers={"Accept": "application/vnd.github+json"}
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         release = json.load(response)
@@ -64,8 +63,8 @@ def find_wheel_url():
         ):
             return asset["browser_download_url"]
     raise RuntimeError(
-        f"no partuv {PARTUV_VERSION} wheel for {PARTUV_PY_TAG} {plat} in the latest"
-        " release, update the add-on"
+        f"no partuv {PARTUV_VERSION} wheel for {PARTUV_PY_TAG} {plat} in the"
+        f" partuv-v{PARTUV_VERSION} release"
     )
 
 

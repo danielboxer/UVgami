@@ -1,0 +1,32 @@
+name: Check version bump
+
+# paths filters fire on any edit to the file; this gates on the version line
+# actually changing so only a real bump (or a manual run) releases
+on:
+  workflow_call:
+    inputs:
+      file:
+        required: true
+        type: string
+    outputs:
+      bumped:
+        value: ${{ jobs.check-version.outputs.bumped }}
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      bumped: ${{ steps.check.outputs.bumped }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+      - name: Check for a version bump
+        id: check
+        shell: bash
+        run: |
+          if git diff HEAD^ HEAD -- ${{ inputs.file }} | grep -qE '^\+version = '; then
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          fi

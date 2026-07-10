@@ -471,7 +471,7 @@ uv run uvgami unwrap model.obj
 
 PartUV needs CUDA. It builds natively on Windows and Linux.
 
-In the add-on, PartUV runs `python -m partuv` from the wheel: from a repo checkout it uses `uv run`, otherwise the install button in the add-on preferences downloads the wheel from the latest release and installs it into a managed venv.
+In the add-on, PartUV runs `python -m partuv` from the wheel: from a repo checkout it uses `uv run`, otherwise the install button in the add-on preferences downloads the wheel from the pinned `partuv-v*` release and installs it into a managed venv.
 
 Two segmentation modes drive the part tree:
 
@@ -512,7 +512,7 @@ uv run python -m partuv model.obj
 - Checkpoint lookup order: `--checkpoint`, `$UVGAMI_PARTUV_CHECKPOINT`, `engine/partuv/model_objaverse.ckpt`
 - The extension compiles to `/var/tmp/partuv-build` in WSL (compiling on `/mnt/c` is hopelessly slow) and targets sm_86 (RTX 3060) by default, override with the `CUDAARCHS` env var; `-DPARTUV_NATIVE=ON` restores upstream's `-march=native`
 - Release wheels should widen the CUDA targets: `CUDAARCHS="75-real;80-real;86-real;89-real;90-real;120"` with CUDA 13 (Windows; sm_75 is its floor), drop `120` on CUDA 12.6 (WSL; sm_90 is its ceiling)
-- CI does this: the PartUV build workflow builds cp311 wheels for Windows and Linux when `engine/partuv/pyproject.toml` or `engine/partuv/vcpkg.json` changes on master (the pyproject version bump is the release trigger; bump vcpkg's `version-string` alongside it) and uploads them to the latest release. The Linux wheel needs the apt libs above and the CUDA runtime at import time; only the Windows wheel bundles its DLLs
+- CI does this: the PartUV build workflow builds cp311 wheels for Windows and Linux when `engine/partuv/pyproject.toml` or `engine/partuv/vcpkg.json` changes on master (the pyproject version bump is the release trigger; bump vcpkg's `version-string` alongside it) and uploads them to the pinned `partuv-v*` release. The Linux wheel needs the apt libs above and the CUDA runtime at import time; only the Windows wheel bundles its DLLs
 - `--threshold` sets the distortion threshold (default 1.25), `--config` overrides `engine/partuv/config/config.yaml`
 
 ### Tests

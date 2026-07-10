@@ -34,8 +34,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
 
       - name: Read engine version
         id: engine_version
@@ -74,22 +72,41 @@ jobs:
 
           cmake --build . --config $BUILD_TYPE --target package
 
-      - name: Get latest tag
-        id: previous_tag
-        uses: "WyriHaximus/github-action-get-previous-tag@v2"
-
-      - name: Upload binaries to latest release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.previous_tag.outputs.tag }}
-        shell: bash
-        run: gh release upload "$TAG" "build/${PACKAGE_NAME}.zip" --clobber
-
       - name: Upload engine artifact
         uses: actions/upload-artifact@v4
         with:
           name: engine-${{ matrix.pkg_name }}
           path: build/${{ env.PACKAGE_NAME }}.zip
+
+  # publish the canonical engine release the addon and its bundled zip source from
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read engine version
+        id: engine_version
+        shell: bash
+        run: echo "version=$(cat engine/optcuts/VERSION | tr -d '[:space:]')" >> $GITHUB_OUTPUT
+
+      - name: Download all engine artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: engine-*
+          merge-multiple: true
+
+      - name: Publish engine release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: engine-v${{ steps.engine_version.outputs.version }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --latest=false --title "$TAG" --notes "OptCuts engine binaries"
+          gh release upload "$TAG" ${PACKAGE_PREFIX}-*.zip --clobber
 
   rebuild-bundled:
     needs: build
@@ -100,22 +117,25 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Get latest tag
-        id: previous_tag
-        uses: "WyriHaximus/github-action-get-previous-tag@v2"
-
       - name: Download all engine artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: engine-*
           merge-multiple: true
 
-      # download the existing addon zip from the release
+      # the releases/latest endpoint ignores the not-latest component releases,
+      # so this resolves the current addon release
+      - name: Get latest addon tag
+        id: addon_tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "tag=$(gh api "repos/${{ github.repository }}/releases/latest" -q .tag_name)" >> $GITHUB_OUTPUT
+
       - name: Download addon zip
-        uses: robinraju/release-downloader@v1
-        with:
-          tag: ${{ steps.previous_tag.outputs.tag }}
-          fileName: "${{ env.ADDON_NAME }}.zip"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.addon_tag.outputs.tag }}
+        run: gh release download "$TAG" -p "${ADDON_NAME}.zip"
 
       - name: Create bundled addon with engines
         run: |
@@ -123,9 +143,11 @@ jobs:
           bash .github/scripts/bundle-engines.sh $ADDON_NAME $PACKAGE_PREFIX
           zip -r ${BUNDLED_NAME}.zip $ADDON_NAME
 
-      # remove old bundled zip and upload new one
-      - name: Upload bundled addon
+      # refresh the bundled zip and the mirrored engine zips on the addon release
+      - name: Upload bundled addon and engine mirror
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.previous_tag.outputs.tag }}
-        run: gh release upload "$TAG" "${BUNDLED_NAME}.zip" --clobber
+          TAG: ${{ steps.addon_tag.outputs.tag }}
+        run: |
+          gh release upload "$TAG" "${BUNDLED_NAME}.zip" --clobber
+          gh release upload "$TAG" ${PACKAGE_PREFIX}-*.zip --clobber
