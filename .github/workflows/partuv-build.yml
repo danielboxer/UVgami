@@ -21,25 +21,10 @@ env:
   LLVM_VERSION: "22.1.8"
 
 jobs:
-  # paths filters fire on any edit to the file; this gates on the version line
-  # actually changing so only a real bump (or a manual run) builds and releases
   check-version:
-    runs-on: ubuntu-latest
-    outputs:
-      bumped: ${{ steps.check.outputs.bumped }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 2
-      - name: Check for a version bump
-        id: check
-        shell: bash
-        run: |
-          if git diff HEAD^ HEAD -- engine/partuv/pyproject.toml | grep -qE '^\+version = '; then
-            echo "bumped=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "bumped=false" >> "$GITHUB_OUTPUT"
-          fi
+    uses: ./.github/workflows/check-version.yml
+    with:
+      file: engine/partuv/pyproject.toml
 
   build:
     needs: check-version
@@ -189,15 +174,11 @@ jobs:
   upload:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Get latest tag
-        id: previous_tag
-        uses: "WyriHaximus/github-action-get-previous-tag@v2"
 
       - name: Download all wheel artifacts
         uses: actions/download-artifact@v4
@@ -206,9 +187,14 @@ jobs:
           merge-multiple: true
           path: dist
 
-      # the addon install operator finds these by python tag and platform
-      - name: Upload wheels to latest release
+      # the addon install operator finds these by python tag and platform, and
+      # pins this tag
+      - name: Publish wheels
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.previous_tag.outputs.tag }}
-        run: gh release upload "$TAG" dist/*.whl --clobber
+        run: |
+          VERSION=$(grep -m1 '^version' engine/partuv/pyproject.toml | sed -E 's/version *= *"(.*)"/\1/')
+          TAG="partuv-v$VERSION"
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --latest=false --title "$TAG" --notes "PartUV engine wheels"
+          gh release upload "$TAG" dist/*.whl --clobber

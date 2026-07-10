@@ -13,12 +13,6 @@ on:
         default: "patch"
         required: true
 
-      use_old_engine:
-        description: "Upload previous engine"
-        type: boolean
-        default: "true"
-        required: true
-
       version:
         description: "Override version increment"
         required: false
@@ -36,25 +30,10 @@ env:
   BUNDLED_NAME: "UVgami-bundled-with-engines"
 
 jobs:
-  # paths filters fire on any edit to the manifest; this gates on the version
-  # line actually changing so only a real bump (or a manual run) releases
   check-version:
-    runs-on: ubuntu-latest
-    outputs:
-      bumped: ${{ steps.check.outputs.bumped }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 2
-      - name: Check for a version bump
-        id: check
-        shell: bash
-        run: |
-          if git diff HEAD^ HEAD -- blender_manifest.toml | grep -qE '^\+version = '; then
-            echo "bumped=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "bumped=false" >> "$GITHUB_OUTPUT"
-          fi
+    uses: ./.github/workflows/check-version.yml
+    with:
+      file: blender_manifest.toml
 
   package:
     needs: check-version
@@ -93,15 +72,13 @@ jobs:
             exit 1
           fi
 
-      # 1. get engine zips from previous release
+      # 1. get the canonical engine zips from the engine release
       - name: Download engines
-        id: download_engines
-        if: ${{ inputs.use_old_engine || github.event_name == 'push' }}
-        uses: robinraju/release-downloader@v1
-        with:
-          latest: true
-          fileName: "${{ env.ENGINE_PREFIX }}-*.zip"
-        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ENGINE_VERSION=$(cat engine/optcuts/VERSION | tr -d '[:space:]')
+          gh release download "engine-v$ENGINE_VERSION" -p "${ENGINE_PREFIX}-*.zip"
 
       # 2. package add-on
       - name: Move to nested folder
@@ -114,14 +91,7 @@ jobs:
 
       # 3. create bundled variant with engines
       - name: Create bundled addon with engines
-        id: bundled
-        if: ${{ inputs.use_old_engine || github.event_name == 'push' }}
         run: |
-          if ! ls ${ENGINE_PREFIX}-*.zip 1>/dev/null 2>&1; then
-            echo "has_engines=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          echo "has_engines=true" >> $GITHUB_OUTPUT
           bash .github/scripts/bundle-engines.sh $ADDON_NAME $ENGINE_PREFIX
           zip -r ${BUNDLED_NAME}.zip $ADDON_NAME
 
@@ -146,15 +116,14 @@ jobs:
 
       # 5. upload bundled addon
       - name: Upload bundled addon
-        if: ${{ steps.bundled.outputs.has_engines == 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ env.TAG }}
         run: gh release upload "$TAG" "${BUNDLED_NAME}.zip"
 
-      # 6. upload engine if not new
+      # 6. mirror the engine zips onto the addon release so the docs' latest
+      # release link keeps working
       - name: Upload engine
-        if: ${{ (inputs.use_old_engine || github.event_name == 'push') && fromJSON(steps.download_engines.outputs.downloaded_files || '[]')[0] != null }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ env.TAG }}
