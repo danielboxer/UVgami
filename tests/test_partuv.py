@@ -38,7 +38,9 @@ def test_missing_checkpoint(triangle, tmp_path, monkeypatch, fake_partuv_runtime
     config = tmp_path / "config.yaml"
     config.write_text("pipeline: {}")
     with pytest.raises(UnwrapError) as error:
-        cli.run([(triangle, tmp_path / "out.obj")], tmp_path / "nope.ckpt", config, 1.25)
+        cli.run(
+            [(triangle, tmp_path / "out.obj")], tmp_path / "nope.ckpt", config, 1.25
+        )
     assert error.value.exit_code == 3
 
 
@@ -47,9 +49,90 @@ def test_missing_config(triangle, tmp_path, monkeypatch):
     checkpoint = tmp_path / "model.ckpt"
     checkpoint.write_text("ckpt")
     with pytest.raises(UnwrapError) as error:
-        cli.run([(triangle, tmp_path / "out.obj")], checkpoint, tmp_path / "nope.yaml", 1.25
+        cli.run(
+            [(triangle, tmp_path / "out.obj")], checkpoint, tmp_path / "nope.yaml", 1.25
         )
     assert error.value.exit_code == 3
+
+
+def test_input_list_resolves_same_pairs_as_positional(triangle, cube, tmp_path):
+    out = tmp_path / "out"
+    list_file = tmp_path / "inputs.txt"
+    list_file.write_text(f"{triangle}\n{cube}\n", encoding="utf-8")
+
+    seg = ["--segmentation", "geometric"]
+    from_list = cli.build_parser().parse_args(
+        ["--input-list", str(list_file), "--output-dir", str(out), *seg]
+    )
+    cli.validate(from_list)
+    positional = cli.build_parser().parse_args(
+        [str(triangle), str(cube), "--output-dir", str(out), *seg]
+    )
+    cli.validate(positional)
+
+    assert from_list.input == positional.input
+    assert from_list.outputs == positional.outputs
+
+
+def test_input_list_combines_with_positional(triangle, cube, tmp_path):
+    list_file = tmp_path / "inputs.txt"
+    list_file.write_text(f"{cube}\n", encoding="utf-8")
+    args = cli.build_parser().parse_args(
+        [
+            str(triangle),
+            "--input-list",
+            str(list_file),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--segmentation",
+            "geometric",
+        ]
+    )
+    cli.validate(args)
+    assert args.input == [triangle, cube]
+
+
+def test_input_list_skips_blank_lines(triangle, cube, tmp_path):
+    list_file = tmp_path / "inputs.txt"
+    list_file.write_text(f"\n{triangle}\n   \n{cube}\n\t\n", encoding="utf-8")
+    args = cli.build_parser().parse_args(
+        [
+            "--input-list",
+            str(list_file),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--segmentation",
+            "geometric",
+        ]
+    )
+    cli.validate(args)
+    assert args.input == [triangle, cube]
+
+
+def test_input_list_missing_file_exits_2(tmp_path):
+    assert cli.main(["--input-list", str(tmp_path / "nope.txt")]) == 2
+
+
+def test_input_list_scales_past_command_line_limit(tmp_path):
+    # the bug: ~491 mesh paths as argv blew past windows' 32k command-line cap.
+    # through the list file the argv carries one path, so any count resolves.
+    out = tmp_path / "out"
+    paths = [tmp_path / f"{'x' * 200}_{i}.obj" for i in range(500)]
+    list_file = tmp_path / "inputs.txt"
+    list_file.write_text("\n".join(str(p) for p in paths) + "\n", encoding="utf-8")
+    args = cli.build_parser().parse_args(
+        [
+            "--input-list",
+            str(list_file),
+            "--output-dir",
+            str(out),
+            "--segmentation",
+            "geometric",
+        ]
+    )
+    cli.validate(args)
+    assert len(args.input) == 500
+    assert len(args.outputs) == 500
 
 
 class FakeMesh:
@@ -132,7 +215,9 @@ def test_run_orchestration(triangle, tmp_path, fake_partuv_runtime):
     assert "vt 0 0" in output.read_text()
 
 
-def test_run_geometric_skips_torch_and_checkpoint(triangle, tmp_path, fake_partuv_runtime):
+def test_run_geometric_skips_torch_and_checkpoint(
+    triangle, tmp_path, fake_partuv_runtime
+):
     config = tmp_path / "config.yaml"
     config.write_text("pipeline: {}")
     output = tmp_path / "out.obj"
@@ -236,13 +321,14 @@ def test_windows_runs_native_when_partuv_installed(
     assert output.is_file()
 
 
-def test_windows_env_var_forces_wsl(triangle, tmp_path, fake_partuv_runtime, monkeypatch):
+def test_windows_env_var_forces_wsl(
+    triangle, tmp_path, fake_partuv_runtime, monkeypatch
+):
     monkeypatch.setattr(cli.platform, "system", lambda: "Windows")
     monkeypatch.setenv("UVGAMI_PARTUV_WSL", "1")
     calls = {}
-    monkeypatch.setattr(
-        "partuv.wsl.run", lambda *args: calls.setdefault("wsl", args)
-    )
+    monkeypatch.setattr("partuv.wsl.run", lambda *args: calls.setdefault("wsl", args))
+
     # the dev override must not gate on is_usable
     def boom():
         raise AssertionError("is_usable consulted for the dev override")

@@ -29,7 +29,17 @@ def build_parser():
     parser = argparse.ArgumentParser(
         prog="partuv", description="UV unwrap OBJ files with the PartUV engine"
     )
-    parser.add_argument("input", type=Path, nargs="+", help="input OBJ files")
+    parser.add_argument(
+        "input",
+        type=Path,
+        nargs="*",
+        help="input OBJ files (combined with --input-list if given)",
+    )
+    parser.add_argument(
+        "--input-list",
+        type=Path,
+        help="text file with one input OBJ path per line, appended to the inputs",
+    )
     parser.add_argument(
         "-o",
         "--output",
@@ -42,8 +52,12 @@ def build_parser():
         type=Path,
         help="write each output as <input stem>.obj in this directory",
     )
-    parser.add_argument("--overwrite", action="store_true", help="replace existing output")
-    parser.add_argument("--threshold", type=float, help="distortion threshold, default: 1.25")
+    parser.add_argument(
+        "--overwrite", action="store_true", help="replace existing output"
+    )
+    parser.add_argument(
+        "--threshold", type=float, help="distortion threshold, default: 1.25"
+    )
     parser.add_argument(
         "--checkpoint",
         type=Path,
@@ -66,7 +80,28 @@ def build_parser():
     return parser
 
 
+def read_input_list(path):
+    """Input OBJ paths from a list file, one per line, blank lines skipped.
+    Read here on the main thread, not via a stdin reader: a thread blocked on a
+    stdin pipe stalls native module imports for minutes on windows."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise UnwrapError(
+            EXIT_INVALID_INPUT, f"input list not found: {path}"
+        ) from error
+    return [Path(line.strip()) for line in text.splitlines() if line.strip()]
+
+
 def validate(args):
+    inputs = list(args.input or [])
+    if args.input_list is not None:
+        inputs += read_input_list(args.input_list)
+    args.input = inputs
+    if not inputs:
+        raise UnwrapError(
+            EXIT_INVALID_INPUT, "no input: pass an OBJ file or --input-list"
+        )
     for input_path in args.input:
         # in a batch a missing input fails per mesh instead, so a cancelled
         # mesh (its input file is deleted) doesn't abort the rest
@@ -212,7 +247,9 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
     if segmentation == "ai":
         checkpoint = Path(checkpoint)
         if not checkpoint.is_file():
-            raise UnwrapError(EXIT_MISSING_RUNTIME, f"checkpoint not found: {checkpoint}")
+            raise UnwrapError(
+                EXIT_MISSING_RUNTIME, f"checkpoint not found: {checkpoint}"
+            )
         try:
             import torch
         except ImportError as error:

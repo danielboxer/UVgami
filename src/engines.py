@@ -237,8 +237,19 @@ class PartuvEngine(Engine):
             ]
         else:
             base = [str(get_partuv_venv_python()), "-m", "partuv"]
+        # windows caps a command line near 32k chars, so a large batch of mesh
+        # paths as argv overflows CreateProcess. pass them in a file instead.
+        # named per invocation since solo mode spawns several over one session;
+        # lives in the input dir so manager.finish cleans it up with the meshes.
+        input_list = (
+            get_extension_dir_path() / "input" / f"{input_paths[0].stem}_inputs.txt"
+        )
+        input_list.write_text(
+            "\n".join(str(path) for path in input_paths) + "\n", encoding="utf-8"
+        )
         return base + [
-            *[str(path) for path in input_paths],
+            "--input-list",
+            str(input_list),
             "--output-dir",
             str(get_extension_dir_path() / "output"),
             "--overwrite",
