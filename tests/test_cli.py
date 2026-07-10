@@ -26,6 +26,34 @@ def fake_optcuts(monkeypatch):
     return calls
 
 
+@pytest.fixture
+def fake_partuv(monkeypatch):
+    import partuv.cli
+
+    calls = {}
+
+    def fake_run(pairs, checkpoint, config, threshold, segmentation="ai"):
+        calls.update(
+            pairs=pairs,
+            checkpoint=checkpoint,
+            config=config,
+            threshold=threshold,
+            segmentation=segmentation,
+        )
+        for _, output_path in pairs:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text("v 0 0 0\nvt 0 0\nf 1/1 1/1 1/1\n")
+        return 0
+
+    monkeypatch.setattr(partuv.cli, "run", fake_run)
+    monkeypatch.setattr(
+        partuv.cli,
+        "resolve_checkpoint",
+        lambda flag: str(flag) if flag else "fake.ckpt",
+    )
+    return calls
+
+
 def test_default_output_name(triangle, fake_optcuts):
     assert cli.main(["unwrap", str(triangle)]) == 0
     assert (triangle.parent / "triangle_uv.obj").is_file()
@@ -156,9 +184,7 @@ def test_engine_error_code_passthrough(triangle, monkeypatch):
 
 def test_batch_markers_and_output_dir(triangle, cube, tmp_path, fake_optcuts, capsys):
     out_dir = tmp_path / "out"
-    code = cli.main(
-        ["unwrap", str(triangle), str(cube), "--output-dir", str(out_dir)]
-    )
+    code = cli.main(["unwrap", str(triangle), str(cube), "--output-dir", str(out_dir)])
     assert code == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines == ["start: triangle", "done: triangle", "start: cube", "done: cube"]
@@ -198,18 +224,14 @@ def test_batch_isolates_unexpected_exceptions(triangle, cube, monkeypatch, capsy
 
 def test_single_input_emits_no_markers(triangle, tmp_path, fake_optcuts, capsys):
     out_dir = tmp_path / "out"
-    code = cli.main(
-        ["unwrap", str(triangle), "--output-dir", str(out_dir)]
-    )
+    code = cli.main(["unwrap", str(triangle), "--output-dir", str(out_dir)])
     assert code == 0
     assert capsys.readouterr().out == ""
     assert fake_optcuts[0][1] == out_dir / "triangle.obj"
 
 
 def test_output_count_mismatch(triangle, cube, tmp_path, fake_optcuts):
-    code = cli.main(
-        ["unwrap", str(triangle), str(cube), "-o", str(tmp_path / "x.obj")]
-    )
+    code = cli.main(["unwrap", str(triangle), str(cube), "-o", str(tmp_path / "x.obj")])
     assert code == 2
     assert not fake_optcuts
 
@@ -266,6 +288,102 @@ def test_input_deleted_mid_batch_is_skipped(triangle, cube, tmp_path, capsys):
         "start: cube",
         "failed: cube 2",
     ]
+
+
+def test_default_engine_is_optcuts(triangle, fake_optcuts, capsys):
+    assert cli.main(["unwrap", str(triangle), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["engine"] == "optcuts"
+    assert fake_optcuts  # optcuts.run was called
+
+
+def test_partuv_dispatch(triangle, tmp_path, fake_partuv):
+    out = tmp_path / "out.obj"
+    code = cli.main(
+        [
+            "unwrap",
+            str(triangle),
+            "--engine",
+            "partuv",
+            "-o",
+            str(out),
+            "--threshold",
+            "1.5",
+            "--segmentation",
+            "geometric",
+        ]
+    )
+    assert code == 0
+    assert fake_partuv["pairs"] == [(triangle, out)]
+    assert fake_partuv["threshold"] == 1.5
+    assert fake_partuv["segmentation"] == "geometric"
+    # geometric never resolves a checkpoint
+    assert fake_partuv["checkpoint"] is None
+    assert fake_partuv["config"] is None
+
+
+def test_partuv_ai_resolves_checkpoint(triangle, tmp_path, fake_partuv):
+    config = tmp_path / "config.yaml"
+    config.write_text("pamo: true\n")
+    code = cli.main(
+        ["unwrap", str(triangle), "--engine", "partuv", "--config", str(config)]
+    )
+    assert code == 0
+    assert fake_partuv["segmentation"] == "ai"
+    assert fake_partuv["threshold"] == 1.25
+    assert fake_partuv["checkpoint"] == "fake.ckpt"
+    assert fake_partuv["config"] == config
+
+
+def test_partuv_flag_rejected_for_optcuts(triangle, capsys):
+    code = cli.main(["unwrap", str(triangle), "--threshold", "1.5"])
+    assert code == 2
+    assert "--threshold" in capsys.readouterr().err
+
+
+def test_optcuts_flag_rejected_for_partuv(triangle, capsys):
+    code = cli.main(
+        ["unwrap", str(triangle), "--engine", "partuv", "--quality", "high"]
+    )
+    assert code == 2
+    assert "--quality" in capsys.readouterr().err
+
+
+def test_checkpoint_rejected_for_geometric(triangle, tmp_path, capsys):
+    ckpt = tmp_path / "model.ckpt"
+    ckpt.write_text("x")
+    code = cli.main(
+        [
+            "unwrap",
+            str(triangle),
+            "--engine",
+            "partuv",
+            "--segmentation",
+            "geometric",
+            "--checkpoint",
+            str(ckpt),
+        ]
+    )
+    assert code == 2
+    assert "--checkpoint" in capsys.readouterr().err
+
+
+def test_partuv_error_maps_exit_code(triangle, monkeypatch, capsys):
+    import partuv.cli
+    from partuv.common import UnwrapError as PartuvError
+
+    def boom(flag):
+        raise PartuvError(3, "no checkpoint")
+
+    monkeypatch.setattr(partuv.cli, "resolve_checkpoint", boom)
+    code = cli.main(["unwrap", str(triangle), "--engine", "partuv", "--json"])
+    assert code == 3
+    result = json.loads(capsys.readouterr().out)
+    assert result == {"status": "error", "exit_code": 3, "message": "no checkpoint"}
+
+
+def test_json_success_reports_partuv_engine(triangle, fake_partuv, capsys):
+    assert cli.main(["unwrap", str(triangle), "--engine", "partuv", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["engine"] == "partuv"
 
 
 def test_colliding_outputs_rejected(triangle, tmp_path, fake_optcuts):

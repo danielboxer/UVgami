@@ -6,7 +6,7 @@ Blender addon that auto unwraps UVs. Two engines: optcuts (bundled C++ binary) a
 
 - `src/`: the addon. `manager.py` runs the unwrap queue, `engines.py` has per-engine logic.
 - `engine/partuv/`: the partuv wheel, C++ core plus python driver (`partuv/cli.py`).
-- `uvgami_cli/`: dev-only optcuts CLI, not shipped.
+- `uvgami_cli/`: dev-only CLI driving both engines via `--engine`, not shipped.
 - `docs/docs.md`: user guide, with a development section at the end. `docs/agents/partuv-packaging.md`: packaging decisions and open questions.
 
 ## Commands

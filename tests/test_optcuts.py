@@ -12,7 +12,9 @@ BUNDLED = optcuts.REPO_ROOT / "engines" / "windows" / "uvgami.exe"
 class FakeProcess:
     """Stands in for the OptCuts subprocess and writes the expected output OBJ."""
 
-    def __init__(self, argv, returncode=0, output_text="v 0 0 0\nvt 0 0\nf 1/1 1/1 1/1\n"):
+    def __init__(
+        self, argv, returncode=0, output_text="v 0 0 0\nvt 0 0\nf 1/1 1/1 1/1\n"
+    ):
         self.argv = argv
         self.returncode = returncode
         self.output_text = output_text
@@ -50,7 +52,9 @@ def popen_recorder(monkeypatch, **process_kwargs):
 
 
 def test_build_args_quality_and_weight_mapping(fake_engine):
-    args = optcuts.build_args(fake_engine, Path("in.obj"), Path("out"), "high", 5, False)
+    args = optcuts.build_args(
+        fake_engine, Path("in.obj"), Path("out"), "high", 5, False
+    )
     assert args[args.index("-u") + 1] == "4.05"
     assert args[args.index("-s") + 1] == "200"
     assert "-g" in args
@@ -62,7 +66,9 @@ def test_build_args_quality_and_weight_mapping(fake_engine):
 
 
 def test_output_dir_arg_has_trailing_separator(fake_engine):
-    args = optcuts.build_args(fake_engine, Path("in.obj"), Path("out"), "medium", 3, False)
+    args = optcuts.build_args(
+        fake_engine, Path("in.obj"), Path("out"), "medium", 3, False
+    )
     out_arg = args[args.index("-o") + 1]
     assert out_arg.endswith(("/", "\\"))
 
@@ -79,7 +85,9 @@ def test_run_copies_weights_sidecar(triangle, tmp_path, fake_engine, monkeypatch
     calls = popen_recorder(monkeypatch)
     weights = tmp_path / "weights.txt"
     weights.write_text("0,1.0")
-    optcuts.run(triangle, tmp_path / "out.obj", "medium", False, weights, 3, fake_engine)
+    optcuts.run(
+        triangle, tmp_path / "out.obj", "medium", False, weights, 3, fake_engine
+    )
     argv = calls[0].argv
     assert Path(argv[argv.index("-i") + 1]).name == "triangle.obj"
     assert calls[0].sidecar_existed
@@ -88,14 +96,18 @@ def test_run_copies_weights_sidecar(triangle, tmp_path, fake_engine, monkeypatch
 def test_run_engine_failure(triangle, tmp_path, fake_engine, monkeypatch):
     popen_recorder(monkeypatch, returncode=7)
     with pytest.raises(UnwrapError) as error:
-        optcuts.run(triangle, tmp_path / "out.obj", "medium", False, None, 3, fake_engine)
+        optcuts.run(
+            triangle, tmp_path / "out.obj", "medium", False, None, 3, fake_engine
+        )
     assert error.value.exit_code == 4
 
 
 def test_run_output_missing_uvs(triangle, tmp_path, fake_engine, monkeypatch):
     popen_recorder(monkeypatch, output_text="v 0 0 0\nf 1 1 1\n")
     with pytest.raises(UnwrapError) as error:
-        optcuts.run(triangle, tmp_path / "out.obj", "medium", False, None, 3, fake_engine)
+        optcuts.run(
+            triangle, tmp_path / "out.obj", "medium", False, None, 3, fake_engine
+        )
     assert error.value.exit_code == 5
 
 

@@ -458,9 +458,11 @@ uv sync
 uv run uvgami unwrap model.obj
 ```
 
+- `--engine optcuts` (default) or `--engine partuv`; each engine rejects the other's options
 - Output defaults to `<input stem>_uv.obj` next to the input, use `-o` and `--overwrite` to control it
 - `--json` prints one machine-readable result on stdout, all logs go to stderr
 - OptCuts options: `--quality`, `--seam-weight`, `--seam-weights`, `--import-uvs`, `--optcuts-path` (defaults to the bundled `engines/` binary)
+- PartUV options: `--threshold`, `--segmentation`, `--checkpoint`, `--config` (see the PartUV section below; `--visual` is only on `python -m partuv`)
 - Exit codes: 0 ok, 2 invalid input, 3 missing runtime files, 4 engine failure, 5 bad output
 
 ### PartUV

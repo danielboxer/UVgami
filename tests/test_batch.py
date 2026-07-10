@@ -45,18 +45,14 @@ def wait_result(batch_process, stem, timeout=10):
 
 
 def test_markers_reported():
-    batch_process = start(
-        "print('start: a');print('done: a');print('failed: b -2')"
-    )
+    batch_process = start("print('start: a');print('done: a');print('failed: b -2')")
     assert wait_result(batch_process, "a") == 0
     assert wait_result(batch_process, "b") == -2
     assert "a" in batch_process.started
 
 
 def test_unknown_lines_ignored():
-    batch_process = start(
-        "print('loading model');print('start: a');print('done: a')"
-    )
+    batch_process = start("print('loading model');print('start: a');print('done: a')")
     assert wait_result(batch_process, "a") == 0
 
 
@@ -67,9 +63,7 @@ def test_missing_marker_fails_after_exit():
 
 
 def test_pending_while_running():
-    batch_process = start(
-        "import time;print('start: a',flush=True);time.sleep(30)"
-    )
+    batch_process = start("import time;print('start: a',flush=True);time.sleep(30)")
     try:
         deadline = time.monotonic() + 10
         while "a" not in batch_process.started:
@@ -111,9 +105,7 @@ def test_should_not_retry_when_stem_started():
 
 
 def test_should_not_retry_while_running():
-    batch_process = start(
-        "import time;print('start: a',flush=True);time.sleep(30)"
-    )
+    batch_process = start("import time;print('start: a',flush=True);time.sleep(30)")
     try:
         deadline = time.monotonic() + 10
         while "a" not in batch_process.started:

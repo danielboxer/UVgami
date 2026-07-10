@@ -3,16 +3,44 @@ import json
 import time
 from pathlib import Path
 
-from .common import EXIT_INVALID_INPUT, UnwrapError, log, unwrap_all
+from .common import (
+    EXIT_INVALID_INPUT,
+    EXIT_MISSING_RUNTIME,
+    UnwrapError,
+    log,
+    unwrap_all,
+)
+
+# flags that only apply to one engine, so the other engine can reject them
+OPTCUTS_FLAGS = {
+    "--quality": "quality",
+    "--import-uvs": "import_uvs",
+    "--seam-weights": "seam_weights",
+    "--seam-weight": "seam_weight",
+    "--optcuts-path": "optcuts_path",
+}
+PARTUV_FLAGS = {
+    "--threshold": "threshold",
+    "--segmentation": "segmentation",
+    "--checkpoint": "checkpoint",
+    "--config": "config",
+}
 
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        prog="uvgami", description="UV unwrap OBJ files with the UVgami OptCuts engine"
+        prog="uvgami",
+        description="UV unwrap OBJ files with the OptCuts or PartUV engine",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     unwrap = subparsers.add_parser("unwrap", help="unwrap OBJ files")
     unwrap.add_argument("input", type=Path, nargs="+", help="input OBJ files")
+    unwrap.add_argument(
+        "--engine",
+        choices=["optcuts", "partuv"],
+        default="optcuts",
+        help="unwrapping engine, default: optcuts",
+    )
     unwrap.add_argument(
         "-o",
         "--output",
@@ -25,7 +53,9 @@ def build_parser():
         type=Path,
         help="write each output as <input stem>.obj in this directory",
     )
-    unwrap.add_argument("--overwrite", action="store_true", help="replace existing output")
+    unwrap.add_argument(
+        "--overwrite", action="store_true", help="replace existing output"
+    )
     unwrap.add_argument(
         "--json",
         action="store_true",
@@ -33,15 +63,40 @@ def build_parser():
     )
 
     optcuts = unwrap.add_argument_group("optcuts options")
-    optcuts.add_argument("--quality", choices=["high", "medium", "low"], help="default: medium")
     optcuts.add_argument(
-        "--import-uvs", action="store_true", default=None, help="keep existing UVs as a starting point"
+        "--quality", choices=["high", "medium", "low"], help="default: medium"
+    )
+    optcuts.add_argument(
+        "--import-uvs",
+        action="store_true",
+        default=None,
+        help="keep existing UVs as a starting point",
     )
     optcuts.add_argument("--seam-weights", type=Path, help="vertex weights file")
     optcuts.add_argument(
-        "--seam-weight", type=int, choices=range(1, 6), help="seam weight level, default: 3"
+        "--seam-weight",
+        type=int,
+        choices=range(1, 6),
+        help="seam weight level, default: 3",
     )
     optcuts.add_argument("--optcuts-path", type=Path, help="default: bundled binary")
+
+    partuv = unwrap.add_argument_group("partuv options")
+    partuv.add_argument(
+        "--threshold", type=float, help="distortion threshold, default: 1.25"
+    )
+    partuv.add_argument(
+        "--segmentation",
+        choices=["ai", "geometric"],
+        help="part segmentation, default: ai",
+    )
+    partuv.add_argument(
+        "--checkpoint",
+        type=Path,
+        help="PartField model checkpoint, default: $UVGAMI_PARTUV_CHECKPOINT"
+        " or engine/partuv/model_objaverse.ckpt",
+    )
+    partuv.add_argument("--config", type=Path, help="default: packaged config.yaml")
     return parser
 
 
@@ -77,13 +132,71 @@ def validate(args):
                 EXIT_INVALID_INPUT, f"output exists (use --overwrite): {output_path}"
             )
 
-    args.quality = args.quality or "medium"
-    args.import_uvs = bool(args.import_uvs)
-    args.seam_weight = args.seam_weight or 3
-    if args.seam_weights is not None and not args.seam_weights.is_file():
-        raise UnwrapError(
-            EXIT_INVALID_INPUT, f"seam weights file not found: {args.seam_weights}"
+    # reject the other engine's flags when explicitly passed, before defaults
+    foreign = PARTUV_FLAGS if args.engine == "optcuts" else OPTCUTS_FLAGS
+    for flag, attr in foreign.items():
+        if getattr(args, attr) is not None:
+            raise UnwrapError(
+                EXIT_INVALID_INPUT, f"{flag} is not valid with --engine {args.engine}"
+            )
+
+    if args.engine == "optcuts":
+        args.quality = args.quality or "medium"
+        args.import_uvs = bool(args.import_uvs)
+        args.seam_weight = args.seam_weight or 3
+        if args.seam_weights is not None and not args.seam_weights.is_file():
+            raise UnwrapError(
+                EXIT_INVALID_INPUT, f"seam weights file not found: {args.seam_weights}"
+            )
+    else:
+        args.segmentation = args.segmentation or "ai"
+        if args.segmentation == "geometric" and args.checkpoint is not None:
+            raise UnwrapError(
+                EXIT_INVALID_INPUT, "--checkpoint only applies to --segmentation ai"
+            )
+        args.threshold = args.threshold if args.threshold is not None else 1.25
+
+
+def run_optcuts(args, pairs):
+    from . import optcuts
+
+    def unwrap_one(input_path, output_path):
+        optcuts.run(
+            input_path,
+            output_path,
+            args.quality,
+            args.import_uvs,
+            args.seam_weights,
+            args.seam_weight,
+            args.optcuts_path,
         )
+
+    return unwrap_all(pairs, unwrap_one)
+
+
+def run_partuv(args, pairs):
+    try:
+        import partuv.cli
+        import partuv.common
+    except ImportError as error:
+        raise UnwrapError(
+            EXIT_MISSING_RUNTIME,
+            f"the PartUV engine is not installed ({error});"
+            " install it with: uv sync --extra partuv",
+        ) from error
+    # partuv raises its own UnwrapError class; re-raise as ours so main's
+    # handler and the --json error path keep working (exit codes match)
+    try:
+        checkpoint = (
+            partuv.cli.resolve_checkpoint(args.checkpoint)
+            if args.segmentation == "ai"
+            else None
+        )
+        return partuv.cli.run(
+            pairs, checkpoint, args.config, args.threshold, args.segmentation
+        )
+    except partuv.common.UnwrapError as error:
+        raise UnwrapError(error.exit_code, str(error)) from error
 
 
 def main(argv=None):
@@ -92,20 +205,10 @@ def main(argv=None):
         validate(args)
         pairs = list(zip(args.input, args.outputs))
         start = time.perf_counter()
-        from . import optcuts
-
-        def unwrap_one(input_path, output_path):
-            optcuts.run(
-                input_path,
-                output_path,
-                args.quality,
-                args.import_uvs,
-                args.seam_weights,
-                args.seam_weight,
-                args.optcuts_path,
-            )
-
-        code = unwrap_all(pairs, unwrap_one)
+        if args.engine == "partuv":
+            code = run_partuv(args, pairs)
+        else:
+            code = run_optcuts(args, pairs)
         elapsed = time.perf_counter() - start
     except UnwrapError as error:
         log(f"error: {error}", style="error")
@@ -128,7 +231,7 @@ def main(argv=None):
                 json.dumps(
                     {
                         "status": "ok",
-                        "engine": "optcuts",
+                        "engine": args.engine,
                         "input": str(args.input[0]),
                         "output": str(args.outputs[0]),
                         "seconds": round(elapsed, 2),

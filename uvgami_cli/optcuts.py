@@ -23,9 +23,7 @@ def find_engine(explicit_path):
     if explicit_path is not None:
         path = Path(explicit_path)
         if not path.is_file():
-            raise UnwrapError(
-                EXIT_MISSING_RUNTIME, f"OptCuts binary not found: {path}"
-            )
+            raise UnwrapError(EXIT_MISSING_RUNTIME, f"OptCuts binary not found: {path}")
         return path
 
     system = platform.system()
@@ -67,7 +65,9 @@ def build_args(engine_path, input_path, output_dir, quality, seam_weight, import
     return args
 
 
-def run(input_path, output_path, quality, import_uvs, seam_weights, seam_weight, engine_path):
+def run(
+    input_path, output_path, quality, import_uvs, seam_weights, seam_weight, engine_path
+):
     engine = find_engine(engine_path)
     with tempfile.TemporaryDirectory(prefix="uvgami-") as tmp:
         in_dir = Path(tmp) / "in"

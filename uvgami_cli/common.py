@@ -86,9 +86,7 @@ def unwrap_all(pairs, unwrap_one):
             emit(f"start: {input_path.stem}")
         try:
             if not input_path.is_file():
-                raise UnwrapError(
-                    EXIT_INVALID_INPUT, f"input not found: {input_path}"
-                )
+                raise UnwrapError(EXIT_INVALID_INPUT, f"input not found: {input_path}")
             unwrap_one(input_path, output_path)
         except Exception as error:
             if not batch:
