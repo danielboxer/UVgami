@@ -11,7 +11,15 @@ Y = 25
 WIDTH = 150
 TOP = Y + 5
 SHADER_NAME = "UNIFORM_COLOR" if bpy.app.version >= (4, 0, 0) else "2D_UNIFORM_COLOR"
-SHADER = gpu.shader.from_builtin(SHADER_NAME)
+# created on first use, gpu is unavailable at import time in background mode
+SHADER = None
+
+
+def _get_shader():
+    global SHADER
+    if SHADER is None:
+        SHADER = gpu.shader.from_builtin(SHADER_NAME)
+    return SHADER
 
 
 class ProgressBar:
@@ -21,9 +29,10 @@ class ProgressBar:
         self.is_active = False
 
     def _draw(self, index):
-        SHADER.bind()
-        SHADER.uniform_float("color", COLOUR[index])
-        self._batch[index].draw(SHADER)
+        shader = _get_shader()
+        shader.bind()
+        shader.uniform_float("color", COLOUR[index])
+        self._batch[index].draw(shader)
 
     def start(self):
         self.is_active = True
@@ -50,7 +59,7 @@ class ProgressBar:
 
         for idx in range(3):
             self._batch[idx] = batch_for_shader(
-                SHADER,
+                _get_shader(),
                 "TRIS",
                 {"pos": vertices[idx]},
                 indices=((0, 1, 2), (2, 1, 3)),

@@ -62,7 +62,7 @@ Blender 2.9+
     - [Show Popup](#show-popup)
     - [Progress Bar Option](#progress-bar-option)
     - [Info Option](#info-option)
-    - [Invalid Collection](#invalid-collection)
+    - [Not Unwrapped Collection](#not-unwrapped-collection)
     - [Input Cleanup](#input-cleanup)
     - [Viewer Workspace](#viewer-workspace)
   - [Linux (Faster) Version on Windows](#linux-faster-version-on-windows)
@@ -88,7 +88,7 @@ Download the add-on [here](https://github.com/DanielBoxer/UVgami/releases/latest
     - Move the unzipped folder to a place where you keep applications. This can be anywhere on your filesystem
     - In Blender, open UVgami preferences and select the engine path using the button on the right of the input field. The `uvgami` app inside the engine folder is what should be selected
 
-![Engine Path](engine_path.jpg)
+![Engine Path](img/engine_path.jpg)
 
 ### Option 2: Install the Bundled Version
 
@@ -104,31 +104,35 @@ Download the add-on [here](https://github.com/DanielBoxer/UVgami/releases/latest
 
 - Press the `Unwrap` button
 
-![Unwrap Button](unwrap.jpg)
+![Unwrap Button](img/unwrap.jpg)
 
 - If an unwrap is already active, you can still add new items to the queue
 
-![Unwrap Queue](unwrapping.jpg)
+![Unwrap Queue](img/unwrapping.jpg)
 
 ### Unwrap Buttons
 
-![Unwrap Buttons](unwrap_buttons.jpg)
+![Unwrap Buttons](img/unwrap_buttons.jpg)
 
 #### Visual Mode
 
-![Visual Button](visual_button.jpg)
+![Visual Button](img/visual_button.jpg)
+
+(optcuts only)
 
 Press to enter visual mode. This will show a real time view of the unwrap as it progresses. All keyboard and mouse input will be blocked. Press `ESC` to exit visual mode.
 
 #### Stop
 
-![Stop Button](stop_button.jpg)
+![Stop Button](img/stop_button.jpg)
 
 Stop the unwrap and get the partly finished UV map.
 
+Stopping PartUV lets the running meshes finish and moves the rest to "UVgami Not Unwrapped".
+
 #### Cancel
 
-![Cancel Button](cancel_button.jpg)
+![Cancel Button](img/cancel_button.jpg)
 
 Cancel the unwrap and discard the UV map.
 
@@ -141,18 +145,18 @@ Cancel all active unwraps at once. This button appears when there are multiple u
 - Pressing unwrap with more than one object selected will add them all to the unwrap queue
 - Most UVgami buttons will operate on all selected objects
 
-![Batch](batch.jpg)
+![Batch](img/batch.jpg)
 
 ### Joined Objects
 
 - If an object is made up of joined together objects, each piece of the object will be unwrapped separately and later joined together
 - This will show up as a group in the ui
 
-![Separated Objects](separated.jpg)
+![Separated Objects](img/separated.jpg)
 
 ### Progress Bar
 
-![Progress Bar](progress_bar.jpg)
+![Progress Bar](img/progress_bar.jpg)
 
 - The progress bar will appear in the bottom left corner of the 3D viewport
 - The colours correspond to the UV stretching in the current unwrap
@@ -165,13 +169,13 @@ Cancel all active unwraps at once. This button appears when there are multiple u
 
 #### Quality
 
-![Quality](quality.jpg)
+![Quality](img/quality.jpg)
 
 Increasing the unwrap quality will produce a UV map with less stretching. This also will make the unwrap take longer, so it's recommended to keep it at medium.
 
 #### Import UVs
 
-![Import Uvs](import_uvs.jpg)
+![Import Uvs](img/import_uvs.jpg)
 
 Use the existing UV map on the input mesh as the starting point.
 
@@ -183,7 +187,7 @@ Some use cases:
 
 #### Preserve Mesh
 
-![Preserve Mesh](preserve_mesh.jpg)
+![Preserve Mesh](img/preserve_mesh.jpg)
 
 - Turn this on to keep the final mesh the same as the original mesh. This is useful when you are working with quads and don't want the final mesh to be triangulated.
 
@@ -198,14 +202,14 @@ Some use cases:
 
 ### Seam Restrictions
 
-![Seam Restrictions](seam_restrictions.jpg)
+![Seam Restrictions](img/seam_restrictions.jpg)
 
 #### Draw on areas of the mesh you don't want seams added <!-- omit in toc -->
 
 - Press `Draw` to start drawing on the mesh
 - Red areas will be avoided and will have no seams
 
-![Seam Restrictions](seam_restrictions_bear.jpg)
+![Seam Restrictions](img/seam_restrictions_bear.jpg)
 
 ##### Attribution for 3D models: <!-- omit in toc -->
 
@@ -213,15 +217,15 @@ Some use cases:
 
 Before seam restrictions:
 
-![Seams Before Restrictions](bear_before.jpg)
+![Seams Before Restrictions](img/bear_before.jpg)
 
-![UVs Before Restrictions](bear_uvs_before.jpg)
+![UVs Before Restrictions](img/bear_uvs_before.jpg)
 
 After seam restrictions:
 
-![Seams After Restrictions](bear_after.jpg)
+![Seams After Restrictions](img/bear_after.jpg)
 
-![UVs After Restrictions](bear_uvs_after.jpg)
+![UVs After Restrictions](img/bear_uvs_after.jpg)
 
 #### Weight
 
@@ -236,17 +240,17 @@ Use symmetry when you have a symmetrical mesh. The more axes selected, the faste
 - If `Merge` is turned on, the symmetrical UVs will overlap and merge. This is good if you want your texture mirrored. Turning `Merge` off will result in a seam down the set axes.
 - Press preview to add a plane on the set axes. This is only for making sure you have selected the correct axes.
 
-![Symmetry](symmetry.jpg)
+![Symmetry](img/symmetry.jpg)
 
-![Symmetry](cow_symmetry.jpg)
+![Symmetry](img/cow_symmetry.jpg)
 
-![Symmetry](cow_uvs.jpg)
+![Symmetry](img/cow_uvs.jpg)
 
 ### Speed
 
 #### Concurrent mode
 
-![Concurrent](concurrent_mode.jpg)
+![Concurrent](img/concurrent_mode.jpg)
 
 Unwrap multiple meshes simultaneously, making the unwrap much faster. This also has an effect on meshes that need to be separated. The amount of meshes able to be unwrapped at the same time depends on your computer.
 
@@ -254,13 +258,13 @@ You can choose the amount of cores to use below. For example, with 8 cores you c
 
 #### Finish percentage
 
-![Finish percent](finish_percent.jpg)
+![Finish percent](img/finish_percent.jpg)
 
 Stop the unwrap early based on the amount of stretching.
 
 #### Timeout
 
-Set a maximum time in minutes for each unwrap. If an unwrap exceeds this time, the mesh will be moved to the invalid collection. Set to `0` to disable the timeout. This is useful for when unwrapping multiple things at once so if one times out the rest will still unwrap.
+Set a maximum time in minutes for each unwrap. If an unwrap exceeds this time, the mesh will be moved to the "UVgami Not Unwrapped" collection. Set to `0` to disable the timeout. This is useful for when unwrapping multiple things at once so if one times out the rest will still unwrap.
 
 #### Cuts
 
@@ -270,7 +274,7 @@ This splits the mesh apart, unwraps the pieces separately, then joins them toget
 
 Sometimes there are errors when cuts is turned on. This is because bisecting the mesh can produce invalid geometry.
 
-![Cuts](cuts.jpg)
+![Cuts](img/cuts.jpg)
 
 ##### Even
 
@@ -284,7 +288,7 @@ This is for if you want more control over where the cuts will be. You can manual
 
 ### Grid
 
-![Grid](grid.jpg)
+![Grid](img/grid.jpg)
 
 - Press `Add Grid` to apply a grid material to all selected objects. The shading mode will be changed to material preview.
 - Press the button to the right of the `Add Grid` button to remove the grid material from selected objects. The shading mode will be changed to solid.
@@ -294,7 +298,7 @@ This is for if you want more control over where the cuts will be. You can manual
 
 ### Pack
 
-![Pack](pack.jpg)
+![Pack](img/pack.jpg)
 
 Packing uses the Blender packing engine. This is just to make packing a bit easier.
 
@@ -305,18 +309,18 @@ Packing uses the Blender packing engine. This is just to make packing a bit easi
 
 ### UV Operations
 
-![UV Operations](uv_operations.jpg)
+![UV Operations](img/uv_operations.jpg)
 
 
 #### Unwrap Sharp
 
-![Unwrap Sharp](unwrap_sharp.jpg)
+![Unwrap Sharp](img/unwrap_sharp.jpg)
 
 This is an interactive operator for hard surface models. It combines some Blender features to unwrap an object by sharp edges. You can use the `Sharpness` slider to change the angle, and the unwrap will be updated.
 
 If the object is very high poly, the slider will get too slow to use. You can either click it to input a value or turn preview mode on.
 
-![Unwrap Sharp Preview](unwrap_sharp_preview.jpg)
+![Unwrap Sharp Preview](img/unwrap_sharp_preview.jpg)
 
 Preview mode only marks seams and doesn't unwrap the mesh. Once you have good seams in preview mode, turn preview mode off and click `Unwrap Sharp` again.
 
@@ -330,7 +334,7 @@ Open the UV viewer for the selected object. Click to exit the viewer.
 
 ### Info
 
-![Info](info.jpg)
+![Info](img/info.jpg)
 
 The info panel shows information about past unwraps. Any errors will also be shown here. If you don't need this, it can be turned off in the preferences.
 
@@ -344,7 +348,7 @@ The info panel shows information about past unwraps. Any errors will also be sho
 
 ### Preferences
 
-![Preferences](preferences.jpg)
+![Preferences](img/preferences.jpg)
 
 #### Autosave (recommended)
 
@@ -362,9 +366,9 @@ Show a [progress bar](#progress-bar) in the 3D view while unwrapping.
 
 Show information about previous unwraps in the info panel.
 
-#### Invalid Collection
+#### Not Unwrapped Collection
 
-Add all invalid meshes to a collection.
+Add meshes that failed to unwrap, were cancelled, or were stopped to a collection.
 
 #### Input Cleanup
 
@@ -375,6 +379,8 @@ The action to perform on the original input mesh.
 - Delete: Delete the original input mesh
 
 #### Viewer Workspace
+
+(optcuts only)
 
 The name of the workspace that will be opened when viewing an unwrap. If this is empty, the UV editor will be opened instead.
 
@@ -388,14 +394,16 @@ The name of the workspace that will be opened when viewing an unwrap. If this is
 
 #### WSL Installation
 
+(applies to the optcuts engine only, partuv runs natively)
+
 [YouTube Tutorial for WSL Installation](https://youtu.be/FQ6ahcJOVz0?t=30) 0:30 - 2:12
 
 1. Open the Windows start menu
 2. Search for `Windows PowerShell`
-![Windows PowerShell](windows_powershell_search.jpg)
+![Windows PowerShell](img/windows_powershell_search.jpg)
 3. Right click on `Windows PowerShell`
 4. Click `Run as administrator`
-![Run As Admin](run_as_admin.jpg)
+![Run As Admin](img/run_as_admin.jpg)
 5. When prompted to make changes to your device, click Yes
 6. Type `wsl --install` in the Windows PowerShell terminal and press enter
 7. Once installation is complete, restart your computer. An Ubuntu window will appear to finish the installation
@@ -406,7 +414,7 @@ The name of the workspace that will be opened when viewing an unwrap. If this is
 
 **Important: Whenever you get a new version of the engine, you need to press the `Setup WSL` button. If you don't, the older version will be used when you use WSL**
 
-![Setup WSL](setup_wsl.jpg)
+![Setup WSL](img/setup_wsl.jpg)
 
 ## Limitations
 
@@ -431,12 +439,86 @@ Current ways to speed up the unwrap:
 ### Invalid Objects
 
 - The unwrapper can't unwrap some objects for various reasons
-- If it can't unwrap an object, you will be notified, or if the object is part of a separated object, it will be moved to a "Invalid Objects" collection
+- If it can't unwrap an object, you will be notified, or if the object is part of a separated object, it will be moved to a "UVgami Not Unwrapped" collection
 - For example, the Suzanne monkey head is invalid because it's non manifold. Unwrapping it will have this result, where the eyes are unwrapped succesfully, and the head was not:
 
-![Invalid Objects](invalid_objects.jpg)
+![Invalid Objects](img/invalid_objects.jpg)
 
 In this case, the problem is this area, which when fixed, will unwrap properly:
 
-![Suzanne](suzanne_non_manifold.jpg)
-![Suzanne](suzanne_non_manifold_2.jpg)
+![Suzanne](img/suzanne_non_manifold.jpg)
+![Suzanne](img/suzanne_non_manifold_2.jpg)
+
+## Development
+
+### Developer CLI
+
+Blender-independent CLI for testing the engines with OBJ files. Needs [uv](https://docs.astral.sh/uv/).
+
+```powershell
+uv sync
+uv run uvgami unwrap model.obj
+```
+
+- `--engine optcuts` (default) or `--engine partuv`; each engine rejects the other's options
+- Output defaults to `<input stem>_uv.obj` next to the input, use `-o` and `--overwrite` to control it
+- `--json` prints one machine-readable result on stdout, all logs go to stderr
+- OptCuts options: `--quality`, `--seam-weight`, `--seam-weights`, `--import-uvs`, `--optcuts-path` (defaults to the bundled `engines/` binary)
+- PartUV options: `--threshold`, `--segmentation`, `--checkpoint`, `--config` (see the PartUV section below; `--visual` is only on `python -m partuv`)
+- Exit codes: 0 ok, 2 invalid input, 3 missing runtime files, 4 engine failure, 5 bad output
+
+### PartUV
+
+PartUV needs CUDA. It builds natively on Windows and Linux.
+
+In the add-on, PartUV runs `python -m partuv` from the wheel: from a repo checkout it uses `uv run`, otherwise the install button in the add-on preferences downloads the wheel from the latest release and installs it into a managed venv.
+
+Two segmentation modes drive the part tree:
+
+- `--segmentation ai` (default): PartField inference, best quality; needs the torch stack (`--extra partuv`) and the [PartField checkpoint](https://huggingface.co/mikaelaangel/partfield-ckpt) (untracked)
+- `--segmentation geometric`: scikit-learn agglomerative clustering on face normals and centroids; no torch, no checkpoint, installs with `--extra partuv-lite`
+
+#### Build Setup (Windows)
+
+1. Visual Studio 2026 with the C++ workload (includes vcpkg, cmake, ninja)
+2. CUDA Toolkit 13.2+ (`winget install Nvidia.CUDA`), older versions don't support VS 2026
+3. From a VS dev shell (`Launch-VsDevShell.ps1 -Arch amd64`): `uv sync --extra partuv` (or `--extra partuv-lite`)
+
+The vcpkg deps (cgal, yaml-cpp, tbb) build from source on the first run, about 50 minutes, and are binary-cached after. The wheel bundles the runtime DLLs; running it only needs the VC++ redistributable.
+
+#### Build Setup (Linux/WSL)
+
+One-time WSL setup (Ubuntu 24.04):
+
+```bash
+sudo apt install build-essential libcgal-dev libyaml-cpp-dev libtbb-dev
+# cuda toolkit from the nvidia wsl-ubuntu repo, then nvcc is at /usr/local/cuda-12.6/bin
+sudo apt install cuda-toolkit-12-6
+wget -P engine/partuv https://huggingface.co/mikaelaangel/partfield-ckpt/resolve/main/model_objaverse.ckpt
+```
+
+Build and run in WSL (from the repo):
+
+```bash
+export PATH=/usr/local/cuda-12.6/bin:$PATH
+# venv on ext4: keeps the Windows .venv untouched and torch imports fast
+export UV_PROJECT_ENVIRONMENT=~/uvgami-venv
+uv sync --extra partuv        # or --extra partuv-lite for geometric only
+uv run python -m partuv model.obj
+```
+
+#### Advanced Options
+
+- Checkpoint lookup order: `--checkpoint`, `$UVGAMI_PARTUV_CHECKPOINT`, `engine/partuv/model_objaverse.ckpt`
+- The extension compiles to `/var/tmp/partuv-build` in WSL (compiling on `/mnt/c` is hopelessly slow) and targets sm_86 (RTX 3060) by default, override with the `CUDAARCHS` env var; `-DPARTUV_NATIVE=ON` restores upstream's `-march=native`
+- Release wheels should widen the CUDA targets: `CUDAARCHS="75-real;80-real;86-real;89-real;90-real;120"` with CUDA 13 (Windows; sm_75 is its floor), drop `120` on CUDA 12.6 (WSL; sm_90 is its ceiling)
+- CI does this: the PartUV build workflow builds cp311 wheels for Windows and Linux when `engine/partuv/pyproject.toml` or `engine/partuv/vcpkg.json` changes on master (the pyproject version bump is the release trigger; bump vcpkg's `version-string` alongside it) and uploads them to the latest release. The Linux wheel needs the apt libs above and the CUDA runtime at import time; only the Windows wheel bundles its DLLs
+- `--threshold` sets the distortion threshold (default 1.25), `--config` overrides `engine/partuv/config/config.yaml`
+
+### Tests
+
+```powershell
+uv run pytest              # unit tests + OptCuts smoke test
+uv run pytest -m "not smoke"
+uv run ruff check uvgami_cli tests
+```

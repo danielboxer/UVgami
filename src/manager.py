@@ -10,6 +10,7 @@ import bmesh
 import bpy
 import numpy
 
+from .batch import BatchProcess, last_meaningful_line
 from .job import Join
 from .logger import logger
 from .ops.grid import add_grid, make_grid_img, make_grid_mat
@@ -17,7 +18,7 @@ from .ops.uv import pack, show_seams
 from .progress_bar import progress_bar
 from .reroute_seams import reroute_seams
 from .utils.geometry import set_origin
-from .utils.io import import_obj, print_stdin
+from .utils.io import import_obj
 from .utils.mesh import (
     check_collection,
     check_exists,
@@ -37,6 +38,7 @@ class UnwrapManager:
         self._running = []
         self._pack_output_objects = []
         self.input = {}
+        self.engine = None
         self.engine_path = None
         self.is_active = False
         self.is_viewer_active = False
@@ -71,7 +73,8 @@ class UnwrapManager:
         self.finished_count = 0
         self.cancelled_count = 0
         self.error_code = 0
-        self.license_error = None
+        self.error_stderr = ""
+        self.error_messages = []
         self.current_viewer = None
         self.is_viewer_active = False
         self.exit_viewer = False
@@ -83,10 +86,38 @@ class UnwrapManager:
     def _fill_slots(self):
         """Start queued unwraps up to the concurrency limit."""
         props = bpy.context.scene.uvgami
-        max_concurrent = props.max_cores if props.concurrent else 1
+        engine = self.engine
+        if engine.wants_batch(props):
+            if any(u.batch_process is not None for u in self._running):
+                # wait for the running batch process to finish
+                return
+            if len(self._queue) > 1:
+                self._start_batch_process(engine, props)
+                return
+            # a single queued mesh runs the normal solo path
+        if props.concurrent and engine.allows_concurrent(props):
+            max_concurrent = props.max_cores
+        else:
+            max_concurrent = 1
         while len(self._running) < max_concurrent and self._queue:
             unwrap = self._queue.popleft()
             unwrap.start_unwrap()
+            self._running.append(unwrap)
+
+    def _start_batch_process(self, engine, props):
+        """Unwrap every queued mesh in one engine process."""
+        unwraps = list(self._queue)
+        self._queue.clear()
+        args = engine.build_batch_args(
+            self.engine_path, [u.path for u in unwraps], props
+        )
+        batch_process = BatchProcess(
+            args,
+            engine.build_env(self.engine_path),
+            {unwrap.path.stem: unwrap for unwrap in unwraps},
+        )
+        for unwrap in unwraps:
+            unwrap.join_batch(batch_process)
             self._running.append(unwrap)
 
     def _dispatch(self):
@@ -99,6 +130,7 @@ class UnwrapManager:
             prefs = get_preferences()
             completed = []
             failed = []
+            requeued = []
 
             for unwrap in list(self._running):
                 # update progress
@@ -106,7 +138,11 @@ class UnwrapManager:
 
                 # check early stop
                 early_stop = bpy.context.scene.uvgami.early_stop
-                if early_stop != 100 and unwrap.progress[0] >= early_stop / 100:
+                if (
+                    self.engine.supports_early_stop
+                    and early_stop != 100
+                    and unwrap.progress[0] >= early_stop / 100
+                ):
                     unwrap.is_stopped = True
 
                 # update viewer
@@ -115,7 +151,7 @@ class UnwrapManager:
 
                 # if part of batch unwrap, hasn't started and stop button pressed
                 if unwrap.is_stopped:
-                    print_stdin(unwrap.process, "stop")
+                    self.engine.request_early_stop(unwrap.process)
                     # track when stop was first requested
                     if unwrap.stop_requested_at is None:
                         unwrap.stop_requested_at = time.monotonic()
@@ -127,6 +163,9 @@ class UnwrapManager:
                     ):
                         unwrap.stop_process()
                         failed.append((unwrap, -3))
+                        # already failed this tick, don't let the poll below re-add
+                        # it once the killed process reports an exit code
+                        continue
 
                 # check if unwrap has exceeded the timeout
                 timeout_minutes = bpy.context.scene.uvgami.unwrap_timeout
@@ -137,14 +176,28 @@ class UnwrapManager:
                 ):
                     unwrap.stop_process()
                     failed.append((unwrap, -2))
+                    # already failed this tick, don't let the poll below re-add
+                    # it once the killed process reports an exit code
+                    continue
 
                 # check process status
-                ret_code = unwrap.process.poll()
+                ret_code = unwrap.poll_engine()
                 if ret_code is not None:
                     if ret_code == 0 and unwrap.output_path.is_file():
                         completed.append(unwrap)
                     elif ret_code != 0:
-                        failed.append((unwrap, ret_code))
+                        # a batched mesh that never started and still has its
+                        # input goes back to the queue for a fresh batch instead
+                        # of inheriting the dead process's exit code
+                        stem = unwrap.path.stem
+                        if (
+                            unwrap.batch_process is not None
+                            and unwrap.batch_process.should_retry(stem)
+                            and unwrap.path.is_file()
+                        ):
+                            requeued.append(unwrap)
+                        else:
+                            failed.append((unwrap, ret_code))
 
             logger.update_time()
 
@@ -179,6 +232,15 @@ class UnwrapManager:
                     if unwrap in self._running:
                         self._running.remove(unwrap)
                     unwrap.cleanup()
+
+            # requeue detached batch members so _fill_slots re-batches them
+            for unwrap in requeued:
+                if unwrap in self._running:
+                    self._running.remove(unwrap)
+                unwrap.leave_batch()
+                self._queue.append(unwrap)
+            if requeued:
+                print(f"UVgami: requeued {len(requeued)} mesh(es) after batch ended")
 
             # fill empty slots from queue
             self._fill_slots()
@@ -407,37 +469,38 @@ class UnwrapManager:
             ret_code -= ADJUSTMENT
 
         move_to_invalid = False
-        if ret_code == -1:
-            msg = "Mesh needs cleanup"
-            move_to_invalid = True
-        elif ret_code == -2:
+        # manager-synthetic codes for timeout and force-kill
+        if ret_code == -2:
             elapsed = (time.monotonic() - unwrap.started_at) / 60
             msg = f"Timed out after {elapsed:.1f} minutes"
             move_to_invalid = True
         elif ret_code == -3:
             msg = "Stop timed out (force killed)"
             move_to_invalid = True
-        elif ret_code == 101:
-            msg = "Non Manifold Edges"
-            move_to_invalid = True
-        elif ret_code == 102:
-            msg = "Non Manifold Vertices"
-            move_to_invalid = True
-        elif ret_code == 105:
-            msg = "Invalid Geometry"
-            move_to_invalid = True
-        elif ret_code == 107:
-            msg = "Invalid UV Input"
-            move_to_invalid = True
         else:
-            self.error_code = ret_code
+            described = self.engine.describe_failure(ret_code)
+            if described is not None:
+                msg, move_to_invalid = described
+                if not move_to_invalid:
+                    self.error_messages.append(msg)
+            else:
+                self.error_code = ret_code
+                tail = unwrap.get_stderr_tail()
+                last = last_meaningful_line(tail)
+                if last:
+                    self.error_stderr = last
+                if tail:
+                    # full tail to the console so the whole traceback is findable
+                    print(f"UVgami engine stderr (exit {ret_code}):")
+                    for line in tail:
+                        print(line)
 
         if move_to_invalid:
             if prefs.invalid_collection:
                 # move to collection for invalid meshes
                 invalid_obj = import_obj(unwrap.path)
                 collection = check_collection(
-                    "UVgami Invalid Input", bpy.context.scene.collection
+                    "UVgami Not Unwrapped", bpy.context.scene.collection
                 )
                 move_to_collection(invalid_obj, collection)
                 invalid_name = f"{invalid_obj.name}: {msg}"
@@ -460,7 +523,7 @@ class UnwrapManager:
         # remove from running
         if unwrap in self._running:
             self._running.remove(unwrap)
-        unwrap.stop_process()
+        unwrap.release_engine()
         unwrap.cleanup()
 
         # if the invalid obj has jobs that are complete with the now reduced count
@@ -493,8 +556,8 @@ class UnwrapManager:
                     msg.append("UV unwrap complete!")
 
                 if self.found_invalid_objects:
-                    msg.append("Some meshes were not able to be unwrapped.")
-                    msg.append("Check 'UVgami Invalid Input'.")
+                    msg.append("Some meshes were not unwrapped.")
+                    msg.append("Check 'UVgami Not Unwrapped'.")
                     logger.add_data(
                         "errors", "Some meshes were not able to be unwrapped"
                     )
@@ -513,12 +576,14 @@ class UnwrapManager:
 
                 if self.error_code != 0:
                     err_msg = f"An unknown error occurred: {self.error_code}"
+                    if self.error_stderr:
+                        err_msg += f" ({self.error_stderr})"
                     msg.append(err_msg)
                     logger.add_data("errors", err_msg)
 
-                if self.license_error is not None:
-                    msg.append(self.license_error)
-                    logger.add_data("errors", self.license_error)
+                for err in self.error_messages:
+                    msg.append(err)
+                    logger.add_data("errors", err)
 
                 popup(msg, "UVgami", "INFO")
         else:
@@ -555,7 +620,7 @@ class UnwrapManager:
     def cancel_unwrap(self, unwrap):
         """Cancel a specific unwrap."""
         self.cancelled_count += 1
-        unwrap.stop_process()
+        unwrap.release_engine()
         self.remove_unwrap(unwrap)
         unwrap.cleanup()
         self.exit_viewer = True

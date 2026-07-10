@@ -1,0 +1,80 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.11", "numpy"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "partuv"
+version = "0.1.2.3"
+description = "UV unwrapping pipeline with pybind11 bindings and preprocessing utilities"
+requires-python = ">=3.9"
+authors = [{ name = "Zhaoning Wang" }]
+# base deps cover the torch-free path (partuv.geometric + pipeline);
+# numpy unpinned so the wheel installs on python 3.13 (no numpy 1.x wheels)
+dependencies = [
+  "numpy",
+  "trimesh==4.9.0",
+  # without pillow, trimesh silently drops vt lines from obj exports
+  "pillow",
+  "scipy",
+  "scikit-learn",
+  "tqdm",
+]
+
+[project.optional-dependencies]
+# everything imported by the partuv.preprocess chain (partfield inference)
+ai = [
+  # torch 2.3 wheels are built against numpy 1.x
+  "numpy<2",
+  "torch==2.3.0",
+  "torch-scatter",
+  "lightning==2.2",
+  # lightning 2.2 imports pkg_resources; setuptools 81 removed it
+  "setuptools<81",
+  "h5py",
+  "yacs",
+  "pytz",
+  "loguru",
+  "psutil",
+  "plyfile",
+  "einops",
+  "boto3",
+  "networkx",
+  "matplotlib",
+  "joblib",
+  "scikit-image",
+]
+
+
+
+[tool.scikit-build]
+sdist.include = [
+  "extern/easy_profiler/lib/libeasy_profiler.so",
+  "extern/easy_profiler/lib/cmake/easy_profiler/**",
+]
+build.verbose = true
+ninja.make-fallback = true
+
+wheel.packages = ["partuv", "preprocess_utils"]
+
+[[tool.scikit-build.overrides]]
+if.platform-system = "^linux"
+# persistent build dir so interrupted builds resume incrementally; absolute
+# path keeps objects on ext4 when the repo lives on /mnt/c in wsl (9p is
+# far too slow to compile on); /var/tmp not /tmp, which is cleared on boot
+build-dir = "/var/tmp/partuv-build/{wheel_tag}"
+# cgal/libigl TUs need >1GB each to compile; unbounded ninja parallelism
+# gets OOM-killed inside default-RAM WSL
+build.tool-args = ["-j4"]
+
+[[tool.scikit-build.overrides]]
+if.platform-system = "^win32"
+build-dir = "build/{wheel_tag}"
+# OpenMP_RUNTIME_MSVC needs 3.30+; scikit-build fetches a cmake wheel if the
+# system one is older
+cmake.version = ">=3.30"
+# the default visual studio generator needs the cuda msbuild integration,
+# ninja just needs nvcc on PATH (build from a vs dev shell)
+cmake.args = ["-G", "Ninja"]
+# scikit-build's build-type doesn't reach single-config generators on
+# windows (scikit-build-core#578), without it vcpkg links debug runtimes
+cmake.define.CMAKE_BUILD_TYPE = "Release"

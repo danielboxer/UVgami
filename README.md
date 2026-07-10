@@ -30,4 +30,9 @@
 
 ![Rhino](https://github.com/DanielBoxer/UVgami/assets/65575771/12b691fc-4ff6-4462-9dbc-b615a85bf7fc)
 
-The unwrapping engine is from [Optcuts](https://github.com/liminchen/OptCuts) by Minchen Li, licensed under the MIT License, and has been modified to work in Blender.
+## Engines
+
+UVgami has two unwrapping engines, see the [docs](/docs/docs.md) for more info:
+
+- OptCuts (CPU): [OptCuts](https://github.com/liminchen/OptCuts) by Minchen Li (MIT License), modified to work in Blender
+- PartUV (AI, needs an NVIDIA GPU): [PartUV](https://github.com/EricWang12/PartUV) by Zhaoning Wang (Apache 2.0)

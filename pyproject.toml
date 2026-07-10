@@ -1,0 +1,61 @@
+[project]
+name = "uvgami-cli"
+version = "0.1.0"
+description = "Blender-independent CLI for testing UVgami unwrap engines"
+requires-python = ">=3.11,<3.12"
+dependencies = []
+
+[project.scripts]
+uvgami = "uvgami_cli.cli:main"
+
+[project.optional-dependencies]
+# builds partuv from source on windows: needs msvc + cuda + vcpkg, see README
+partuv = ["partuv[ai]; sys_platform == 'linux' or sys_platform == 'win32'"]
+# geometric segmentation only: no torch stack, no checkpoint
+partuv-lite = ["partuv; sys_platform == 'linux' or sys_platform == 'win32'"]
+
+# numpy is imported by the partuv orchestration code under test
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.12", "numpy"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["uvgami_cli"]
+
+[tool.uv]
+environments = ["sys_platform == 'win32'", "sys_platform == 'linux'"]
+
+[tool.uv.workspace]
+members = ["engine/partuv"]
+
+[tool.uv.sources]
+partuv = { workspace = true }
+torch = { index = "pytorch-cu121" }
+torch-scatter = { index = "pyg-cu121" }
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+# find-links page with torch-scatter wheels built against torch 2.3 + cu121
+[[tool.uv.index]]
+name = "pyg-cu121"
+url = "https://data.pyg.org/whl/torch-2.3.0+cu121.html"
+format = "flat"
+explicit = true
+
+[tool.ruff]
+target-version = "py311"
+extend-exclude = ["engine", "src", "/__init__.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["smoke: runs the real engine binary"]
+# the partuv driver source (no built _core) must import for the wheel tests
+pythonpath = ["engine/partuv"]
+# the plugin keeps pytest from importing the blender addon root __init__.py
+addopts = "--import-mode=importlib -p uvgami_cli._pytest_plugin"

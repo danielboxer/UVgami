@@ -3,6 +3,7 @@
 
 import bpy
 
+from ..engines import get_engine
 from ..logger import logger
 from ..manager import manager
 from ..utils.paths import get_preferences
@@ -39,20 +40,39 @@ class UVGAMI_PT_main(bpy.types.Panel):
             box.separator()
 
         row = box.row()
-        row.label(icon="SOLO_OFF", text="Quality")
-        row.prop(props, "quality", text="")
+        row.label(icon="TOOL_SETTINGS", text="Engine")
+        row.prop(props, "engine", text="")
 
-        split = box.split(factor=0.7)
-        split.label(icon="IMPORT", text="Import UVs")
-        split.prop(props, "import_uvs")
+        engine = get_engine(props.engine)
 
-        split = box.split(factor=0.7)
-        split.label(icon="MOD_TRIANGULATE", text="Preserve Mesh")
-        split.prop(props, "untriangulate")
-
-        if props.untriangulate:
+        if engine.supports_quality:
             row = box.row()
-            row.prop(props, "maintain_mode", expand=True)
+            row.label(icon="SOLO_OFF", text="Quality")
+            row.prop(props, "quality", text="")
+
+        if engine.uses_segmentation:
+            row = box.row()
+            row.label(icon="MOD_EXPLODE", text="Segmentation")
+            row.prop(props, "partuv_segmentation", text="")
+
+        if engine.uses_threshold:
+            row = box.row()
+            row.label(icon="MOD_LENGTH", text="Threshold")
+            row.prop(props, "partuv_threshold")
+
+        if engine.supports_import_uvs:
+            split = box.split(factor=0.7)
+            split.label(icon="IMPORT", text="Import UVs")
+            split.prop(props, "import_uvs")
+
+        if engine.supports_preserve:
+            split = box.split(factor=0.7)
+            split.label(icon="MOD_TRIANGULATE", text="Preserve Mesh")
+            split.prop(props, "untriangulate")
+
+            if props.untriangulate:
+                row = box.row()
+                row.prop(props, "maintain_mode", expand=True)
 
         split = box.split(factor=0.7)
         split.label(icon="UV_DATA", text="Transfer UVs")
@@ -117,7 +137,7 @@ class UVGAMI_PT_main(bpy.types.Panel):
 
             # group stop and cancel button
             if expand_layout:
-                if is_active:
+                if is_active and manager.engine.supports_early_stop:
                     stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
                     stop_op.start_idx = cancel_index
                     stop_op.end_idx = cancel_index + len(group)
@@ -139,14 +159,19 @@ class UVGAMI_PT_main(bpy.types.Panel):
 
                     if item.progress != (0, 0, 1):
                         # viewer button
-                        view_op = row.operator(
-                            "uvgami.view_unwrap", text="", icon="HIDE_OFF"
-                        )
-                        view_op.index = manager.active.index(item)
-                        # stop button
-                        stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
-                        stop_op.start_idx = cancel_index
-                        stop_op.end_idx = cancel_index + 1
+                        if manager.engine.supports_viewer:
+                            view_op = row.operator(
+                                "uvgami.view_unwrap", text="", icon="HIDE_OFF"
+                            )
+                            view_op.index = manager.active.index(item)
+                        # stop button, partuv can't finish early with a result
+                        # so its batches use the batch-wide stop below instead
+                        if manager.engine.supports_early_stop:
+                            stop_op = row.operator(
+                                "uvgami.stop", text="", icon="SNAP_FACE"
+                            )
+                            stop_op.start_idx = cancel_index
+                            stop_op.end_idx = cancel_index + 1
                     # cancel button
                     cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
                     cancel_op.start_idx = cancel_index
@@ -156,6 +181,18 @@ class UVGAMI_PT_main(bpy.types.Panel):
             elif expand_layout and not group_id.is_expanded:
                 # the length of the group needs to be added
                 cancel_index += len(group)
+
+        # queue-wide stop for engines that can't finish early with a result:
+        # lets running meshes finish and cancels the queued ones
+        has_batch = any(u.batch_process is not None for u in manager.active)
+        has_queued = not manager.engine.supports_early_stop and any(
+            not u.is_active for u in manager.active
+        )
+        if has_batch or has_queued:
+            row = box.row()
+            stop_op = row.operator("uvgami.stop", text="Stop", icon="SNAP_FACE")
+            stop_op.start_idx = 0
+            stop_op.end_idx = len(manager.active)
 
         if len(groups) > 1:
             row = box.row()
@@ -178,18 +215,22 @@ class UVGAMI_PT_speed(bpy.types.Panel):
         row.alignment = "CENTER"
         row.label(text="Speed", icon="SORTTIME")
 
-        split = box.split(factor=0.7)
-        split.label(icon="CON_ROTLIKE", text="Concurrent")
-        split.prop(props, "concurrent")
+        # hidden instead of grayed out: ai mode batches all meshes into one
+        # process, so concurrency doesn't apply
+        if get_engine(props.engine).allows_concurrent(props):
+            split = box.split(factor=0.7)
+            split.label(icon="CON_ROTLIKE", text="Concurrent")
+            split.prop(props, "concurrent")
 
-        if props.concurrent:
-            split = box.split()
-            split.label(icon="SYSTEM", text="Cores")
-            split.prop(props, "max_cores", slider=True)
+            if props.concurrent:
+                split = box.split()
+                split.label(icon="SYSTEM", text="Cores")
+                split.prop(props, "max_cores", slider=True)
 
-        row = box.row()
-        row.label(text="Finish", icon="TEMP")
-        row.prop(props, "early_stop")
+        if get_engine(props.engine).supports_early_stop:
+            row = box.row()
+            row.label(text="Finish", icon="TEMP")
+            row.prop(props, "early_stop")
 
         row = box.row()
         row.label(text="Timeout", icon="TIME")
@@ -220,6 +261,10 @@ class UVGAMI_PT_guides(bpy.types.Panel):
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return get_engine(context.scene.uvgami.engine).supports_guided
 
     def draw_header(self, context):
         self.layout.prop(context.scene.uvgami, "use_guided_mode")

@@ -3,7 +3,6 @@
 
 import collections
 import pathlib
-import platform
 import subprocess
 import threading
 import time
@@ -12,11 +11,11 @@ import bmesh
 import bpy
 import mathutils
 
+from .batch import EngineOutput, read_stderr_tail
 from .logger import logger
 from .manager import manager
-from .utils.io import print_stdin
 from .utils.mesh import check_exists
-from .utils.paths import get_extension_dir_path, get_linux_path, get_preferences
+from .utils.paths import get_extension_dir_path
 
 
 class Unwrap:
@@ -74,8 +73,9 @@ class Unwrap:
         # unwrap state
         self.is_active = False
         self.progress = (0, 0, 1)
-        # unwrap process
+        # unwrap process, shared with other unwraps when part of a batch process
         self.process = None
+        self.batch_process = None
         # copy of input obj used for viewing
         self.viewer_obj = None
         self.viewing = False
@@ -86,111 +86,102 @@ class Unwrap:
         self.is_uv_data_ready = False
         self.is_stopped = False
         self.stop_requested_at = None
+        # bounded tail of the solo process's stderr, drained by a reader thread
+        self.stderr_tail = collections.deque(maxlen=10)
+        self._stderr_thread = None
 
     def start_unwrap(self):
-        prefs = get_preferences()
-        # check for valid engine
-        engine_path = pathlib.Path(prefs.engine_path)
-        if (
-            str(engine_path) == "."
-            or not engine_path.is_file()
-            or engine_path.stem != "uvgami"
-        ):
-            engine_path = pathlib.Path(manager.engine_path)
-
-        quality = bpy.context.scene.uvgami.quality
-        u = ""
-        if quality == "HIGH":
-            u = "4.05"
-        elif quality == "MEDIUM":
-            u = "4.1"
-        else:
-            u = "4.2"
-
-        s_weight = bpy.context.scene.uvgami.weight_value
-        s = ""
-        if s_weight == 5:
-            s = "200"
-        elif s_weight == 4:
-            s = "150"
-        elif s_weight == 3:
-            s = "100"
-        elif s_weight == 2:
-            s = "50"
-        elif s_weight == 1:
-            s = "25"
-
-        args = []
-        shared_args = f"-u {u} -s {s}"
-
-        if platform.system() == "Windows" and engine_path.suffix == "":
-            input_path = get_linux_path(self.path)
-            output_path = get_linux_path(get_extension_dir_path() / "output")
-            args = [
-                "bash",
-                "-c",
-                f"~/uvgami -i {input_path} -o {output_path}/ {shared_args}",
-            ]
-        else:
-            args = [str(engine_path), "-i", str(self.path)] + shared_args.split()
+        props = bpy.context.scene.uvgami
+        args = manager.engine.build_args(manager.engine_path, self.path, props)
 
         self.process = subprocess.Popen(
             args,
             stdout=subprocess.PIPE,
             stdin=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             universal_newlines=True,
+            env=manager.engine.build_env(manager.engine_path),
         )
 
         # start reading thread
         thread = threading.Thread(target=self.get_output)
         thread.start()
 
+        # drain stderr separately so it stays out of the stdout protocol
+        self._stderr_thread = threading.Thread(
+            target=read_stderr_tail,
+            args=(self.process.stderr, self.stderr_tail),
+            daemon=True,
+        )
+        self._stderr_thread.start()
+
         self.is_active = True
         self.started_at = time.monotonic()
 
+    def join_batch(self, batch_process):
+        """Run inside a shared batch process instead of spawning our own."""
+        self.batch_process = batch_process
+        self.process = batch_process.process
+        self.is_active = True
+
+    def leave_batch(self):
+        """Detach from a dead batch process so this mesh can be re-queued into
+        a fresh batch. Mirrors join_batch."""
+        self.batch_process = None
+        self.process = None
+        self.is_active = False
+
+    def poll_engine(self):
+        """None while running, 0 on success, or a failure code."""
+        if self.batch_process is None:
+            return self.process.poll()
+        # the engine reports when it reaches each mesh, the timeout clock
+        # starts then
+        if not hasattr(self, "started_at") and self.path.stem in self.batch_process.started:
+            self.started_at = time.monotonic()
+        return self.batch_process.poll_result(self.path.stem)
+
     def stop_process(self):
+        """Hard stop: for a batch member this kills the whole batch process."""
         if self.process is not None and self.process.poll() is None:
-            if platform.system() == "Windows" and manager.engine_path.suffix == "":
-                # wsl
-                print_stdin(self.process, "cancel")
-            else:
-                # windows
-                self.process.kill()
+            manager.engine.stop(self.process, manager.engine_path)
+
+    def release_engine(self):
+        """This unwrap no longer needs the engine. A batch process is left
+        running for the other meshes; deleting our input file in cleanup()
+        is what makes the cli skip this mesh."""
+        if self.batch_process is None:
+            self.stop_process()
+
+    def get_stderr_tail(self):
+        """Last stderr lines from this unwrap's process, batch or solo."""
+        if self.batch_process is not None:
+            return self.batch_process.stderr_lines()
+        if self._stderr_thread is not None:
+            self._stderr_thread.join(timeout=1)
+        return self.stderr_tail
 
     def get_output(self):
+        parser = EngineOutput(self)
         # get lines until there are no more left
         for line in iter(self.process.stdout.readline, ""):
-            if line.startswith("progress: "):
-                self.progress_data.append(line[10:])
-            elif line == "visual_begin:\n":
-                self.uv_co.clear()
-                self.uv_indices.clear()
-                self.is_uv_data_ready = False
-            elif line == "visual_end:\n":
-                self.is_uv_data_ready = True
-            elif line.startswith("vt"):
-                uv_co = line[3:].split()
-                self.uv_co.append((float(uv_co[0]), float(uv_co[1])))
-            elif line.startswith("f"):
-                uv_indices = line[2:].split()
-                self.uv_indices.append(
-                    (int(uv_indices[0]), int(uv_indices[1]), int(uv_indices[2]))
-                )
+            parser.feed(line)
         # process has ended, thread will exit here
 
     def update_progress(self):
         """Read progress from the stdout reader thread."""
         if len(self.progress_data) > 0:
-            progress = self.progress_data.popleft()
+            # only the newest queued line matters
+            progress = self.progress_data.pop()
+            self.progress_data.clear()
             try:
                 self.progress = tuple(float(num) for num in progress.split())
             except ValueError:
                 # invalid progress string
                 return
-            self.progress_data.clear()
 
     def update_viewer(self):
-        print_stdin(self.process, "snapshot")
+        manager.engine.request_snapshot(self.process)
         if self.is_uv_data_ready:
             uvs = list(self.uv_co)
             uv_idcs = list(self.uv_indices)
