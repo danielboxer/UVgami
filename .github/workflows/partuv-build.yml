@@ -81,12 +81,17 @@ jobs:
           echo "VCPKG_DEFAULT_BINARY_CACHE=${{ github.workspace }}/vcpkg-cache" >> $GITHUB_ENV
           mkdir -p vcpkg-cache
 
-      # the runner image's vcpkg clone can lag the pinned builtin-baseline,
-      # fetch so the baseline commit is resolvable
-      - name: Fetch vcpkg baseline
+      # the runner image's vcpkg tool and tree can lag the pinned
+      # builtin-baseline, check out the baseline and re-bootstrap so the
+      # tool and version database match
+      - name: Sync vcpkg to pinned baseline
         if: runner.os == 'Windows'
-        shell: bash
-        run: git -C "$VCPKG_INSTALLATION_ROOT" fetch origin master
+        shell: pwsh
+        run: |
+          $baseline = (Get-Content engine/partuv/vcpkg.json | ConvertFrom-Json).'builtin-baseline'
+          git -C $env:VCPKG_INSTALLATION_ROOT fetch origin
+          git -C $env:VCPKG_INSTALLATION_ROOT checkout $baseline
+          & "$env:VCPKG_INSTALLATION_ROOT\bootstrap-vcpkg.bat"
 
       # first uncached run compiles cgal and friends, about an hour
       - name: Cache vcpkg binaries
