@@ -287,7 +287,6 @@ install(FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/partuv/__main__.py
   ${CMAKE_CURRENT_SOURCE_DIR}/partuv/cli.py
   ${CMAKE_CURRENT_SOURCE_DIR}/partuv/common.py
-  ${CMAKE_CURRENT_SOURCE_DIR}/partuv/wsl.py
   ${CMAKE_CURRENT_SOURCE_DIR}/partuv/preprocess.py
   ${CMAKE_CURRENT_SOURCE_DIR}/partuv/output.py
   ${CMAKE_CURRENT_SOURCE_DIR}/partuv/geometric.py

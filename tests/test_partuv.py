@@ -8,7 +8,7 @@ from partuv import cli
 from partuv.common import UnwrapError
 
 
-# windows now bridges to wsl (see test_wsl.py), other systems still error
+# windows runs native; only non-windows non-linux errors here
 def test_requires_linux(triangle, tmp_path, monkeypatch):
     monkeypatch.setattr(cli.platform, "system", lambda: "Darwin")
     checkpoint = tmp_path / "model.ckpt"
@@ -308,8 +308,7 @@ def test_windows_runs_native_when_partuv_installed(
     triangle, tmp_path, fake_partuv_runtime, monkeypatch
 ):
     monkeypatch.setattr(cli.platform, "system", lambda: "Windows")
-    monkeypatch.delenv("UVGAMI_PARTUV_WSL", raising=False)
-    # a loadable core is the native-vs-wsl routing knob
+    # a loadable core is the native routing knob
     monkeypatch.setattr("partuv._CORE_ERROR", None)
     config = tmp_path / "config.yaml"
     config.write_text("pipeline: {}")
@@ -321,50 +320,9 @@ def test_windows_runs_native_when_partuv_installed(
     assert output.is_file()
 
 
-def test_windows_env_var_forces_wsl(
-    triangle, tmp_path, fake_partuv_runtime, monkeypatch
-):
+def test_windows_reinstall_hint_when_native_fails(triangle, tmp_path, monkeypatch):
     monkeypatch.setattr(cli.platform, "system", lambda: "Windows")
-    monkeypatch.setenv("UVGAMI_PARTUV_WSL", "1")
-    calls = {}
-    monkeypatch.setattr("partuv.wsl.run", lambda *args: calls.setdefault("wsl", args))
-
-    # the dev override must not gate on is_usable
-    def boom():
-        raise AssertionError("is_usable consulted for the dev override")
-
-    monkeypatch.setattr("partuv.wsl.is_usable", boom)
-
-    cli.run([(triangle, tmp_path / "out.obj")], None, None, 1.25, "geometric")
-
-    assert "wsl" in calls
-    assert fake_partuv_runtime == {}
-
-
-def test_windows_wsl_fallback_when_usable(triangle, tmp_path, monkeypatch):
-    monkeypatch.setattr(cli.platform, "system", lambda: "Windows")
-    monkeypatch.delenv("UVGAMI_PARTUV_WSL", raising=False)
-    # a non-None core error makes _native_available() report the native miss
-    monkeypatch.setattr("partuv._CORE_ERROR", ImportError("no _core.pyd"))
-    monkeypatch.setattr("partuv.wsl.is_usable", lambda: True)
-    calls = {}
-    monkeypatch.setattr("partuv.wsl.run", lambda *args: calls.setdefault("wsl", args))
-
-    cli.run([(triangle, tmp_path / "out.obj")], None, None, 1.25, "geometric")
-
-    assert "wsl" in calls
-
-
-def test_windows_reinstall_hint_when_wsl_unusable(triangle, tmp_path, monkeypatch):
-    monkeypatch.setattr(cli.platform, "system", lambda: "Windows")
-    monkeypatch.delenv("UVGAMI_PARTUV_WSL", raising=False)
     monkeypatch.setattr("partuv._CORE_ERROR", ImportError("msvcp140 missing"))
-    monkeypatch.setattr("partuv.wsl.is_usable", lambda: False)
-
-    def fail(*args):
-        raise AssertionError("wsl.run should not be called")
-
-    monkeypatch.setattr("partuv.wsl.run", fail)
 
     with pytest.raises(UnwrapError) as error:
         cli.run([(triangle, tmp_path / "out.obj")], None, None, 1.25, "geometric")

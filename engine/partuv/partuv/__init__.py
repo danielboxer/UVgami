@@ -8,8 +8,9 @@ if _sys.platform == "win32":
     if _os.path.isdir(_libs):
         _os.add_dll_directory(_libs)
 
-# python -m partuv must import even when the compiled core can't load: that's
-# when the wsl fallback runs. record the failure instead of raising at import.
+# python -m partuv must import even when the compiled core can't load, so the
+# cli can surface the reinstall hint. record the failure instead of raising at
+# import.
 _CORE_ERROR = None
 try:
     from ._core import *           # compiled extension
@@ -27,8 +28,9 @@ def __getattr__(name):
 
         return preprocess
     # a name that would have come from the compiled core, accessed while the
-    # core failed to load: surface the build hints. submodules (cli, wsl, ...)
-    # and dunders must still resolve, so let those fall through to AttributeError
+    # core failed to load: surface the build hints. submodules (cli, common,
+    # ...) and dunders must still resolve, so let those fall through to
+    # AttributeError
     if (
         _CORE_ERROR is not None
         and not name.startswith("_")

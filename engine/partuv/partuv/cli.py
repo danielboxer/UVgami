@@ -143,7 +143,8 @@ def validate(args):
 
 
 def resolve_checkpoint(flag_value):
-    """Kept as str: a WSL-side checkpoint path would be mangled by WindowsPath."""
+    """Kept as str: a raw path in $UVGAMI_PARTUV_CHECKPOINT would be mangled by
+    WindowsPath."""
     if flag_value is not None:
         return str(flag_value)
     named = os.environ.get("UVGAMI_PARTUV_CHECKPOINT")
@@ -192,32 +193,19 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
     """Unwrap (input, output) pairs, returning the first failing exit code."""
     system = platform.system()
     if system == "Windows":
-        from . import wsl
-
-        # UVGAMI_PARTUV_WSL=1 forces the bridge even when the native build exists
-        if os.environ.get("UVGAMI_PARTUV_WSL"):
-            return wsl.run(pairs, checkpoint, config, threshold, segmentation, visual)
         if not _native_available():
             from . import _CORE_ERROR
 
             log(f"native partuv failed to load: {_CORE_ERROR}")
-            # the wsl bridge is a dev fallback with no end-user provisioning,
-            # so only take it when a usable venv is actually present
-            if wsl.is_usable():
-                log("falling back to PartUV in WSL")
-                return wsl.run(
-                    pairs, checkpoint, config, threshold, segmentation, visual
-                )
             raise UnwrapError(
                 EXIT_MISSING_RUNTIME,
                 f"the PartUV engine failed to load natively ({_CORE_ERROR});"
                 " reinstall PartUV in the add-on preferences",
             )
-        log("using native Windows partuv")
     elif system != "Linux":
         raise UnwrapError(
             EXIT_MISSING_RUNTIME,
-            "PartUV requires Linux with CUDA (use WSL on Windows)",
+            "PartUV requires Windows or Linux with CUDA",
         )
     config = Path(config) if config is not None else DEFAULT_CONFIG
     if not config.is_file():
@@ -334,14 +322,8 @@ def main(argv=None):
     if len(pairs) == 1:
         log(f"wrote {args.outputs[0]} in {elapsed:.1f}s", style="success")
     else:
-        # the wsl bridge returns a plain exit code with no tallies, so omit the
-        # counts rather than guess them
-        failed = getattr(code, "failed", None)
-        if failed is None:
-            log(f"batch finished in {elapsed:.1f}s")
-        else:
-            log(
-                f"batch finished in {elapsed:.1f}s, {code.ok} ok, {failed} failed",
-                style="error" if failed else "success",
-            )
+        log(
+            f"batch finished in {elapsed:.1f}s, {code.ok} ok, {code.failed} failed",
+            style="error" if code.failed else "success",
+        )
     return code

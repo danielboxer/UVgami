@@ -10,12 +10,12 @@ PartUV runs in a managed Python 3.11 venv, as a subprocess, decoupled from Blend
 
 - `src/ops/install.py`: downloads pinned `uv` 0.11.25, `uv venv --python 3.11`, `uv pip install "partuv[ai] @ <wheel-url>" -f https://data.pyg.org/whl/torch-2.3.0+cu121.html` (AI) or `"partuv @ <url>"` (geometric). Both tiers run in the venv.
 - `find_wheel_url` targets `cp311` (the venv), not Blender's Python, and matches `x86_64.whl` so manylinux names pass.
-- Driver ships in the wheel as `python -m partuv` (`partuv/{cli,common,wsl,__main__}.py`), so it can't drift from the compiled core it calls. `uvgami_cli` stays in the repo as the dev-only optcuts CLI. The wheel also packages `config.yaml`, `output.py`, and `geometric.py` (the latter two were imported but missing from the install list). `src/engines.py` installed mode: `[venv_python, "-m", "partuv"]`; `build_env` sets only `UVGAMI_PARTUV_CHECKPOINT`.
+- Driver ships in the wheel as `python -m partuv` (`partuv/{cli,common,__main__}.py`), so it can't drift from the compiled core it calls. `uvgami_cli` stays in the repo as the dev-only optcuts CLI. The wheel also packages `config.yaml`, `output.py`, and `geometric.py` (the latter two were imported but missing from the install list). `src/engines.py` installed mode: `[venv_python, "-m", "partuv"]`; `build_env` sets only `UVGAMI_PARTUV_CHECKPOINT`.
 - Checkpoint mirrored to our own release: `install.py` pulls from `releases/latest/download/model_objaverse.ckpt`; `.github/workflows/mirror-checkpoint.yml` copies it from HF (run once, rerun if upstream changes).
 - Geometric falls back to CPU when no nvidia driver is present: `cli.py` probes `nvcuda.dll`/`libcuda.so.1` and, if absent, rewrites the effective config with `pamo: false` so the cuda mesh simplifier is skipped. AI still requires CUDA (torch check).
 - Checkpoint and uv downloads resume: `src/utils/download.py` retries with `Range` requests against a `.part` file and verifies the size, so a dropped connection doesn't restart the 1.24GB checkpoint.
 - Wheel version pinned: `install.py` `PARTUV_VERSION` must match `engine/partuv/pyproject.toml` (a test enforces it). A missing pinned wheel errors with "update the add-on" instead of silently grabbing a newer wheel with a drifted CLI.
-- Native load failure on a user machine raises "reinstall PartUV in the add-on preferences" with the core import error; WSL is only tried when a provisioned distro venv actually exists (`wsl.is_usable()`), or when `UVGAMI_PARTUV_WSL` forces it.
+- Native load failure on a user machine raises "reinstall PartUV in the add-on preferences" with the core import error.
 - A dead AI batch process no longer fails every mesh: never-started meshes are re-queued into a fresh batch when at least one mesh had started (`BatchProcess.should_retry`); a startup crash still fails everything so requeuing can't loop.
 - `.github/workflows/partuv-build.yml`: Linux wheel `auditwheel repair` (bundles cgal/tbb/yaml-cpp/cudart, excludes big cuda math/dnn libs); matrix cut to cp311 only. Triggers: dispatch, or a master push touching `engine/partuv/pyproject.toml` (version bump) or `vcpkg.json`.
 - Windows wheel repair: upstream LLVM libomp (pinned 22.1.8) renamed to `libomp140.x86_64.dll` and inserted into `partuv/.libs` with its license, via `wheel unpack/pack`. Both jobs end with an import smoke test in a fresh venv; the Windows job deletes the System32 libomp140 first (VS puts it there on runners too) so the test can't pass off the build environment.
@@ -40,12 +40,9 @@ Fix: CI inserts upstream LLVM `libomp.dll` (Apache-2.0 with LLVM exception, free
 - all 30 omp imports of `_core.cp311-win_amd64.pyd` (`__kmpc_*`, `omp_*`) are in upstream libomp 22.1.8's exports (dumpbin).
 - runtime test: renamed DLL placed in the installed venv's `.libs`, full geometric unwrap of `tests/fixtures/cube.obj` passed, nested parallel regions ran, and `GetModuleFileName` confirmed the loader picked the `.libs` copy over System32 (user dirs precede System32 in the default search order, so the bundled copy also wins when both exist).
 
-## Open decisions
-
-1. **WSL fallback.** Keep for now: it is the fallback when native import fails (older wheels without bundled libomp). Revisit once native Windows is proven on a user machine. The inner command is now `<venv>/bin/python -m partuv ...` (venv on ext4 via `UVGAMI_WSL_VENV` or `$HOME/uvgami-venv`); it no longer needs the repo or uv, since the driver ships in the wheel.
-
 ## Dissolved (no action)
 
+- WSL fallback (removed): the Windows driver used to bridge to a provisioned WSL venv on native import failure. Dropped now that release wheels bundle libomp; native Windows is the only Windows path, and a load failure raises the reinstall hint.
 - cudart symmetry: static on Windows, auditwheel handles Linux.
 - tbb12 bundling: not a runtime dependency.
 
