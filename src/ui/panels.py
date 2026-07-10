@@ -165,6 +165,7 @@ class UVGAMI_PT_main(bpy.types.Panel):
                             )
                             view_op.index = manager.active.index(item)
                         # stop button, partuv can't finish early with a result
+                        # so its batches use the batch-wide stop below instead
                         if manager.engine.supports_early_stop:
                             stop_op = row.operator(
                                 "uvgami.stop", text="", icon="SNAP_FACE"
@@ -180,6 +181,18 @@ class UVGAMI_PT_main(bpy.types.Panel):
             elif expand_layout and not group_id.is_expanded:
                 # the length of the group needs to be added
                 cancel_index += len(group)
+
+        # queue-wide stop for engines that can't finish early with a result:
+        # lets running meshes finish and cancels the queued ones
+        has_batch = any(u.batch_process is not None for u in manager.active)
+        has_queued = not manager.engine.supports_early_stop and any(
+            not u.is_active for u in manager.active
+        )
+        if has_batch or has_queued:
+            row = box.row()
+            stop_op = row.operator("uvgami.stop", text="Stop", icon="SNAP_FACE")
+            stop_op.start_idx = 0
+            stop_op.end_idx = len(manager.active)
 
         if len(groups) > 1:
             row = box.row()

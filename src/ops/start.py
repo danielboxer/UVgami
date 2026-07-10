@@ -282,7 +282,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
                         if transfer_uvs_job is not None:
                             transfer_uvs_job.count -= 1
                         collection = check_collection(
-                            "UVgami Invalid Input", context.scene.collection
+                            "UVgami Not Unwrapped", context.scene.collection
                         )
                         move_to_collection(o, collection)
                         o.name = f"{unwrap_name}: No Polygons"

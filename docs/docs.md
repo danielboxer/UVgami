@@ -62,7 +62,7 @@ Blender 2.9+
     - [Show Popup](#show-popup)
     - [Progress Bar Option](#progress-bar-option)
     - [Info Option](#info-option)
-    - [Invalid Collection](#invalid-collection)
+    - [Not Unwrapped Collection](#not-unwrapped-collection)
     - [Input Cleanup](#input-cleanup)
     - [Viewer Workspace](#viewer-workspace)
   - [Linux (Faster) Version on Windows](#linux-faster-version-on-windows)
@@ -127,6 +127,8 @@ Press to enter visual mode. This will show a real time view of the unwrap as it 
 ![Stop Button](img/stop_button.jpg)
 
 Stop the unwrap and get the partly finished UV map.
+
+Stopping PartUV lets the running meshes finish and moves the rest to "UVgami Not Unwrapped".
 
 #### Cancel
 
@@ -262,7 +264,7 @@ Stop the unwrap early based on the amount of stretching.
 
 #### Timeout
 
-Set a maximum time in minutes for each unwrap. If an unwrap exceeds this time, the mesh will be moved to the invalid collection. Set to `0` to disable the timeout. This is useful for when unwrapping multiple things at once so if one times out the rest will still unwrap.
+Set a maximum time in minutes for each unwrap. If an unwrap exceeds this time, the mesh will be moved to the "UVgami Not Unwrapped" collection. Set to `0` to disable the timeout. This is useful for when unwrapping multiple things at once so if one times out the rest will still unwrap.
 
 #### Cuts
 
@@ -364,9 +366,9 @@ Show a [progress bar](#progress-bar) in the 3D view while unwrapping.
 
 Show information about previous unwraps in the info panel.
 
-#### Invalid Collection
+#### Not Unwrapped Collection
 
-Add all invalid meshes to a collection.
+Add meshes that failed to unwrap, were cancelled, or were stopped to a collection.
 
 #### Input Cleanup
 
@@ -437,7 +439,7 @@ Current ways to speed up the unwrap:
 ### Invalid Objects
 
 - The unwrapper can't unwrap some objects for various reasons
-- If it can't unwrap an object, you will be notified, or if the object is part of a separated object, it will be moved to a "Invalid Objects" collection
+- If it can't unwrap an object, you will be notified, or if the object is part of a separated object, it will be moved to a "UVgami Not Unwrapped" collection
 - For example, the Suzanne monkey head is invalid because it's non manifold. Unwrapping it will have this result, where the eyes are unwrapped succesfully, and the head was not:
 
 ![Invalid Objects](img/invalid_objects.jpg)

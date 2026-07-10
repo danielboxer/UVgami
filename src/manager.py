@@ -500,7 +500,7 @@ class UnwrapManager:
                 # move to collection for invalid meshes
                 invalid_obj = import_obj(unwrap.path)
                 collection = check_collection(
-                    "UVgami Invalid Input", bpy.context.scene.collection
+                    "UVgami Not Unwrapped", bpy.context.scene.collection
                 )
                 move_to_collection(invalid_obj, collection)
                 invalid_name = f"{invalid_obj.name}: {msg}"
@@ -556,8 +556,8 @@ class UnwrapManager:
                     msg.append("UV unwrap complete!")
 
                 if self.found_invalid_objects:
-                    msg.append("Some meshes were not able to be unwrapped.")
-                    msg.append("Check 'UVgami Invalid Input'.")
+                    msg.append("Some meshes were not unwrapped.")
+                    msg.append("Check 'UVgami Not Unwrapped'.")
                     logger.add_data(
                         "errors", "Some meshes were not able to be unwrapped"
                     )
