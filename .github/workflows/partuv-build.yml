@@ -81,6 +81,13 @@ jobs:
           echo "VCPKG_DEFAULT_BINARY_CACHE=${{ github.workspace }}/vcpkg-cache" >> $GITHUB_ENV
           mkdir -p vcpkg-cache
 
+      # the runner image's vcpkg clone can lag the pinned builtin-baseline,
+      # fetch so the baseline commit is resolvable
+      - name: Fetch vcpkg baseline
+        if: runner.os == 'Windows'
+        shell: bash
+        run: git -C "$VCPKG_INSTALLATION_ROOT" fetch origin master
+
       # first uncached run compiles cgal and friends, about an hour
       - name: Cache vcpkg binaries
         if: runner.os == 'Windows'
