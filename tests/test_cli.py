@@ -321,7 +321,10 @@ def test_partuv_dispatch(triangle, tmp_path, fake_partuv):
     assert fake_partuv["config"] is None
 
 
-def test_partuv_ai_resolves_checkpoint(triangle, tmp_path, fake_partuv):
+def test_partuv_ai_resolves_checkpoint(triangle, tmp_path, monkeypatch, fake_partuv):
+    # env var set so the CLI's repo-checkpoint fallback doesn't kick in here,
+    # keeping this test independent of whether the real checkpoint is present
+    monkeypatch.setenv("UVGAMI_PARTUV_CHECKPOINT", str(tmp_path / "env.ckpt"))
     config = tmp_path / "config.yaml"
     config.write_text("pamo: true\n")
     code = cli.main(
@@ -332,6 +335,18 @@ def test_partuv_ai_resolves_checkpoint(triangle, tmp_path, fake_partuv):
     assert fake_partuv["threshold"] == 1.25
     assert fake_partuv["checkpoint"] == "fake.ckpt"
     assert fake_partuv["config"] == config
+
+
+def test_partuv_resolves_repo_checkpoint(triangle, monkeypatch, fake_partuv):
+    monkeypatch.delenv("UVGAMI_PARTUV_CHECKPOINT", raising=False)
+    repo_checkpoint = REPO_ROOT / "engine" / "partuv" / "model_objaverse.ckpt"
+    original_is_file = Path.is_file
+    monkeypatch.setattr(
+        Path, "is_file", lambda self: self == repo_checkpoint or original_is_file(self)
+    )
+    code = cli.main(["unwrap", str(triangle), "--engine", "partuv"])
+    assert code == 0
+    assert fake_partuv["checkpoint"] == str(repo_checkpoint)
 
 
 def test_partuv_flag_rejected_for_optcuts(triangle, capsys):

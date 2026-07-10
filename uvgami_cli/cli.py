@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 
@@ -93,8 +94,8 @@ def build_parser():
     partuv.add_argument(
         "--checkpoint",
         type=Path,
-        help="PartField model checkpoint, default: $UVGAMI_PARTUV_CHECKPOINT"
-        " or engine/partuv/model_objaverse.ckpt",
+        help="PartField model checkpoint, default: $UVGAMI_PARTUV_CHECKPOINT,"
+        " then the repo checkpoint at engine/partuv/model_objaverse.ckpt",
     )
     partuv.add_argument("--config", type=Path, help="default: packaged config.yaml")
     return parser
@@ -187,11 +188,21 @@ def run_partuv(args, pairs):
     # partuv raises its own UnwrapError class; re-raise as ours so main's
     # handler and the --json error path keep working (exit codes match)
     try:
-        checkpoint = (
-            partuv.cli.resolve_checkpoint(args.checkpoint)
-            if args.segmentation == "ai"
-            else None
-        )
+        checkpoint = None
+        if args.segmentation == "ai":
+            checkpoint = args.checkpoint
+            if checkpoint is None and "UVGAMI_PARTUV_CHECKPOINT" not in os.environ:
+                # the editable install serves partuv from site-packages, so its
+                # package-relative default checkpoint misses the source tree
+                repo_checkpoint = (
+                    Path(__file__).parents[1]
+                    / "engine"
+                    / "partuv"
+                    / "model_objaverse.ckpt"
+                )
+                if repo_checkpoint.is_file():
+                    checkpoint = repo_checkpoint
+            checkpoint = partuv.cli.resolve_checkpoint(checkpoint)
         return partuv.cli.run(
             pairs, checkpoint, args.config, args.threshold, args.segmentation
         )
