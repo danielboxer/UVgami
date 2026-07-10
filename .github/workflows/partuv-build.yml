@@ -55,7 +55,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: astral-sh/setup-uv@v8
+      # no v8 major alias tag upstream, pin the full version
+      - uses: astral-sh/setup-uv@v8.3.2
 
       - uses: Jimver/cuda-toolkit@v0.2.35
         with:

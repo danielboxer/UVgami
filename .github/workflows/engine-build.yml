@@ -6,7 +6,7 @@ on:
     branches:
       - master
     paths:
-      - engine/VERSION
+      - engine/optcuts/VERSION
 
 permissions:
   contents: write
@@ -41,7 +41,7 @@ jobs:
         id: engine_version
         shell: bash
         run: |
-          VERSION=$(cat engine/VERSION | tr -d '[:space:]')
+          VERSION=$(cat engine/optcuts/VERSION | tr -d '[:space:]')
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
           echo "major=$MAJOR" >> $GITHUB_OUTPUT
           echo "minor=$MINOR" >> $GITHUB_OUTPUT
@@ -68,7 +68,7 @@ jobs:
         working-directory: ${{ github.workspace }}/build
         shell: bash
         run: |
-          cmake $GITHUB_WORKSPACE/engine -Wno-dev -DBUILD_SHARED_LIBS=OFF \
+          cmake $GITHUB_WORKSPACE/engine/optcuts -Wno-dev -DBUILD_SHARED_LIBS=OFF \
             -DCPACK_GENERATOR:STRING=ZIP \
             -DCPACK_PACKAGE_FILE_NAME:STRING=$PACKAGE_NAME
 
