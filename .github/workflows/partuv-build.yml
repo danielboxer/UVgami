@@ -151,10 +151,12 @@ jobs:
         shell: bash
         run: |
           uvx wheel unpack dist/*.whl -d unpacked
-          cp libomp/libomp.dll unpacked/partuv-*/partuv/.libs/libomp140.x86_64.dll
-          cp libomp/libomp140.x86_64.LICENSE.txt unpacked/partuv-*/partuv/.libs/
+          # a glob naming a not-yet-existing file doesn't expand, resolve the dir
+          wheel_dir=$(echo unpacked/partuv-*)
+          cp libomp/libomp.dll "$wheel_dir/partuv/.libs/libomp140.x86_64.dll"
+          cp libomp/libomp140.x86_64.LICENSE.txt "$wheel_dir/partuv/.libs/"
           rm dist/*.whl
-          uvx wheel pack unpacked/partuv-* -d dist
+          uvx wheel pack "$wheel_dir" -d dist
 
       # visual studio puts libomp140 in system32 on the runner, which would
       # hide a missing bundled copy from the import test below
