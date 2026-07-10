@@ -19,7 +19,7 @@ sym_planes = {}
 class UVGAMI_OT_expand(bpy.types.Operator):
     bl_idname = "uvgami.expand"
     bl_label = "Expand"
-    bl_description = "Expand"
+    bl_description = "Expand or collapse joined mesh details"
 
     index: bpy.props.IntProperty()
 
@@ -60,7 +60,7 @@ class UVGAMI_OT_preview_symmetry(bpy.types.Operator):
     bl_idname = "uvgami.preview_symmetry"
     bl_label = "Preview"
     bl_description = (
-        "Add a plane meshes to verify symmetry of selected meshes."
+        "Add plane meshes to verify symmetry of selected meshes."
         " Press again to delete the planes"
     )
     bl_options = {"UNDO"}
