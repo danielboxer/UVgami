@@ -31,7 +31,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
             (
                 "PARTUV",
                 "PartUV",
-                "Part-based unwrapping engine with CUDA (runs from the repo CLI)",
+                "Part-based unwrapping engine, requires an NVIDIA GPU",
             ),
         ),
         default="UVGAMI",
@@ -44,19 +44,19 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
             (
                 "GEOMETRIC",
                 "Geometric",
-                "Clustering on face normals and centroids. No AI model needed",
+                "Geometric clustering. No AI model needed",
             ),
             (
                 "AI",
                 "AI",
-                "PartField inference. Needs the torch stack and the checkpoint",
+                "AI segmentation with the PartField model. Requires the AI install",
             ),
         ),
         default="AI",
     )
     partuv_threshold: bpy.props.FloatProperty(
         name="",
-        description="Distortion threshold. Lower values cut the mesh into more charts",
+        description="Distortion threshold. Lower values cut the mesh into more UV islands",
         default=1.25,
         min=1.0,
         max=10.0,
@@ -84,7 +84,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     )
     maintain_mode: bpy.props.EnumProperty(
         name="Preserve",
-        description="",
+        description="How much of the mesh to untriangulate after unwrap",
         items=(
             (
                 "FULL",
@@ -188,7 +188,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         name="",
         description=(
             "Use this setting for symmetrical meshes only."
-            " This will result in a quicker unwrap with an symmetrical UV map"
+            " This will result in a quicker unwrap with a symmetrical UV map"
         ),
     )
     sym_axes: bpy.props.EnumProperty(
@@ -223,7 +223,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     )
     grid_res: bpy.props.IntProperty(
         name="Resolution",
-        description="",
+        description="The resolution of the grid texture in pixels",
         default=1024,
         subtype="PIXEL",
         min=1,
@@ -363,7 +363,9 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
 
         box = layout.box()
         if find_partuv_dev_repo() is not None:
-            box.row().label(text="PartUV: using the repo CLI", icon="CHECKMARK")
+            box.row().label(
+                text="PartUV: dev mode (running from repo)", icon="CHECKMARK"
+            )
         else:
             row = box.row()
             if is_partuv_ai_installed():
