@@ -30,70 +30,9 @@
 
 ![Rhino](https://github.com/DanielBoxer/UVgami/assets/65575771/12b691fc-4ff6-4462-9dbc-b615a85bf7fc)
 
-The unwrapping engine is from [Optcuts](https://github.com/liminchen/OptCuts) by Minchen Li, licensed under the MIT License, and has been modified to work in Blender.
+## Engines
 
-## Developer CLI
+UVgami has two unwrapping engines, see the [docs](/docs/docs.md) for more info:
 
-Blender-independent CLI for testing the engines with OBJ files. Needs [uv](https://docs.astral.sh/uv/).
-
-```powershell
-uv sync
-uv run uvgami unwrap model.obj
-```
-
-- Output defaults to `<input stem>_uv.obj` next to the input, use `-o` and `--overwrite` to control it
-- `--json` prints one machine-readable result on stdout, all logs go to stderr
-- OptCuts options: `--quality`, `--seam-weight`, `--seam-weights`, `--import-uvs`, `--optcuts-path` (defaults to the bundled `engines/` binary)
-- Exit codes: 0 ok, 2 invalid input, 3 missing runtime files, 4 engine failure, 5 bad output
-
-### PartUV engine
-
-PartUV needs CUDA. It builds natively on Windows and Linux.
-
-In the add-on, PartUV runs `python -m partuv` from the wheel: from a repo checkout it uses `uv run`, otherwise the install button in the add-on preferences downloads the wheel from the latest release and installs it into a managed venv.
-
-Two segmentation modes drive the part tree:
-
-- `--segmentation ai` (default): PartField inference, best quality; needs the torch stack (`--extra partuv`) and the [PartField checkpoint](https://huggingface.co/mikaelaangel/partfield-ckpt) (untracked)
-- `--segmentation geometric`: scikit-learn agglomerative clustering on face normals and centroids; no torch, no checkpoint, installs with `--extra partuv-lite`
-
-One-time Windows setup:
-
-1. Visual Studio 2026 with the C++ workload (includes vcpkg, cmake, ninja)
-2. CUDA Toolkit 13.2+ (`winget install Nvidia.CUDA`), older versions don't support VS 2026
-3. From a VS dev shell (`Launch-VsDevShell.ps1 -Arch amd64`): `uv sync --extra partuv` (or `--extra partuv-lite`)
-
-The vcpkg deps (cgal, yaml-cpp, tbb) build from source on the first run, about 50 minutes, and are binary-cached after. The wheel bundles the runtime DLLs; running it only needs the VC++ redistributable.
-
-One-time WSL setup (Ubuntu 24.04):
-
-```bash
-sudo apt install build-essential libcgal-dev libyaml-cpp-dev libtbb-dev
-# cuda toolkit from the nvidia wsl-ubuntu repo, then nvcc is at /usr/local/cuda-12.6/bin
-sudo apt install cuda-toolkit-12-6
-wget -P engine/partuv https://huggingface.co/mikaelaangel/partfield-ckpt/resolve/main/model_objaverse.ckpt
-```
-
-Build and run in WSL (from the repo):
-
-```bash
-export PATH=/usr/local/cuda-12.6/bin:$PATH
-# venv on ext4: keeps the Windows .venv untouched and torch imports fast
-export UV_PROJECT_ENVIRONMENT=~/uvgami-venv
-uv sync --extra partuv        # or --extra partuv-lite for geometric only
-uv run python -m partuv model.obj
-```
-
-- Checkpoint lookup order: `--checkpoint`, `$UVGAMI_PARTUV_CHECKPOINT`, `engine/partuv/model_objaverse.ckpt`
-- The extension compiles to `/var/tmp/partuv-build` in WSL (compiling on `/mnt/c` is hopelessly slow) and targets sm_86 (RTX 3060) by default, override with the `CUDAARCHS` env var; `-DPARTUV_NATIVE=ON` restores upstream's `-march=native`
-- Release wheels should widen the CUDA targets: `CUDAARCHS="75-real;80-real;86-real;89-real;90-real;120"` with CUDA 13 (Windows; sm_75 is its floor), drop `120` on CUDA 12.6 (WSL; sm_90 is its ceiling)
-- CI does this: the PartUV build workflow builds cp311 wheels for Windows and Linux when `engine/partuv/pyproject.toml` or `engine/partuv/vcpkg.json` changes on master (the pyproject version bump is the release trigger; bump vcpkg's `version-string` alongside it) and uploads them to the latest release. The Linux wheel needs the apt libs above and the CUDA runtime at import time; only the Windows wheel bundles its DLLs
-- `--threshold` sets the distortion threshold (default 1.25), `--config` overrides `engine/partuv/config/config.yaml`
-
-### Tests
-
-```powershell
-uv run pytest              # unit tests + OptCuts smoke test
-uv run pytest -m "not smoke"
-uv run ruff check uvgami_cli tests
-```
+- OptCuts (CPU): [OptCuts](https://github.com/liminchen/OptCuts) by Minchen Li (MIT License), modified to work in Blender
+- PartUV (AI, needs an NVIDIA GPU): [PartUV](https://github.com/EricWang12/PartUV) by Zhaoning Wang (Apache 2.0)
