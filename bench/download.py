@@ -30,6 +30,9 @@ CURATED = [
     "max-planck",
     "ogre",
     "nefertiti",
+    "woody",
+    "beetle",
+    "alligator",
 ]
 
 

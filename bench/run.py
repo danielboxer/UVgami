@@ -23,6 +23,11 @@ OUT_DIR = BENCH / "out"
 RESULTS_CSV = BENCH / "results.csv"
 ENGINES = ["optcuts", "partuv"]
 WARMUP_STEM = "_warmup"
+# optcuts is too slow past its cap (triangle count); partuv is uncapped.
+# --max-faces overrides both with one cap for all engines.
+ENGINE_FACE_CAPS = {"optcuts": 13_500, "partuv": None}
+# --quick caps both engines here so a run finishes in a few minutes
+QUICK_MAX_FACES = 6_000
 
 METRIC_FIELDS = [
     "chart_count",
@@ -38,7 +43,39 @@ def smallest(paths):
     return min(paths, key=lambda p: p.stat().st_size)
 
 
-def run_engine(engine, model_paths, warmup_dir):
+def scan_obj(path):
+    """Return (tri_count, has_ngon). tri_count is the fan-triangulated triangle
+    count (len(face verts) - 2 per face) used for the per-engine face caps.
+    has_ngon flags any face with more than 3 vertices, so it needs
+    triangulating before an engine sees it."""
+    tris = 0
+    has_ngon = False
+    with open(path) as file:
+        for line in file:
+            if line.startswith("f "):
+                verts = len(line.split()) - 1
+                tris += verts - 2
+                if verts > 3:
+                    has_ngon = True
+    return tris, has_ngon
+
+
+def triangulate_obj(src, dest):
+    """Fan-triangulate every face of src into dest: verts v0..vn become
+    triangles (v0, vi, vi+1). Full vertex tokens and all non-face lines are
+    kept verbatim."""
+    with open(src) as fin, open(dest, "w") as fout:
+        for line in fin:
+            if line.startswith("f "):
+                verts = line.split()[1:]
+                if len(verts) > 3:
+                    for i in range(1, len(verts) - 1):
+                        fout.write(f"f {verts[0]} {verts[i]} {verts[i + 1]}\n")
+                    continue
+            fout.write(line)
+
+
+def run_engine(engine, model_paths, warmup_src, warmup_dir):
     """Invoke the CLI once over all models plus a leading warmup mesh, returning
     {stem: {"status", "seconds"}}. The warmup absorbs one-time engine cost (for
     partuv the CUDA context and first-kernel setup that lands in mesh one's
@@ -47,7 +84,7 @@ def run_engine(engine, model_paths, warmup_dir):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     warmup = warmup_dir / f"{WARMUP_STEM}.obj"
-    shutil.copyfile(smallest(model_paths), warmup)
+    shutil.copyfile(warmup_src, warmup)
     inputs = [warmup, *model_paths]
 
     cmd = [
@@ -171,17 +208,28 @@ def print_report(rows, engines):
             )
             print(line)
 
-    print("\nper-engine means (ok meshes only):")
+    ok_meshes = {
+        engine: {
+            r["mesh"] for r in rows if r["engine"] == engine and r["status"] == "ok"
+        }
+        for engine in engines
+    }
+    common = set.intersection(*ok_meshes.values()) if ok_meshes else set()
+
+    print("\nper-engine means (meshes ok in all engines):")
+    if not common:
+        print("  (no mesh is ok in every engine, means omitted)")
     for engine in engines:
         ok = [r for r in rows if r["engine"] == engine and r["status"] == "ok"]
         n = len(ok)
         print(
             f"  {engine}: {n} ok, {sum(1 for r in rows if r['engine'] == engine and r['status'] != 'ok')} not ok"
         )
-        if not ok:
+        shared = [r for r in ok if r["mesh"] in common]
+        if not shared:
             continue
         for field in ["seconds", *METRIC_FIELDS]:
-            values = [r[field] for r in ok if r[field] is not None]
+            values = [r[field] for r in shared if r[field] is not None]
             if values:
                 print(f"    {field:<18} {sum(values) / len(values):.3f}")
 
@@ -192,18 +240,70 @@ def main(argv=None):
     parser.add_argument(
         "--models", default="*", help="glob over bench/models stems, default all"
     )
+    parser.add_argument(
+        "--max-faces",
+        type=int,
+        default=None,
+        help="cap triangle count for every engine, overrides the per-engine defaults",
+    )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help=f"fast run: cap every engine at {QUICK_MAX_FACES} tris",
+    )
     args = parser.parse_args(argv)
+    if args.quick:
+        if args.max_faces is not None:
+            parser.error("--quick and --max-faces are mutually exclusive")
+        args.max_faces = QUICK_MAX_FACES
 
     model_paths = sorted(MODELS_DIR.glob(f"{args.models}.obj"))
     if not model_paths:
         parser.error(f"no models matched {args.models!r} in {MODELS_DIR}")
     engines = [args.engine] if args.engine else ENGINES
-    print(f"models: {', '.join(p.stem for p in model_paths)}")
 
     all_rows = []
-    with tempfile.TemporaryDirectory(prefix="uvgami-bench-") as warmup_dir:
+    with tempfile.TemporaryDirectory(prefix="uvgami-bench-") as tmp:
+        tmp = Path(tmp)
+        # triangulate ngon meshes into tmp; both engines get identical tri-only
+        # input. tri-only sources are passed through untouched.
+        prepared = {}
+        tri_counts = {}
+        for path in model_paths:
+            tris, has_ngon = scan_obj(path)
+            tri_counts[path.stem] = tris
+            if has_ngon:
+                dest = tmp / path.name
+                triangulate_obj(path, dest)
+                prepared[path.stem] = dest
+            else:
+                prepared[path.stem] = path
+        prepared_paths = [prepared[p.stem] for p in model_paths]
+
+        # every prepared input is tri-only, so the smallest is a valid warmup
+        warmup_src = smallest(prepared_paths)
+        print(f"models: {', '.join(p.stem for p in model_paths)}")
+
         for engine in engines:
-            results = run_engine(engine, model_paths, Path(warmup_dir))
+            cap = (
+                args.max_faces
+                if args.max_faces is not None
+                else ENGINE_FACE_CAPS[engine]
+            )
+            kept = model_paths
+            if cap is not None:
+                too_big = [p for p in model_paths if tri_counts[p.stem] > cap]
+                if too_big:
+                    print(
+                        f"{engine}: skipped over {cap} tris: "
+                        f"{', '.join(p.stem for p in too_big)}"
+                    )
+                kept = [p for p in model_paths if tri_counts[p.stem] <= cap]
+            if not kept:
+                print(f"{engine}: all models over cap, skipping engine")
+                continue
+            engine_paths = [prepared[p.stem] for p in kept]
+            results = run_engine(engine, engine_paths, warmup_src, tmp)
             all_rows.extend(score(engine, results))
 
     write_csv(all_rows)
