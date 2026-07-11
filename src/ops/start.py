@@ -1,6 +1,9 @@
 # Copyright (C) 2022 Daniel Boxer
 # See __init__.py and LICENSE for more information
 
+import time
+from collections import deque
+
 import bmesh
 import bpy
 import numpy
@@ -10,6 +13,7 @@ from ..handler import handle_error
 from ..job import Cleanup, Join, Preserve, Symmetrise, TransferUVs
 from ..logger import logger
 from ..manager import manager
+from ..progress_bar import progress_bar
 from ..unwrap import Unwrap
 from ..utils.geometry import apply_transforms, calc_center, cut, cut_on_axes
 from ..utils.io import export_obj
@@ -22,6 +26,296 @@ from ..utils.mesh import (
 )
 from ..utils.paths import get_extension_dir_path, get_preferences
 from .guides import SEAM_RESTRICTIONS_GROUP
+
+# process objects for at most this long per tick before yielding to the event loop
+TICK_BUDGET = 0.033
+
+
+class ExportDrain:
+    """Exports separated objects across timer ticks so the UI stays responsive."""
+
+    def __init__(
+        self,
+        engine,
+        engine_path,
+        input_path,
+        names,
+        jobs,
+        separated_objects,
+        old_active,
+        old_mode,
+        start_objects,
+        temp_collection,
+    ):
+        self.engine = engine
+        self.engine_path = engine_path
+        self.input_path = input_path
+        self.names = names
+        self.jobs = jobs
+        self.remaining = deque(separated_objects)
+        self.old_active = old_active
+        self.old_mode = old_mode
+        self.start_objects = start_objects
+        self.temp_collection = temp_collection
+        self.added_any = False
+
+    def tick(self):
+        # exports need object mode, the user may have entered edit mode between ticks
+        if bpy.context.mode != "OBJECT":
+            return 0.2
+
+        # the session we joined was cancelled mid-drain (Cancel All), so drop the
+        # remaining pieces instead of exporting into a dead session
+        if self.added_any and not manager.is_active:
+            # release the hold first so a failure below can't wedge the manager
+            manager.hold_count -= 1
+            manager.pending_count -= len(self.remaining)
+            for obj in self.remaining:
+                bpy.data.objects.remove(obj, do_unlink=True)
+            bpy.data.collections.remove(self.temp_collection)
+            bpy.context.view_layer.objects.active = self.old_active
+            bpy.ops.object.mode_set(mode=self.old_mode)
+            return None
+
+        try:
+            props = bpy.context.scene.uvgami
+            start = time.monotonic()
+            while self.remaining:
+                self._export_object(self.remaining.popleft(), props)
+                if time.monotonic() - start >= TICK_BUDGET:
+                    # yield to the event loop, resume next pass
+                    return 0.0
+
+            self._finish(props)
+            return None
+
+        except Exception as e:
+            # handle_error removes objects created since start, incl the temp
+            # pieces, so only the collection data-block is left to remove
+            handle_error(e, "START", objects=self.start_objects)
+            bpy.data.collections.remove(self.temp_collection)
+            manager.hold_count -= 1
+            # return the pieces that never made it into the session
+            manager.pending_count -= len(self.remaining)
+            # if no session owns the bar (nothing added yet), tear it down
+            if not manager.is_active:
+                progress_bar.remove()
+            return None
+
+    def _export_object(self, obj, props):
+        join = self.jobs[obj]["join"]
+        is_stopped = False
+        if join is not None and (join.cancel_requested or join.stop_requested):
+            if join.cancel_requested or not self.engine.supports_early_stop:
+                # whole-group cancel, or a stop on an engine that can't finish
+                # early with a result: drop the piece instead of exporting it
+                self._skip_piece(obj)
+                return
+            # stop on an engine that can finish early: export normally and let
+            # it stop gracefully once the process starts
+            is_stopped = True
+
+        # consume upfront so a failure below can't double count this piece,
+        # the error path only subtracts what's still in the queue
+        manager.pending_count -= 1
+        # get unwrap name
+        unwrap_name = self.names[obj.name][1]
+        path = self.input_path / f"{bpy.path.clean_name(unwrap_name)}.obj"
+        # if path to file already exists, find a unique name
+        while path.is_file():
+            path = path.parent / (f"{path.stem}1.obj")
+
+        edge_path, new_edges = self._triangulate_mesh(obj, path, props)
+
+        # relink to the scene so select_set works, objects not in the view layer
+        # can't be selected, all within one tick so no redraw shows the object
+        bpy.context.scene.collection.objects.link(obj)
+        bpy.context.view_layer.update()
+
+        # export uses selected-objects mode and the user can change selection between
+        # ticks, deselect so only this object lands in the obj file
+        deselect_all()
+        export_obj(obj, path, props.import_uvs and self.engine.supports_import_uvs)
+
+        guide_path = self._create_guide_file(obj, path, props)
+
+        materials, material_indices, vertex_groups, shade_smooth, auto_smooth = (
+            self._get_mesh_metadata(obj)
+        )
+
+        unwrap = Unwrap(
+            name=unwrap_name,
+            input_name=self.names[obj.name][0],
+            path=path,
+            guide_path=guide_path,
+            edge_path=edge_path,
+            jobs=(
+                self.jobs[obj]["preserve"],
+                self.jobs[obj]["join"],
+                self.jobs[obj]["cleanup"],
+                self.jobs[obj]["symmetrize"],
+                self.jobs[obj]["transfer_uvs"],
+            ),
+            origin=obj.matrix_world.translation,
+            materials=materials,
+            added_edges=new_edges,
+            vertex_count=len(obj.data.vertices),
+            material_indices=material_indices,
+            vertex_groups=vertex_groups,
+            shade_smooth=shade_smooth,
+            auto_smooth=auto_smooth,
+            merge_cuts=props.use_cuts and not props.use_symmetry,
+        )
+        if is_stopped:
+            unwrap.is_stopped = True
+        manager.add(unwrap)
+        if not manager.is_active:
+            manager.engine = self.engine
+            manager.engine_path = self.engine_path
+            manager.start()
+            # start() only counted the queue; include still-pending pieces
+            # in the bar total (the active case was counted in execute)
+            manager.starting_count += manager.pending_count
+        self.added_any = True
+
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+    def _skip_piece(self, obj):
+        # release each job so the group's finished runners still satisfy
+        # is_completed() and get imported
+        jobs = [j for j in self.jobs[obj].values() if j is not None]
+        manager.release_jobs(jobs)
+        bpy.data.objects.remove(obj, do_unlink=True)
+        # drop it from the bar denominator
+        manager.pending_count -= 1
+        manager.starting_count -= 1
+
+    def _finish(self, props):
+        # pieces were added as they exported; only start here if none were
+        # (e.g. every piece had zero polygons)
+        if not manager.is_active:
+            manager.engine = self.engine
+            manager.engine_path = self.engine_path
+            manager.start()
+        bpy.context.view_layer.objects.active = self.old_active
+        bpy.ops.object.mode_set(mode=self.old_mode)
+        bpy.data.collections.remove(self.temp_collection)
+        manager.hold_count -= 1
+
+    def _triangulate_mesh(self, obj, path, props):
+        """Triangulate the mesh if needed, tracking added edges for untriangulation."""
+        new_edges = []
+        bm = new_bmesh(obj)
+
+        must_triangulate = False
+        ngon_dict = {}
+        for face_idx, face in enumerate(bm.faces):
+            if len(face.edges) > 3:
+                must_triangulate = True
+                # n-gon vertices are only needed in full mode
+                if props.maintain_mode == "PARTIAL":
+                    break
+
+            if len(face.edges) > 4:
+                # found n-gon
+                for vert in face.verts:
+                    if vert.index not in ngon_dict:
+                        ngon_dict[vert.index] = set()
+                    ngon_dict[vert.index].add(face_idx)
+
+        edge_path = None
+        if must_triangulate:
+            if props.untriangulate:
+                self.jobs[obj]["preserve"] = Preserve(1)
+                old_edges = set(bm.edges)
+
+            bmesh.ops.triangulate(bm, faces=bm.faces, quad_method="BEAUTY")
+
+            if props.untriangulate:
+                # write added edges to file
+                edge_path = path.parent / f"{path.stem}_edges"
+                with edge_path.open("w") as f:
+                    for bm_e in set(bm.edges).difference(old_edges):
+                        edge = (bm_e.verts[0].index, bm_e.verts[1].index)
+                        if (
+                            # if both vertices are ngon vertices
+                            edge[0] in ngon_dict
+                            and edge[1] in ngon_dict
+                            # and they are from the same ngon
+                            and len(ngon_dict[edge[0]].intersection(ngon_dict[edge[1]]))
+                            > 0
+                        ):
+                            # edge is inside ngon, don't dissolve
+                            # because ngons aren't rerouted
+                            continue
+                        new_edges.append(edge)
+                        f.write(f"{edge[0]} {edge[1]}\n")
+
+            set_bmesh(bm, obj)
+        else:
+            bm.free()
+
+        return edge_path, new_edges
+
+    def _create_guide_file(self, obj, path, props):
+        """Create seam restriction guide file if guided mode is active."""
+        guide_path = None
+        if (
+            self.engine.supports_guided
+            and props.use_guided_mode
+            and SEAM_RESTRICTIONS_GROUP in obj.vertex_groups
+        ):
+            # get seam guide
+            guide = ""
+            group_idx = obj.vertex_groups[SEAM_RESTRICTIONS_GROUP].index
+            for v in obj.data.vertices:
+                for g in v.groups:
+                    if g.group == group_idx:
+                        guide += f"{v.index},{g.weight},"
+                        break
+            # remove last comma
+            guide = guide[:-1]
+
+            guide_path = path.parent / f"{path.stem}_weights"
+            with guide_path.open("w") as f:
+                f.write(f"{guide}\n")
+
+        return guide_path
+
+    def _get_mesh_metadata(self, obj):
+        """Gather materials and shading info from the mesh."""
+        # get materials
+        materials = [slot.material.name for slot in obj.material_slots if slot.material]
+
+        # get per-face material indices so they can be restored after import
+        material_indices = [0] * len(obj.data.polygons)
+        obj.data.polygons.foreach_get("material_index", material_indices)
+
+        # check smooth and auto smooth shading
+        shade_smooth = True if obj.data.polygons[0].use_smooth else False
+
+        angle = -1
+        if bpy.app.version >= (4, 1, 0):
+            for modifier in obj.modifiers:
+                # Input_1 is the angle input
+                if "Smooth by Angle" in modifier.name and "Input_1" in modifier:
+                    angle = modifier["Input_1"]
+        else:
+            if obj.data.use_auto_smooth:
+                angle = obj.data.auto_smooth_angle
+
+        # get vertex groups
+        vertex_groups = {}
+        for group in obj.vertex_groups:
+            weights = {}
+            for v in obj.data.vertices:
+                for g in v.groups:
+                    if g.group == group.index:
+                        weights[v.index] = g.weight
+                        break
+            vertex_groups[group.name] = weights
+
+        return materials, material_indices, vertex_groups, shade_smooth, angle
 
 
 class UVGAMI_OT_start(bpy.types.Operator):
@@ -48,9 +342,11 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         self.separated_objects = None
         self.jobs = None
+        self.temp_collection = None
 
     def execute(self, context):
         start_objects = set(bpy.data.objects)
+        drain_registered = False
 
         try:
             logger.new_info()
@@ -60,10 +356,48 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 return {"CANCELLED"}
             if self._prepare_unwrap_session(context) is not None:
                 return {"CANCELLED"}
-            self.start_unwraps(context)
+
+            drain = ExportDrain(
+                engine=self.engine,
+                engine_path=self.engine_path,
+                input_path=self.input_path,
+                names=self.names,
+                jobs=self.jobs,
+                separated_objects=self.separated_objects,
+                old_active=self.old_active,
+                old_mode=self.old_mode,
+                start_objects=start_objects,
+                temp_collection=self.temp_collection,
+            )
+            bpy.app.timers.register(drain.tick)
+            drain_registered = True
+            # drain holds the session open until it finishes adding pieces
+            manager.hold_count += 1
+            # count every piece in the bar total upfront so the finished
+            # ratio doesn't shrink as pieces get added
+            manager.pending_count += len(self.separated_objects)
+            if manager.is_active:
+                manager.starting_count += len(self.separated_objects)
+
+            # show the progress bar now instead of after every piece exports
+            if get_preferences().show_progress_bar:
+                progress_bar.start()
+                # force redraw of view3D
+                bpy.context.view_layer.objects.active = (
+                    bpy.context.view_layer.objects.active
+                )
+
+            if self.report_msg == "Input contain":
+                self.report({"INFO"}, "UV unwrap in progress")
+            else:
+                self.report({"WARNING"}, f"UV unwrap in progress. {self.report_msg}")
 
         except Exception as e:
             handle_error(e, "START", objects=start_objects)
+            # tick() owns the collection once registered; only remove it here
+            # if the drain never started ticking
+            if not drain_registered and self.temp_collection is not None:
+                bpy.data.collections.remove(self.temp_collection)
 
         # these variables should only be used while operator is running
         self.reset_variables()
@@ -88,6 +422,14 @@ class UVGAMI_OT_start(bpy.types.Operator):
         self.input_path, _ = self.prepare_io_folders()
         self.jobs, self.separated_objects = self.create_jobs(context)
         deselect_all()
+
+        # stash pieces in a collection not linked to the scene so they don't flash
+        # in the viewport or outliner between export ticks
+        self.temp_collection = bpy.data.collections.new("UVgami Temp")
+        for obj in self.separated_objects:
+            for coll in obj.users_collection:
+                coll.objects.unlink(obj)
+            self.temp_collection.objects.link(obj)
         return None
 
     def check_for_errors(self):
@@ -320,181 +662,3 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 separated_objects.append(obj)
 
         return jobs, separated_objects
-
-    def start_unwraps(self, context):
-        props = context.scene.uvgami
-
-        for obj in self.separated_objects:
-            # get unwrap name
-            unwrap_name = self.names[obj.name][1]
-            path = self.input_path / f"{bpy.path.clean_name(unwrap_name)}.obj"
-            # if path to file already exists, find a unique name
-            while path.is_file():
-                path = path.parent / (f"{path.stem}1.obj")
-
-            edge_path, new_edges = self._triangulate_mesh(obj, path, props)
-
-            export_obj(obj, path, props.import_uvs and self.engine.supports_import_uvs)
-
-            guide_path = self._create_guide_file(obj, path, props)
-
-            materials, material_indices, vertex_groups, shade_smooth, auto_smooth = (
-                self._get_mesh_metadata(obj)
-            )
-
-            unwrap = Unwrap(
-                name=unwrap_name,
-                input_name=self.names[obj.name][0],
-                path=path,
-                guide_path=guide_path,
-                edge_path=edge_path,
-                jobs=(
-                    self.jobs[obj]["preserve"],
-                    self.jobs[obj]["join"],
-                    self.jobs[obj]["cleanup"],
-                    self.jobs[obj]["symmetrize"],
-                    self.jobs[obj]["transfer_uvs"],
-                ),
-                origin=obj.matrix_world.translation,
-                materials=materials,
-                added_edges=new_edges,
-                vertex_count=len(obj.data.vertices),
-                material_indices=material_indices,
-                vertex_groups=vertex_groups,
-                shade_smooth=shade_smooth,
-                auto_smooth=auto_smooth,
-                merge_cuts=props.use_cuts and not props.use_symmetry,
-            )
-            manager.add(unwrap)
-
-            bpy.data.objects.remove(obj, do_unlink=True)
-
-        if not manager.is_active:
-            manager.engine = self.engine
-            manager.engine_path = self.engine_path
-            manager.start()
-        else:
-            # fix progress bar ratio
-            manager.starting_count += len(self.separated_objects)
-        context.view_layer.objects.active = self.old_active
-        bpy.ops.object.mode_set(mode=self.old_mode)
-
-        if self.report_msg == "Input contain":
-            self.report({"INFO"}, "UV unwrap in progress")
-        else:
-            self.report({"WARNING"}, f"UV unwrap in progress. {self.report_msg}")
-
-    def _triangulate_mesh(self, obj, path, props):
-        """Triangulate the mesh if needed, tracking added edges for untriangulation."""
-        new_edges = []
-        bm = new_bmesh(obj)
-
-        must_triangulate = False
-        ngon_dict = {}
-        for face_idx, face in enumerate(bm.faces):
-            if len(face.edges) > 3:
-                must_triangulate = True
-                # n-gon vertices are only needed in full mode
-                if props.maintain_mode == "PARTIAL":
-                    break
-
-            if len(face.edges) > 4:
-                # found n-gon
-                for vert in face.verts:
-                    if vert.index not in ngon_dict:
-                        ngon_dict[vert.index] = set()
-                    ngon_dict[vert.index].add(face_idx)
-
-        edge_path = None
-        if must_triangulate:
-            if props.untriangulate:
-                self.jobs[obj]["preserve"] = Preserve(1)
-                old_edges = set(bm.edges)
-
-            bmesh.ops.triangulate(bm, faces=bm.faces, quad_method="BEAUTY")
-
-            if props.untriangulate:
-                # write added edges to file
-                edge_path = path.parent / f"{path.stem}_edges"
-                with edge_path.open("w") as f:
-                    for bm_e in set(bm.edges).difference(old_edges):
-                        edge = (bm_e.verts[0].index, bm_e.verts[1].index)
-                        if (
-                            # if both vertices are ngon vertices
-                            edge[0] in ngon_dict
-                            and edge[1] in ngon_dict
-                            # and they are from the same ngon
-                            and len(ngon_dict[edge[0]].intersection(ngon_dict[edge[1]]))
-                            > 0
-                        ):
-                            # edge is inside ngon, don't dissolve
-                            # because ngons aren't rerouted
-                            continue
-                        new_edges.append(edge)
-                        f.write(f"{edge[0]} {edge[1]}\n")
-
-            set_bmesh(bm, obj)
-        else:
-            bm.free()
-
-        return edge_path, new_edges
-
-    def _create_guide_file(self, obj, path, props):
-        """Create seam restriction guide file if guided mode is active."""
-        guide_path = None
-        if (
-            self.engine.supports_guided
-            and props.use_guided_mode
-            and SEAM_RESTRICTIONS_GROUP in obj.vertex_groups
-        ):
-            # get seam guide
-            guide = ""
-            group_idx = obj.vertex_groups[SEAM_RESTRICTIONS_GROUP].index
-            for v in obj.data.vertices:
-                for g in v.groups:
-                    if g.group == group_idx:
-                        guide += f"{v.index},{g.weight},"
-                        break
-            # remove last comma
-            guide = guide[:-1]
-
-            guide_path = path.parent / f"{path.stem}_weights"
-            with guide_path.open("w") as f:
-                f.write(f"{guide}\n")
-
-        return guide_path
-
-    def _get_mesh_metadata(self, obj):
-        """Gather materials and shading info from the mesh."""
-        # get materials
-        materials = [slot.material.name for slot in obj.material_slots if slot.material]
-
-        # get per-face material indices so they can be restored after import
-        material_indices = [0] * len(obj.data.polygons)
-        obj.data.polygons.foreach_get("material_index", material_indices)
-
-        # check smooth and auto smooth shading
-        shade_smooth = True if obj.data.polygons[0].use_smooth else False
-
-        angle = -1
-        if bpy.app.version >= (4, 1, 0):
-            for modifier in obj.modifiers:
-                # Input_1 is the angle input
-                if "Smooth by Angle" in modifier.name and "Input_1" in modifier:
-                    angle = modifier["Input_1"]
-        else:
-            if obj.data.use_auto_smooth:
-                angle = obj.data.auto_smooth_angle
-
-        # get vertex groups
-        vertex_groups = {}
-        for group in obj.vertex_groups:
-            weights = {}
-            for v in obj.data.vertices:
-                for g in v.groups:
-                    if g.group == group.index:
-                        weights[v.index] = g.weight
-                        break
-            vertex_groups[group.name] = weights
-
-        return materials, material_indices, vertex_groups, shade_smooth, angle

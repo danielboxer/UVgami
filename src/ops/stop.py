@@ -3,11 +3,20 @@
 
 import bpy
 
-from ..job import Join
 from ..manager import manager
+from ..objfile import merge_obj_files
 from ..utils.io import import_obj
 from ..utils.mesh import check_collection, move_to_collection
 from ..utils.paths import get_preferences
+
+
+def _expand_whole_group(unwraps):
+    """The panel captures slice indices at draw time and the drain can add
+    pieces between draw and click, so a stale slice can miss group members.
+    Resolve membership from join jobs at execute time instead."""
+    joins = {u.join_job for u in unwraps if u.join_job is not None}
+    expanded = [u for u in manager.active if u in unwraps or u.join_job in joins]
+    return expanded, joins
 
 
 def cancel_with_bookkeeping(context, unwrap, invalid_label=None):
@@ -20,22 +29,13 @@ def cancel_with_bookkeeping(context, unwrap, invalid_label=None):
         and unwrap.path.is_file()
     ):
         invalid_obj = import_obj(unwrap.path)
-        collection = check_collection(
-            "UVgami Not Unwrapped", context.scene.collection
-        )
+        collection = check_collection("UVgami Not Unwrapped", context.scene.collection)
         move_to_collection(invalid_obj, collection)
         invalid_obj.name = f"{invalid_obj.name}: {invalid_label}"
         invalid_obj.hide_set(True)
         manager.found_invalid_objects = True
 
-    for job in unwrap.jobs:
-        job.count = job.count - 1
-        # if it was the last one
-        if isinstance(job, Join) and job.count - len(job.unwrapped) == 0:
-            # this makes it so the popup doesn't show if all cancelled
-            manager.finished_count -= len(job.unwrapped)
-            manager.cancelled_count += len(job.unwrapped)
-
+    manager.release_jobs(unwrap.jobs)
     manager.cancel_unwrap(unwrap)
 
 
@@ -46,15 +46,25 @@ class UVGAMI_OT_stop(bpy.types.Operator):
 
     start_idx: bpy.props.IntProperty()
     end_idx: bpy.props.IntProperty()
+    whole_group: bpy.props.BoolProperty()
 
     def execute(self, context):
+        unwraps = manager.active[self.start_idx : self.end_idx]
+        if self.whole_group:
+            unwraps, joins = _expand_whole_group(unwraps)
+            # also stop pieces the drain hasn't exported into the session yet
+            for join in joins:
+                join.stop_requested = True
+
         stopped_pending = False
-        for unwrap in manager.active[self.start_idx : self.end_idx]:
+        # collect cancellations so group members can be merged into one import
+        to_cancel = []
+        for unwrap in unwraps:
             if unwrap.batch_process is not None:
                 # pending batch members are cancelled by deleting their input
                 # so the cli skips them; in-flight or done ones finish normally
                 if unwrap.path.stem not in unwrap.batch_process.started:
-                    cancel_with_bookkeeping(context, unwrap, invalid_label="Stopped")
+                    to_cancel.append(unwrap)
                     stopped_pending = True
             elif unwrap.process is not None:
                 if manager.engine.supports_early_stop:
@@ -69,14 +79,53 @@ class UVGAMI_OT_stop(bpy.types.Operator):
             else:
                 # queued but the engine can't finish early with a result, so
                 # cancel it now instead of letting it start and be force killed
-                cancel_with_bookkeeping(context, unwrap, invalid_label="Stopped")
+                to_cancel.append(unwrap)
                 stopped_pending = True
+
+        self._cancel_collected(context, to_cancel)
 
         if stopped_pending:
             self.report({"INFO"}, "Stop: running meshes will finish")
         else:
             self.report({"INFO"}, "UV unwrap stop in progress")
         return {"FINISHED"}
+
+    def _cancel_collected(self, context, to_cancel):
+        # pieces of one separated mesh share a join_job; merge them into a
+        # single import instead of littering the collection with N objects
+        groups = {}
+        singles = []
+        for unwrap in to_cancel:
+            if unwrap.join_job is None:
+                singles.append(unwrap)
+            else:
+                groups.setdefault(id(unwrap.join_job), []).append(unwrap)
+
+        for group in groups.values():
+            if len(group) < 2:
+                singles.extend(group)
+                continue
+            self._import_merged_group(context, group)
+            # import already done above, so skip re-importing per member
+            for unwrap in group:
+                cancel_with_bookkeeping(context, unwrap, invalid_label=None)
+
+        for unwrap in singles:
+            cancel_with_bookkeeping(context, unwrap, invalid_label="Stopped")
+
+    def _import_merged_group(self, context, group):
+        if not get_preferences().invalid_collection:
+            return
+        # merge before any cancel: cleanup() deletes these input files
+        paths = [unwrap.path for unwrap in group if unwrap.path.is_file()]
+        if not paths:
+            return
+        merged_obj = import_obj(merge_obj_files(paths))
+        collection = check_collection("UVgami Not Unwrapped", context.scene.collection)
+        move_to_collection(merged_obj, collection)
+        merged_obj.name = f"{group[0].input_name}: Stopped"
+        merged_obj.hide_set(True)
+        manager.found_invalid_objects = True
 
 
 class UVGAMI_OT_cancel(bpy.types.Operator):
@@ -86,9 +135,15 @@ class UVGAMI_OT_cancel(bpy.types.Operator):
 
     start_idx: bpy.props.IntProperty()
     end_idx: bpy.props.IntProperty()
+    whole_group: bpy.props.BoolProperty()
 
     def execute(self, context):
         unwraps = manager.active[self.start_idx : self.end_idx]
+        if self.whole_group:
+            unwraps, joins = _expand_whole_group(unwraps)
+            # also cancel pieces the drain hasn't exported into the session yet
+            for join in joins:
+                join.cancel_requested = True
         cancel_count = len(unwraps)
 
         for unwrap in unwraps:
