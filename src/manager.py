@@ -43,6 +43,12 @@ class UnwrapManager:
         self.is_active = False
         self.is_viewer_active = False
         self._dispatch_handle = None
+        # pieces still being exported by drains that add unwraps incrementally;
+        # blocks finalizing the session until every drain has drained
+        self.hold_count = 0
+        # unexported pieces already counted in starting_count, shown as
+        # remaining so the finished ratio doesn't shrink as pieces get added
+        self.pending_count = 0
 
     @property
     def active(self):
@@ -88,6 +94,10 @@ class UnwrapManager:
         props = bpy.context.scene.uvgami
         engine = self.engine
         if engine.wants_batch(props):
+            if self.hold_count > 0:
+                # batch needs the whole queue at once; wait for every drain to
+                # finish exporting (the dispatch timer retries each tick)
+                return
             if any(u.batch_process is not None for u in self._running):
                 # wait for the running batch process to finish
                 return
@@ -245,8 +255,9 @@ class UnwrapManager:
             # fill empty slots from queue
             self._fill_slots()
 
-            # check if everything is done
-            if not self._running and not self._queue:
+            # check if everything is done; a drain still adding pieces holds the
+            # session open even when nothing is running or queued yet
+            if not self._running and not self._queue and self.hold_count == 0:
                 self._finish_batch()
                 return None
 
@@ -266,6 +277,9 @@ class UnwrapManager:
 
         all_unwraps = self.active
         progress = [numpy.array(unwrap.progress) for unwrap in all_unwraps]
+        # pieces still exporting count as remaining, not finished
+        for _ in range(self.pending_count):
+            progress.append(numpy.array((0, 0, 1)))
         # fill up progress bar with finished unwraps
         for _ in range(self.starting_count - len(progress)):
             progress.append(numpy.array((1, 0, 0)))
@@ -616,6 +630,18 @@ class UnwrapManager:
             file.unlink()
         for file in (get_extension_dir_path() / "output").iterdir():
             file.unlink()
+
+    def release_jobs(self, jobs):
+        """Decrement each job's count for a piece that won't be unwrapped and
+        apply the Join cancelled/finished adjustment when its group empties.
+        Shared by cancel_with_bookkeeping and the drain's group-stop skip."""
+        for job in jobs:
+            job.count = job.count - 1
+            # if it was the last one
+            if isinstance(job, Join) and job.count - len(job.unwrapped) == 0:
+                # this makes it so the popup doesn't show if all cancelled
+                self.finished_count -= len(job.unwrapped)
+                self.cancelled_count += len(job.unwrapped)
 
     def cancel_unwrap(self, unwrap):
         """Cancel a specific unwrap."""

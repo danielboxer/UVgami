@@ -17,6 +17,7 @@ Blender addon that auto unwraps UVs. Two engines: optcuts (bundled C++ binary) a
 
 ## Gotchas
 
+- The dev venv is hand-built: the partuv CUDA stack was installed with `--extra partuv`, which is outside the default sync set. Bare `uv sync` uninstalls all of it; sync with `uv sync --inexact`. Plain `uv run` is safe (inexact by default).
 - The dev venv's editable partuv install serves copies of the python files. After editing `engine/partuv/partuv/*.py`, copy the file over `.venv/Lib/site-packages/partuv/` or pytest and `python -m partuv` run stale code.
 - Rebuilding the compiled core needs a VS dev shell with CUDA and ninja on PATH. See `docs/agents/partuv-packaging.md`.
 - Never add a blocking stdin reader thread to the partuv CLI. On Windows a thread stuck reading stdin stalls native DLL imports.

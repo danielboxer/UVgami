@@ -1,12 +1,11 @@
 # Copyright (C) 2022 Daniel Boxer
 # See __init__.py and LICENSE for more information
 
-import re
-
 import bmesh
 import bpy
 
 from .logger import logger
+from .objfile import merge_obj_files
 from .utils.mesh import check_exists, new_bmesh, set_bmesh
 
 
@@ -123,60 +122,17 @@ class Preserve(Job):
 class Join(Job):
     def __init__(self, count):
         super().__init__(count)
+        # set when a whole-group stop/cancel is issued, so the drain can drop
+        # or flag the group's still-unexported pieces
+        self.cancel_requested = False
+        self.stop_requested = False
 
     def finish(self, unwrap):
         paths = [u.path.parents[1] / "output" / u.path.name for u in self.unwrapped]
         edge_path = unwrap.edge_path
 
-        # set the current path to the first obj in the job
-        # this is the file that will be imported
-        path = paths[0]
-
-        prev_v = 0
-        prev_vt = 0
-        # go through first obj file to get the starting size
-        with paths[0].open() as f:
-            for line in f:
-                if line.startswith("v "):
-                    prev_v += 1
-                elif line.startswith("vt "):
-                    prev_vt += 1
-                elif line.startswith("f "):
-                    break
-
-        new_v = prev_v
-        new_vt = prev_vt
-        with paths[0].open("a") as f:
-            # since there are multiple obj files combined, the size of the
-            # previous ones must be added to the index numbers of the next
-            for obj_path in paths[1:]:
-                with obj_path.open() as f2:
-                    for line in f2:
-                        new_line = line
-                        if line.startswith("v "):
-                            new_v += 1
-                        elif line.startswith("vt "):
-                            new_vt += 1
-                        elif line.startswith("f "):
-                            line = line[2:]
-                            line = re.split(r"[ /]", line)
-                            new_line = "f "
-
-                            count = 0
-                            for num in line:
-                                count += 1
-                                if count == 1:
-                                    new_line += str(int(num) + prev_v)
-                                    new_line += "/"
-                                elif count == 2:
-                                    new_line += str(int(num) + prev_vt)
-                                    new_line += " "
-                                    count = 0
-                            new_line += "\n"
-
-                        f.write(new_line)
-                    prev_v = new_v
-                    prev_vt = new_vt
+        # the merged first obj is the file that will be imported
+        path = merge_obj_files(paths)
 
         added_edges = []
         if unwrap.preserve_job is not None:
