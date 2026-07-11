@@ -42,7 +42,18 @@ UV_ARCHIVES = {
 }
 
 # written by the install thread, read by the preferences ui
-install_state = {"running": False, "error": None}
+install_state = {
+    "running": False,
+    "error": None,
+    "phase": "",
+    "bytes_done": 0,
+    "bytes_total": None,
+}
+
+
+def _report_progress(done, total):
+    install_state["bytes_done"] = done
+    install_state["bytes_total"] = total
 
 
 def find_wheel_url():
@@ -84,7 +95,8 @@ def ensure_uv():
     url = f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/{archive_name}"
     uv.parent.mkdir(parents=True, exist_ok=True)
     tmp = uv.parent / archive_name
-    download_file(url, tmp)
+    install_state["phase"] = "Downloading uv"
+    download_file(url, tmp, progress=_report_progress)
     # the archives nest the binary in a per-target folder, extract just uv
     if archive_name.endswith(".zip"):
         with zipfile.ZipFile(tmp) as archive:
@@ -103,6 +115,9 @@ def ensure_uv():
 
 def run_venv_install(wheel_url, ai):
     uv = ensure_uv()
+    # uv's subprocess output is opaque, so no byte progress here
+    install_state["phase"] = "Installing packages"
+    install_state["bytes_total"] = None
     venv_python = get_partuv_venv_python()
     if not venv_python.is_file():
         # uv fetches a managed cpython 3.11 if the system has none
@@ -132,7 +147,8 @@ def download_checkpoint():
     if target.is_file():
         return
     target.parent.mkdir(parents=True, exist_ok=True)
-    download_file(CHECKPOINT_URL, target)
+    install_state["phase"] = "Downloading AI checkpoint"
+    download_file(CHECKPOINT_URL, target, progress=_report_progress)
 
 
 class UVGAMI_OT_install_partuv(bpy.types.Operator):
@@ -162,6 +178,9 @@ class UVGAMI_OT_install_partuv(bpy.types.Operator):
 
         install_state["running"] = True
         install_state["error"] = None
+        install_state["phase"] = ""
+        install_state["bytes_done"] = 0
+        install_state["bytes_total"] = None
         threading.Thread(
             target=self._install, args=(self.tier,), daemon=True
         ).start()
@@ -185,7 +204,14 @@ class UVGAMI_OT_install_partuv(bpy.types.Operator):
             install_state["running"] = False
 
     def modal(self, context, event):
-        if event.type != "TIMER" or install_state["running"]:
+        if event.type != "TIMER":
+            return {"PASS_THROUGH"}
+        if install_state["running"]:
+            # preferences can live in its own window, redraw them all so the bar animates
+            for window in context.window_manager.windows:
+                for area in window.screen.areas:
+                    if area.type == "PREFERENCES":
+                        area.tag_redraw()
             return {"PASS_THROUGH"}
         context.window_manager.event_timer_remove(self._timer)
         for area in context.screen.areas:
