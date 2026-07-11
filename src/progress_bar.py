@@ -35,6 +35,9 @@ class ProgressBar:
         self._batch[index].draw(shader)
 
     def start(self):
+        # idempotent: re-registering would leak the old draw handlers
+        if self.is_active:
+            return
         self.is_active = True
         self.update((0, 0, 1))
         for idx in range(3):

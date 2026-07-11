@@ -137,13 +137,17 @@ class UVGAMI_PT_main(bpy.types.Panel):
 
             # group stop and cancel button
             if expand_layout:
-                if is_active and manager.engine.supports_early_stop:
+                # group stop shows whenever a member is running; without early
+                # stop the running mesh finishes and the rest are dropped
+                if is_active:
                     stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
                     stop_op.start_idx = cancel_index
                     stop_op.end_idx = cancel_index + len(group)
+                    stop_op.whole_group = True
                 cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
                 cancel_op.start_idx = cancel_index
                 cancel_op.end_idx = cancel_index + len(group)
+                cancel_op.whole_group = True
 
             # draw buttons
             if not expand_layout or group_id.is_expanded:
@@ -157,21 +161,18 @@ class UVGAMI_PT_main(bpy.types.Panel):
                             icon=f"LAYER_{'ACTIVE' if item.is_active else 'USED'}",
                         )
 
-                    if item.progress != (0, 0, 1):
-                        # viewer button
-                        if manager.engine.supports_viewer:
-                            view_op = row.operator(
-                                "uvgami.view_unwrap", text="", icon="HIDE_OFF"
-                            )
-                            view_op.index = manager.active.index(item)
-                        # stop button, partuv can't finish early with a result
-                        # so its batches use the batch-wide stop below instead
-                        if manager.engine.supports_early_stop:
-                            stop_op = row.operator(
-                                "uvgami.stop", text="", icon="SNAP_FACE"
-                            )
-                            stop_op.start_idx = cancel_index
-                            stop_op.end_idx = cancel_index + 1
+                    # viewer button, only once the unwrap has started producing
+                    if item.progress != (0, 0, 1) and manager.engine.supports_viewer:
+                        view_op = row.operator(
+                            "uvgami.view_unwrap", text="", icon="HIDE_OFF"
+                        )
+                        view_op.index = manager.active.index(item)
+                    # stop button, only a running mesh on an engine that can
+                    # finish early with a result
+                    if manager.engine.supports_early_stop and item.is_active:
+                        stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
+                        stop_op.start_idx = cancel_index
+                        stop_op.end_idx = cancel_index + 1
                     # cancel button
                     cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
                     cancel_op.start_idx = cancel_index
@@ -181,18 +182,6 @@ class UVGAMI_PT_main(bpy.types.Panel):
             elif expand_layout and not group_id.is_expanded:
                 # the length of the group needs to be added
                 cancel_index += len(group)
-
-        # queue-wide stop for engines that can't finish early with a result:
-        # lets running meshes finish and cancels the queued ones
-        has_batch = any(u.batch_process is not None for u in manager.active)
-        has_queued = not manager.engine.supports_early_stop and any(
-            not u.is_active for u in manager.active
-        )
-        if has_batch or has_queued:
-            row = box.row()
-            stop_op = row.operator("uvgami.stop", text="Stop", icon="SNAP_FACE")
-            stop_op.start_idx = 0
-            stop_op.end_idx = len(manager.active)
 
         if len(groups) > 1:
             row = box.row()

@@ -64,6 +64,9 @@ class Engine:
     def describe_failure(self, code):
         """Map an engine exit code to (message, move_to_invalid), or None if the
         engine does not recognize it (caller shows a generic unknown-error)."""
+        # windows access violation (0xC0000005): the engine process crashed
+        if code == -1073741819:
+            return ("Engine crashed", True)
         return None
 
     def request_early_stop(self, process):
@@ -154,7 +157,7 @@ class UvgamiEngine(Engine):
             102: ("Non Manifold Vertices", True),
             105: ("Invalid Geometry", True),
             107: ("Invalid UV Input", True),
-        }.get(code)
+        }.get(code) or super().describe_failure(code)
 
     def request_early_stop(self, process):
         return print_stdin(process, "stop")
@@ -280,7 +283,7 @@ class PartuvEngine(Engine):
             3: ("PartUV runtime error, reinstall in preferences", False),
             4: ("PartUV failed on this mesh", True),
             5: ("PartUV produced invalid output", True),
-        }.get(code)
+        }.get(code) or super().describe_failure(code)
 
     def stop(self, process, engine_path):
         if platform.system() == "Windows":
