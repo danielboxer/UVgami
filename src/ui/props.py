@@ -385,10 +385,15 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
             ai.tier = "AI"
         if install_state["running"]:
             row = box.row()
-            row.label(
-                text="Installing PartUV, the AI tier downloads several GB",
-                icon="SORTTIME",
-            )
+            phase = install_state["phase"] or "Installing PartUV"
+            total = install_state["bytes_total"]
+            if total:
+                factor = install_state["bytes_done"] / total
+                row.progress(
+                    factor=factor, type="BAR", text=f"{phase}  {factor * 100:.0f}%"
+                )
+            else:
+                row.label(text=phase, icon="SORTTIME")
         elif install_state["error"] is not None:
             row = box.row()
             row.label(text=install_state["error"], icon="ERROR")

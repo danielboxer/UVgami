@@ -132,6 +132,26 @@ def test_full_part_416_refetches_from_scratch(server, tmp_path):
     assert server.requests[1] is None
 
 
+def test_progress_reports_cumulative_bytes_with_resume(server, tmp_path):
+    server.drop_requests = 1
+    dest = tmp_path / "model.ckpt"
+    calls = []
+
+    download.download_file(
+        url_for(server),
+        dest,
+        backoff=0,
+        progress=lambda done, total: calls.append((done, total)),
+    )
+
+    assert dest.read_bytes() == CONTENT
+    # the resumed attempt starts partway in, so done must count from the file
+    # start (offset included), not restart at zero
+    resume_offset = len(CONTENT) // 2
+    assert any(done > resume_offset for done, _ in calls)
+    assert calls[-1] == (len(CONTENT), len(CONTENT))
+
+
 def test_exhausts_attempts_and_raises(server, tmp_path):
     server.drop_requests = 99
     dest = tmp_path / "model.ckpt"
