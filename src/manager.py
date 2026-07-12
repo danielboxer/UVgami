@@ -39,7 +39,8 @@ class UnwrapManager:
         self._pack_output_objects = []
         self.input = {}
         self.engine = None
-        self.engine_path = None
+        # run context returned by engine.validate, opaque to the manager
+        self.engine_ctx = None
         self.is_active = False
         self.is_viewer_active = False
         self._dispatch_handle = None
@@ -119,11 +120,11 @@ class UnwrapManager:
         unwraps = list(self._queue)
         self._queue.clear()
         args = engine.build_batch_args(
-            self.engine_path, [u.path for u in unwraps], props
+            self.engine_ctx, [u.path for u in unwraps], props
         )
         batch_process = BatchProcess(
             args,
-            engine.build_env(self.engine_path),
+            engine.build_env(self.engine_ctx),
             {unwrap.path.stem: unwrap for unwrap in unwraps},
         )
         for unwrap in unwraps:

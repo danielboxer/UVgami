@@ -6,7 +6,9 @@ import pathlib
 import platform
 import shutil
 import subprocess
+from dataclasses import dataclass
 
+from .ops.install import install_state
 from .utils.io import print_stdin
 from .utils.paths import (
     get_bundled_engine_path,
@@ -21,23 +23,30 @@ from .utils.paths import (
 class Engine:
     id = ""
     label = ""
-    # feature flags drive UI gating and post-processing compatibility
-    # supports_* are optional capabilities the ui gates on, uses_* are
-    # engine-specific params it configures
-    supports_quality = False
+    description = ""
+    # feature flags drive UI gating and post-processing compatibility;
+    # engine-specific parameters live in the engine's property group and are
+    # drawn by draw_settings instead of being flagged here
     supports_guided = False
     supports_viewer = False
     supports_early_stop = False
     supports_preserve = False
     supports_import_uvs = False
-    uses_threshold = False
-    uses_segmentation = False
     # whether pack-after-unwrap starts enabled when this engine is selected
     pack_by_default = False
 
     def validate(self, prefs):
-        """Return (engine_path, None) if usable, else (None, error_message)."""
+        """Return (ctx, None) if usable, else (None, error_message). ctx is an
+        engine-defined run context passed back to the build_* and stop methods."""
         raise NotImplementedError
+
+    def draw_settings(self, layout, props):
+        """Draw this engine's settings rows in the main panel."""
+        pass
+
+    def draw_prefs(self, layout, prefs):
+        """Draw this engine's section in the addon preferences."""
+        pass
 
     def allows_concurrent(self, props):
         """Whether multiple unwrap processes can run at once."""
@@ -47,16 +56,16 @@ class Engine:
         """Whether queued meshes should share one engine process."""
         return False
 
-    def build_args(self, engine_path, input_path, props):
+    def build_args(self, ctx, input_path, props):
         """Return the subprocess argv that unwraps input_path."""
         raise NotImplementedError
 
-    def build_batch_args(self, engine_path, input_paths, props):
+    def build_batch_args(self, ctx, input_paths, props):
         """Return the argv unwrapping all input_paths in one process. Must be
         implemented when wants_batch can return True."""
         raise NotImplementedError
 
-    def build_env(self, engine_path):
+    def build_env(self, ctx):
         """Return the subprocess env, or None to inherit."""
         return None
 
@@ -78,15 +87,15 @@ class Engine:
         for engines without a viewer."""
         pass
 
-    def stop(self, process, engine_path):
+    def stop(self, process, ctx):
         """Stop a running unwrap process."""
         process.kill()
 
 
-class UvgamiEngine(Engine):
-    id = "UVGAMI"
-    label = "UVgami"
-    supports_quality = True
+class OptcutsEngine(Engine):
+    id = "OPTCUTS"
+    label = "Optcuts"
+    description = "The default Optcuts unwrapping engine"
     supports_guided = True
     supports_viewer = True
     supports_early_stop = True
@@ -113,12 +122,30 @@ class UvgamiEngine(Engine):
 
         return path, None
 
-    def build_args(self, engine_path, input_path, props):
-        u = {"HIGH": "4.05", "MEDIUM": "4.1"}.get(props.quality, "4.2")
+    def draw_settings(self, layout, props):
+        row = layout.row()
+        row.label(icon="SOLO_OFF", text="Quality")
+        row.prop(props.optcuts, "quality", text="")
+
+    def draw_prefs(self, layout, prefs):
+        row = layout.row()
+        row.scale_y = 1.5
+        split = row.split(factor=0.2)
+        split.scale_x = 1.5
+        split.label(text="Engine Path")
+        split.prop(prefs, "engine_path")
+
+        engine_path = pathlib.Path(prefs.engine_path)
+        if str(engine_path) == "." and get_bundled_engine_path() is not None:
+            row = layout.row()
+            row.label(text="Using bundled engine", icon="CHECKMARK")
+
+    def build_args(self, ctx, input_path, props):
+        u = {"HIGH": "4.05", "MEDIUM": "4.1"}.get(props.optcuts.quality, "4.2")
         s = {5: "200", 4: "150", 3: "100", 2: "50", 1: "25"}.get(props.weight_value, "")
         shared_args = f"-u {u} -s {s}"
 
-        return [str(engine_path), "-i", str(input_path)] + shared_args.split()
+        return [str(ctx), "-i", str(input_path)] + shared_args.split()
 
     def describe_failure(self, code):
         return {
@@ -156,45 +183,93 @@ def is_partuv_ai_installed():
     return is_partuv_installed() and get_partuv_checkpoint_path().is_file()
 
 
+@dataclass
+class PartuvRun:
+    # dev runs the workspace partuv through uv, installed runs the wheel's
+    # python -m partuv from the install operator's venv
+    mode: str
+    path: pathlib.Path
+
+
 class PartuvEngine(Engine):
     id = "PARTUV"
     label = "PartUV"
-    uses_threshold = True
-    uses_segmentation = True
+    description = "Part-based unwrapping engine, requires an NVIDIA GPU"
     pack_by_default = True
-    # set by validate: dev runs the workspace partuv through uv, installed runs
-    # the wheel's python -m partuv from the install operator's venv
-    mode = "dev"
 
     def allows_concurrent(self, props):
         # ai loads torch and the partfield model per process, more than
         # one job oversubscribes vram and thrashes
-        return props.partuv_segmentation != "AI"
+        return props.partuv.segmentation != "AI"
 
     def wants_batch(self, props):
         # one process loads the model once for every queued mesh
-        return props.partuv_segmentation == "AI"
+        return props.partuv.segmentation == "AI"
 
     def validate(self, prefs):
         repo = find_partuv_dev_repo()
         if repo is not None:
-            self.mode = "dev"
-            return repo, None
+            return PartuvRun("dev", repo), None
         if is_partuv_installed():
-            self.mode = "installed"
-            return get_partuv_venv_path(), None
+            return PartuvRun("installed", get_partuv_venv_path()), None
         return None, "PartUV is not installed. Install it in the add-on preferences"
 
-    def build_args(self, engine_path, input_path, props):
-        return self.build_batch_args(engine_path, [input_path], props)
+    def draw_settings(self, layout, props):
+        row = layout.row()
+        row.label(icon="MOD_EXPLODE", text="Segmentation")
+        row.prop(props.partuv, "segmentation", text="")
 
-    def build_batch_args(self, engine_path, input_paths, props):
-        if self.mode == "dev":
+        row = layout.row()
+        row.label(icon="MOD_LENGTH", text="Threshold")
+        row.prop(props.partuv, "threshold")
+
+    def draw_prefs(self, layout, prefs):
+        if find_partuv_dev_repo() is not None:
+            layout.row().label(
+                text="PartUV: dev mode (running from repo)", icon="CHECKMARK"
+            )
+        else:
+            row = layout.row()
+            if is_partuv_ai_installed():
+                row.label(text="PartUV installed (AI ready)", icon="CHECKMARK")
+            elif is_partuv_installed():
+                row.label(text="PartUV installed (Geometric)", icon="CHECKMARK")
+            else:
+                row.label(text="PartUV not installed")
+
+            row = layout.row()
+            row.scale_y = 1.5
+            geometric = row.operator(
+                "uvgami.install_partuv", text="Geometric", icon="IMPORT"
+            )
+            geometric.tier = "GEOMETRIC"
+            ai = row.operator("uvgami.install_partuv", text="AI (~5 GB)", icon="IMPORT")
+            ai.tier = "AI"
+        if install_state["running"]:
+            row = layout.row()
+            phase = install_state["phase"] or "Installing PartUV"
+            total = install_state["bytes_total"]
+            if total:
+                factor = install_state["bytes_done"] / total
+                row.progress(
+                    factor=factor, type="BAR", text=f"{phase}  {factor * 100:.0f}%"
+                )
+            else:
+                row.label(text=phase, icon="SORTTIME")
+        elif install_state["error"] is not None:
+            row = layout.row()
+            row.label(text=install_state["error"], icon="ERROR")
+
+    def build_args(self, ctx, input_path, props):
+        return self.build_batch_args(ctx, [input_path], props)
+
+    def build_batch_args(self, ctx, input_paths, props):
+        if ctx.mode == "dev":
             base = [
                 "uv",
                 "run",
                 "--project",
-                str(engine_path),
+                str(ctx.path),
                 "--no-sync",
                 "python",
                 "-m",
@@ -219,20 +294,20 @@ class PartuvEngine(Engine):
             str(get_extension_dir_path() / "output"),
             "--overwrite",
             "--segmentation",
-            props.partuv_segmentation.lower(),
+            props.partuv.segmentation.lower(),
             "--threshold",
-            f"{props.partuv_threshold:.3f}",
+            f"{props.partuv.threshold:.3f}",
             # drives the progress bar and the live chart viewer
             "--visual",
         ]
 
-    def build_env(self, engine_path):
+    def build_env(self, ctx):
         env = os.environ.copy()
         # the checkpoint isn't shipped in the wheel, and the cli's source-tree
         # default resolves relative to the installed package, so point at the
         # repo copy in dev mode and the downloaded one in installed mode
-        if self.mode == "dev":
-            checkpoint = engine_path / "engine" / "partuv" / "model_objaverse.ckpt"
+        if ctx.mode == "dev":
+            checkpoint = ctx.path / "engine" / "partuv" / "model_objaverse.ckpt"
         else:
             checkpoint = get_partuv_checkpoint_path()
         env["UVGAMI_PARTUV_CHECKPOINT"] = str(checkpoint)
@@ -247,7 +322,7 @@ class PartuvEngine(Engine):
             5: ("PartUV produced invalid output", True),
         }.get(code) or super().describe_failure(code)
 
-    def stop(self, process, engine_path):
+    def stop(self, process, ctx):
         if platform.system() == "Windows":
             # kill the whole tree, uv spawns the engine as a child
             subprocess.run(
@@ -258,9 +333,10 @@ class PartuvEngine(Engine):
             process.kill()
 
 
-ENGINES = {engine.id: engine for engine in (UvgamiEngine(), PartuvEngine())}
+ENGINES = {engine.id: engine for engine in (OptcutsEngine(), PartuvEngine())}
 
 
 def get_engine(engine_id):
-    # default to uvgami so a stale or removed engine id in an old file still loads
-    return ENGINES.get(engine_id, ENGINES["UVGAMI"])
+    # default to optcuts so a stale or removed engine id in an old file still
+    # loads (files saved before the rename stored "UVGAMI" and land here too)
+    return ENGINES.get(engine_id, ENGINES["OPTCUTS"])
