@@ -75,7 +75,7 @@ def triangulate_obj(src, dest):
             fout.write(line)
 
 
-def run_engine(engine, model_paths, warmup_src, warmup_dir):
+def run_engine(engine, model_paths, warmup_src, warmup_dir, extra_args=()):
     """Invoke the CLI once over all models plus a leading warmup mesh, returning
     {stem: {"status", "seconds"}}. The warmup absorbs one-time engine cost (for
     partuv the CUDA context and first-kernel setup that lands in mesh one's
@@ -99,6 +99,7 @@ def run_engine(engine, model_paths, warmup_src, warmup_dir):
         "--output-dir",
         str(out_dir),
         "--overwrite",
+        *extra_args,
     ]
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     stderr_log = out_dir / "stderr.log"
@@ -238,6 +239,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="benchmark UV unwrap engines")
     parser.add_argument("--engine", choices=ENGINES, help="run just one engine")
     parser.add_argument(
+        "--optcuts-path",
+        type=Path,
+        help="optcuts binary to bench instead of the bundled one",
+    )
+    parser.add_argument(
         "--models", default="*", help="glob over bench/models stems, default all"
     )
     parser.add_argument(
@@ -303,7 +309,10 @@ def main(argv=None):
                 print(f"{engine}: all models over cap, skipping engine")
                 continue
             engine_paths = [prepared[p.stem] for p in kept]
-            results = run_engine(engine, engine_paths, warmup_src, tmp)
+            extra = ()
+            if engine == "optcuts" and args.optcuts_path:
+                extra = ("--optcuts-path", str(args.optcuts_path.resolve()))
+            results = run_engine(engine, engine_paths, warmup_src, tmp, extra)
             all_rows.extend(score(engine, results))
 
     write_csv(all_rows)

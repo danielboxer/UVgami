@@ -68,6 +68,23 @@ WSL is ~2.2-2.4x faster on identical source. This is the bar for the Windows per
 - Correctness: full-config spot metrics (charts, seam, area/angle distortion, utilization) identical to baseline to 4 decimals; two runs byte-identical, so the parallel loops stay deterministic.
 - AVX2 must be applied to every TU. Per-target `/arch:AVX2` changed `EIGEN_MAX_ALIGN_BYTES` in only some TUs and the linker folded Eigen's inline aligned malloc/free into mismatched pairs: allocation with the 32-byte offset-pointer variant, free with plain `free` (heap corruption, caught by ASan in `igl::unique_rows`). Global `add_compile_options` before the deps fixes it.
 
+## optcuts perf branch full run
+
+2026-07-12, `bench/run.py --engine optcuts --optcuts-path build-perf/uvgami.exe` (commit db3e3a8: parallel loops, global AVX2, mimalloc, static CRT), same machine as the baseline table. Big meshes ran solo with a small warmup mesh globbed in.
+
+| mesh | baseline | new | speedup |
+|---|---|---|---|
+| woody | 0.4s | 0.3s | 1.3x |
+| alligator | 3.4s | 1.5s | 2.3x |
+| spot | 153.1s | 68.0s | 2.3x |
+| fandisk | 298.7s | 53.6s | 5.6x |
+| homer | 933.5s | 177.6s | 5.3x |
+| cheburashka | 1102.5s | 212.8s | 5.2x |
+
+- Chart count, seam length, and distortion metrics identical to the baseline run on every mesh. suzanne, beetle, cow still fail (non-manifold, expected).
+- Speedup grows with mesh size (2.3x at 6k tris, ~5x at 12-13.5k): allocator pressure scales with the solver's working set, so mimalloc gains more on bigger meshes.
+- The 12-13.5k meshes now beat the old WSL-side expectation, so the WSL path in the addon has no remaining reason to exist.
+
 ## optcuts mesh requirements
 
 optcuts requires a single connected manifold surface: one component, no non-manifold edges, no non-manifold vertices. Boundary is fine (woody and alligator are open). Validated 6/6 against real runs with a static OBJ check:
