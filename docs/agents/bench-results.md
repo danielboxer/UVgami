@@ -39,6 +39,17 @@
 - partuv mean uv_utilization is over 1 (spot 1.57 in one run), which should be impossible; metrics.py utilization may be miscomputed or charts overlap. Uninvestigated.
 - woody and alligator are open surfaces (1 chart, zero seams for both engines), useful as a sanity floor, useless for comparison.
 
+## optcuts Windows vs WSL (engine 1.1.2)
+
+2026-07-11, same machine as above. Both binaries from the engine-v1.1.2 release (Windows exe matches the bundled `engines/windows/uvgami.exe` by hash). Direct invocation with `-u 4.1 -s 100 -g`, models copied into each side's native filesystem, two runs each, no other load. `bench/run.py` can't drive WSL or a custom exe path, so these were timed by hand.
+
+| mesh | Windows | WSL |
+|---|---|---|
+| spot | 179.9s / 193.3s | 73.9s / 85.0s |
+| alligator | 3.5s / 3.5s | 1.5s / 1.7s |
+
+WSL is ~2.2-2.4x faster on identical source. This is the bar for the Windows perf work (mimalloc, AVX2, source-level wins) whose goal is removing the addon's WSL path. The gap bundles GCC-vs-MSVC codegen and allocator differences, so no single change is expected to close it alone. The WSL numbers stay valid as a target while the shipped Linux binary is unchanged.
+
 ## optcuts mesh requirements
 
 optcuts requires a single connected manifold surface: one component, no non-manifold edges, no non-manifold vertices. Boundary is fine (woody and alligator are open). Validated 6/6 against real runs with a static OBJ check:

@@ -50,23 +50,24 @@ class IglUtils {
                                  double upperBound, int opt = 0);
 
     static void addBlockToMatrix(Eigen::SparseMatrix<double> &mtr,
-                                 const Eigen::MatrixXd &block,
-                                 const Eigen::VectorXi &index, int dim);
-    static void addBlockToMatrix(const Eigen::MatrixXd &block,
-                                 const Eigen::VectorXi &index, int dim,
+                                 Eigen::Ref<const Eigen::MatrixXd> block,
+                                 Eigen::Ref<const Eigen::VectorXi> index,
+                                 int dim);
+    static void addBlockToMatrix(Eigen::Ref<const Eigen::MatrixXd> block,
+                                 Eigen::Ref<const Eigen::VectorXi> index, int dim,
                                  Eigen::VectorXd *V, Eigen::VectorXi *I = NULL,
                                  Eigen::VectorXi *J = NULL);
-    static void addDiagonalToMatrix(const Eigen::VectorXd &diagonal,
-                                    const Eigen::VectorXi &index, int dim,
-                                    Eigen::VectorXd *V,
+    static void addDiagonalToMatrix(Eigen::Ref<const Eigen::VectorXd> diagonal,
+                                    Eigen::Ref<const Eigen::VectorXi> index,
+                                    int dim, Eigen::VectorXd *V,
                                     Eigen::VectorXi *I = NULL,
                                     Eigen::VectorXi *J = NULL);
-    static void addBlockToMatrix(const Eigen::MatrixXd &block,
-                                 const Eigen::VectorXi &index, int dim,
+    static void addBlockToMatrix(Eigen::Ref<const Eigen::MatrixXd> block,
+                                 Eigen::Ref<const Eigen::VectorXi> index, int dim,
                                  Eigen::MatrixXd &mtr);
-    static void addDiagonalToMatrix(const Eigen::VectorXd &diagonal,
-                                    const Eigen::VectorXi &index, int dim,
-                                    Eigen::MatrixXd &mtr);
+    static void addDiagonalToMatrix(Eigen::Ref<const Eigen::VectorXd> diagonal,
+                                    Eigen::Ref<const Eigen::VectorXi> index,
+                                    int dim, Eigen::MatrixXd &mtr);
 
     // project a symmetric real matrix to the nearest SPD matrix
     template <typename Scalar, int size>
