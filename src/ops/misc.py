@@ -2,16 +2,12 @@
 # See __init__.py and LICENSE for more information
 
 import math
-import pathlib
-import shutil
-import subprocess
 
 import bpy
 
 from ..manager import manager
 from ..utils.geometry import calc_center
 from ..utils.mesh import check_exists, deselect_all, validate_obj
-from ..utils.paths import get_linux_path, get_preferences
 
 sym_planes = {}
 
@@ -101,31 +97,4 @@ class UVGAMI_OT_preview_symmetry(bpy.types.Operator):
         for obj in old_select:
             obj.select_set(True)
         context.view_layer.objects.active = old_active
-        return {"FINISHED"}
-
-
-class UVGAMI_OT_setup_wsl(bpy.types.Operator):
-    bl_idname = "uvgami.setup_wsl"
-    bl_label = "Setup WSL"
-    bl_description = (
-        "Setup WSL. This only needs to be done when using a new engine file."
-        " Press if you are using WSL for the first time or if the engine was updated"
-    )
-
-    def execute(self, context):
-        # wsl check
-        if shutil.which("wsl") is None:
-            self.report(
-                {"ERROR"},
-                ("WSL is not installed. Either install WSL or use UVgami for Windows"),
-            )
-            return {"CANCELLED"}
-
-        # copy uvgami to wsl
-        prefs = get_preferences()
-        path = get_linux_path(pathlib.Path(prefs.engine_path))
-        subprocess.run(["bash", "-c", f"cp {path} ~/"])
-        prefs.is_wsl_setup = True
-
-        self.report({"INFO"}, ("Successfully setup WSL"))
         return {"FINISHED"}

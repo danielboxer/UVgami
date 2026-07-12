@@ -36,7 +36,6 @@ from .src.ops.misc import (
     UVGAMI_OT_reset_settings,
     UVGAMI_OT_open_preferences,
     UVGAMI_OT_preview_symmetry,
-    UVGAMI_OT_setup_wsl,
 )
 from .src.ops.grid import (
     UVGAMI_OT_add_grid,
@@ -101,7 +100,6 @@ classes = (
     UVGAMI_OT_mark_seams_sharp,
     UVGAMI_OT_clear_logs,
     UVGAMI_OT_copy_logs,
-    UVGAMI_OT_setup_wsl,
     UVGAMI_OT_install_partuv,
     UVGAMI_OT_view_uvs,
     UVGAMI_PT_main,

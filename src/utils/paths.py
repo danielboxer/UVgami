@@ -60,10 +60,6 @@ def get_partuv_checkpoint_path():
     return get_extension_dir_path() / "model_objaverse.ckpt"
 
 
-def get_linux_path(path):
-    return f'"/mnt/c{str(pathlib.PurePosixPath(path))[3:]}"'
-
-
 def get_bundled_engine_path():
     """Return the path to the bundled engine binary, or None if not found."""
     engines_dir = get_dir_path() / "engines"

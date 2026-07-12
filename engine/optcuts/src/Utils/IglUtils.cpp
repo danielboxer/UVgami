@@ -365,8 +365,9 @@ void IglUtils::mapScalarToColor(const std::string &meshName,
 }
 
 void IglUtils::addBlockToMatrix(Eigen::SparseMatrix<double> &mtr,
-                                const Eigen::MatrixXd &block,
-                                const Eigen::VectorXi &index, int dim) {
+                                Eigen::Ref<const Eigen::MatrixXd> block,
+                                Eigen::Ref<const Eigen::VectorXi> index,
+                                int dim) {
     assert(block.rows() == block.cols());
     assert(index.size() * dim == block.rows());
     assert(mtr.rows() == mtr.cols());
@@ -396,10 +397,10 @@ void IglUtils::addBlockToMatrix(Eigen::SparseMatrix<double> &mtr,
     }
 }
 
-void IglUtils::addDiagonalToMatrix(const Eigen::VectorXd &diagonal,
-                                   const Eigen::VectorXi &index, int dim,
-                                   Eigen::VectorXd *V, Eigen::VectorXi *I,
-                                   Eigen::VectorXi *J) {
+void IglUtils::addDiagonalToMatrix(Eigen::Ref<const Eigen::VectorXd> diagonal,
+                                   Eigen::Ref<const Eigen::VectorXi> index,
+                                   int dim, Eigen::VectorXd *V,
+                                   Eigen::VectorXi *I, Eigen::VectorXi *J) {
     assert(index.size() * dim == diagonal.size());
 
     assert(V);
@@ -432,8 +433,8 @@ void IglUtils::addDiagonalToMatrix(const Eigen::VectorXd &diagonal,
     }
 }
 
-void IglUtils::addBlockToMatrix(const Eigen::MatrixXd &block,
-                                const Eigen::VectorXi &index, int dim,
+void IglUtils::addBlockToMatrix(Eigen::Ref<const Eigen::MatrixXd> block,
+                                Eigen::Ref<const Eigen::VectorXi> index, int dim,
                                 Eigen::VectorXd *V, Eigen::VectorXi *I,
                                 Eigen::VectorXi *J) {
     int num_free = 0;
@@ -491,8 +492,8 @@ void IglUtils::addBlockToMatrix(const Eigen::MatrixXd &block,
     assert(tripletInd == V->size());
 }
 
-void IglUtils::addBlockToMatrix(const Eigen::MatrixXd &block,
-                                const Eigen::VectorXi &index, int dim,
+void IglUtils::addBlockToMatrix(Eigen::Ref<const Eigen::MatrixXd> block,
+                                Eigen::Ref<const Eigen::VectorXi> index, int dim,
                                 Eigen::MatrixXd &mtr) {
     int num_free = 0;
     for (int indI = 0; indI < index.size(); indI++) {
@@ -528,9 +529,9 @@ void IglUtils::addBlockToMatrix(const Eigen::MatrixXd &block,
         }
     }
 }
-void IglUtils::addDiagonalToMatrix(const Eigen::VectorXd &diagonal,
-                                   const Eigen::VectorXi &index, int dim,
-                                   Eigen::MatrixXd &mtr) {
+void IglUtils::addDiagonalToMatrix(Eigen::Ref<const Eigen::VectorXd> diagonal,
+                                   Eigen::Ref<const Eigen::VectorXi> index,
+                                   int dim, Eigen::MatrixXd &mtr) {
     assert(index.size() * dim == diagonal.size());
     assert(mtr.rows() == mtr.cols());
     assert(mtr.rows() % dim == 0);

@@ -21,7 +21,7 @@ void SymDirichletEnergy::getEnergyValPerElem(const TriMesh &data,
     const double normalizer_div = data.surfaceArea;
 
     energyValPerElem.resize(data.F.rows());
-    for (int triI = 0; triI < data.F.rows(); triI++) {
+    tbb::parallel_for(0, (int)data.F.rows(), 1, [&](int triI) {
         const Eigen::Vector3i &triVInd = data.F.row(triI);
 
         const Eigen::RowVector2d &U1 = data.V.row(triVInd[0]);
@@ -41,7 +41,7 @@ void SymDirichletEnergy::getEnergyValPerElem(const TriMesh &data,
               U2m1.squaredNorm() * data.e1SqLen[triI]) /
                  4 / data.triAreaSq[triI] -
              U3m1.dot(U2m1) * data.e0dote1[triI] / 2 / data.triAreaSq[triI]);
-    }
+    });
 }
 
 void SymDirichletEnergy::getEnergyValByElemID(const TriMesh &data, int elemI,
@@ -236,7 +236,9 @@ void SymDirichletEnergy::computeGradient(const TriMesh &data,
 
     gradient.resize(data.V.rows() * 2);
     gradient.setZero();
-    for (int triI = 0; triI < data.F.rows(); triI++) {
+
+    std::vector<Eigen::Matrix<double, 6, 1>> triGrads(data.F.rows());
+    tbb::parallel_for(0, (int)data.F.rows(), 1, [&](int triI) {
         const Eigen::Vector3i &triVInd = data.F.row(triI);
 
         const Eigen::Vector2d &U1 = data.V.row(triVInd[0]);
@@ -260,6 +262,8 @@ void SymDirichletEnergy::computeGradient(const TriMesh &data,
         const double w =
             (uniformWeight ? 1.0 : (data.triArea[triI] / normalizer_div));
 
+        Eigen::Matrix<double, 6, 1> &triGrad = triGrads[triI];
+
         const Eigen::Vector2d edge_oppo1 = U3 - U2;
         const Eigen::Vector2d dLeft1 =
             areaRatio * Eigen::Vector2d(edge_oppo1[1], -edge_oppo1[0]);
@@ -267,8 +271,7 @@ void SymDirichletEnergy::computeGradient(const TriMesh &data,
             ((data.e0dote1[triI] - data.e0SqLen[triI]) * U3m1 +
              (data.e0dote1[triI] - data.e1SqLen[triI]) * U2m1) /
             2.0 / data.triAreaSq[triI];
-        gradient.block(triVInd[0] * 2, 0, 2, 1) +=
-            w * (dLeft1 * rightTerm + dRight1 * leftTerm);
+        triGrad.segment(0, 2) = w * (dLeft1 * rightTerm + dRight1 * leftTerm);
 
         const Eigen::Vector2d edge_oppo2 = U1 - U3;
         const Eigen::Vector2d dLeft2 =
@@ -276,8 +279,7 @@ void SymDirichletEnergy::computeGradient(const TriMesh &data,
         const Eigen::Vector2d dRight2 =
             (data.e1SqLen[triI] * U2m1 - data.e0dote1[triI] * U3m1) / 2.0 /
             data.triAreaSq[triI];
-        gradient.block(triVInd[1] * 2, 0, 2, 1) +=
-            w * (dLeft2 * rightTerm + dRight2 * leftTerm);
+        triGrad.segment(2, 2) = w * (dLeft2 * rightTerm + dRight2 * leftTerm);
 
         const Eigen::Vector2d edge_oppo3 = U2 - U1;
         const Eigen::Vector2d dLeft3 =
@@ -285,8 +287,15 @@ void SymDirichletEnergy::computeGradient(const TriMesh &data,
         const Eigen::Vector2d dRight3 =
             (data.e0SqLen[triI] * U3m1 - data.e0dote1[triI] * U2m1) / 2.0 /
             data.triAreaSq[triI];
-        gradient.block(triVInd[2] * 2, 0, 2, 1) +=
-            w * (dLeft3 * rightTerm + dRight3 * leftTerm);
+        triGrad.segment(4, 2) = w * (dLeft3 * rightTerm + dRight3 * leftTerm);
+    });
+
+    // serial scatter keeps fp accumulation order identical to the serial version
+    for (int triI = 0; triI < data.F.rows(); triI++) {
+        const Eigen::Vector3i &triVInd = data.F.row(triI);
+        gradient.block(triVInd[0] * 2, 0, 2, 1) += triGrads[triI].segment(0, 2);
+        gradient.block(triVInd[1] * 2, 0, 2, 1) += triGrads[triI].segment(2, 2);
+        gradient.block(triVInd[2] * 2, 0, 2, 1) += triGrads[triI].segment(4, 2);
     }
 
     for (const auto fixedVI : data.fixedVert) {
@@ -303,8 +312,12 @@ void SymDirichletEnergy::computeHessian(const TriMesh &data,
     Hessian.resize(data.V.rows() * 2, data.V.rows() * 2);
     Hessian.setZero();
 
+    std::vector<char> isFixedVert(data.V.rows(), 0);
+    for (const auto fixedVI : data.fixedVert)
+        isFixedVert[fixedVI] = 1;
+
     std::vector<Eigen::Matrix<double, 6, 6>> triHessians(data.F.rows());
-    std::vector<Eigen::VectorXi> vInds(data.F.rows());
+    std::vector<Eigen::Vector3i> vInds(data.F.rows());
     tbb::parallel_for(0, (int)data.F.rows(), 1, [&](int triI) {
         //        for(int triI = 0; triI < data.F.rows(); triI++) {
         const Eigen::Vector3i &triVInd = data.F.row(triI);
@@ -435,10 +448,10 @@ void SymDirichletEnergy::computeHessian(const TriMesh &data,
             IglUtils::makePD<double,6>(curHessian);
 #endif
 
-        Eigen::VectorXi &vInd = vInds[triI];
+        Eigen::Vector3i &vInd = vInds[triI];
         vInd = triVInd;
         for (int vI = 0; vI < 3; vI++) {
-            if (data.fixedVert.find(vInd[vI]) != data.fixedVert.end()) {
+            if (isFixedVert[vInd[vI]]) {
                 vInd[vI] = -1;
             }
         }
@@ -464,8 +477,12 @@ void SymDirichletEnergy::computeHessian(const TriMesh &data, Eigen::VectorXd *V,
 
     //        std::cout << "computing entry value..." << std::endl;
     //        clock_t start = clock();
+    std::vector<char> isFixedVert(data.V.rows(), 0);
+    for (const auto fixedVI : data.fixedVert)
+        isFixedVert[fixedVI] = 1;
+
     std::vector<Eigen::Matrix<double, 6, 6>> triHessians(data.F.rows());
-    std::vector<Eigen::VectorXi> vInds(data.F.rows());
+    std::vector<Eigen::Vector3i> vInds(data.F.rows());
     tbb::parallel_for(0, (int)data.F.rows(), 1, [&](int triI) {
         //        for(int triI = 0; triI < data.F.rows(); triI++) {
         const Eigen::Vector3i &triVInd = data.F.row(triI);
@@ -596,10 +613,10 @@ void SymDirichletEnergy::computeHessian(const TriMesh &data, Eigen::VectorXd *V,
             IglUtils::makePD<double,6>(curHessian);
 #endif
 
-        Eigen::VectorXi &vInd = vInds[triI];
+        Eigen::Vector3i &vInd = vInds[triI];
         vInd = triVInd;
         for (int vI = 0; vI < 3; vI++) {
-            if (data.fixedVert.find(vInd[vI]) != data.fixedVert.end()) {
+            if (isFixedVert[vInd[vI]]) {
                 vInd[vI] = -1;
             }
         }
@@ -626,60 +643,68 @@ void SymDirichletEnergy::initStepSize(const TriMesh &data,
                                       double &stepSize) const {
     assert(stepSize > 0.0);
 
-    for (int triI = 0; triI < data.F.rows(); triI++) {
-        const Eigen::Vector3i &triVInd = data.F.row(triI);
+    const double stepSizeInit = stepSize;
+    // min reduce is fp-order-independent
+    stepSize = tbb::parallel_reduce(
+        tbb::blocked_range<int>(0, (int)data.F.rows()), stepSizeInit,
+        [&](const tbb::blocked_range<int> &range, double localStep) -> double {
+            for (int triI = range.begin(); triI != range.end(); triI++) {
+                const Eigen::Vector3i &triVInd = data.F.row(triI);
 
-        const Eigen::Vector2d &U1 = data.V.row(triVInd[0]);
-        const Eigen::Vector2d &U2 = data.V.row(triVInd[1]);
-        const Eigen::Vector2d &U3 = data.V.row(triVInd[2]);
+                const Eigen::Vector2d &U1 = data.V.row(triVInd[0]);
+                const Eigen::Vector2d &U2 = data.V.row(triVInd[1]);
+                const Eigen::Vector2d &U3 = data.V.row(triVInd[2]);
 
-        const Eigen::Vector2d V1(searchDir[triVInd[0] * 2],
-                                 searchDir[triVInd[0] * 2 + 1]);
-        const Eigen::Vector2d V2(searchDir[triVInd[1] * 2],
-                                 searchDir[triVInd[1] * 2 + 1]);
-        const Eigen::Vector2d V3(searchDir[triVInd[2] * 2],
-                                 searchDir[triVInd[2] * 2 + 1]);
+                const Eigen::Vector2d V1(searchDir[triVInd[0] * 2],
+                                         searchDir[triVInd[0] * 2 + 1]);
+                const Eigen::Vector2d V2(searchDir[triVInd[1] * 2],
+                                         searchDir[triVInd[1] * 2 + 1]);
+                const Eigen::Vector2d V3(searchDir[triVInd[2] * 2],
+                                         searchDir[triVInd[2] * 2 + 1]);
 
-        const Eigen::Vector2d U2m1 = U2 - U1;
-        const Eigen::Vector2d U3m1 = U3 - U1;
-        const Eigen::Vector2d V2m1 = V2 - V1;
-        const Eigen::Vector2d V3m1 = V3 - V1;
+                const Eigen::Vector2d U2m1 = U2 - U1;
+                const Eigen::Vector2d U3m1 = U3 - U1;
+                const Eigen::Vector2d V2m1 = V2 - V1;
+                const Eigen::Vector2d V3m1 = V3 - V1;
 
-        const double a = V2m1[0] * V3m1[1] - V2m1[1] * V3m1[0];
-        const double b = U2m1[0] * V3m1[1] - U2m1[1] * V3m1[0] +
-                         V2m1[0] * U3m1[1] - V2m1[1] * U3m1[0];
-        const double c = U2m1[0] * U3m1[1] - U2m1[1] * U3m1[0];
-        assert(c > 0.0);
-        const double delta = b * b - 4.0 * a * c;
+                const double a = V2m1[0] * V3m1[1] - V2m1[1] * V3m1[0];
+                const double b = U2m1[0] * V3m1[1] - U2m1[1] * V3m1[0] +
+                                 V2m1[0] * U3m1[1] - V2m1[1] * U3m1[0];
+                const double c = U2m1[0] * U3m1[1] - U2m1[1] * U3m1[0];
+                assert(c > 0.0);
+                const double delta = b * b - 4.0 * a * c;
 
-        double bound = stepSize;
-        if (a > 0.0) {
-            if ((b < 0.0) && (delta >= 0.0)) {
-                bound = 2.0 * c / (-b + sqrt(delta));
-                // (same in math as (-b - sqrt(delta)) / 2.0 / a
-                //  but smaller numerical error when b < 0.0)
-                assert(bound > 0.0);
+                double bound = stepSizeInit;
+                if (a > 0.0) {
+                    if ((b < 0.0) && (delta >= 0.0)) {
+                        bound = 2.0 * c / (-b + sqrt(delta));
+                        // (same in math as (-b - sqrt(delta)) / 2.0 / a
+                        //  but smaller numerical error when b < 0.0)
+                        assert(bound > 0.0);
+                    }
+                } else if (a < 0.0) {
+                    assert(delta > 0.0);
+                    if (b < 0.0) {
+                        bound = 2.0 * c / (-b + sqrt(delta));
+                        // (same in math as (-b - sqrt(delta)) / 2.0 / a
+                        //  but smaller numerical error when b < 0.0)
+                    } else {
+                        bound = (-b - sqrt(delta)) / 2.0 / a;
+                    }
+                    assert(bound > 0.0);
+                } else {
+                    if (b < 0.0) {
+                        bound = -c / b;
+                        assert(bound > 0.0);
+                    }
+                }
+
+                if (bound < localStep) {
+                    localStep = bound;
+                }
             }
-        } else if (a < 0.0) {
-            assert(delta > 0.0);
-            if (b < 0.0) {
-                bound = 2.0 * c / (-b + sqrt(delta));
-                // (same in math as (-b - sqrt(delta)) / 2.0 / a
-                //  but smaller numerical error when b < 0.0)
-            } else {
-                bound = (-b - sqrt(delta)) / 2.0 / a;
-            }
-            assert(bound > 0.0);
-        } else {
-            if (b < 0.0) {
-                bound = -c / b;
-                assert(bound > 0.0);
-            }
-        }
-
-        if (bound < stepSize) {
-            stepSize = bound;
-        }
-    }
+            return localStep;
+        },
+        [](double a, double b) { return (std::min)(a, b); });
 }
 } // namespace uvgami

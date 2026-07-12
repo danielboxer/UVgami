@@ -32,6 +32,18 @@ if(NOT TARGET TBB::tbb)
   add_library(TBB::tbb ALIAS tbb_static)
 endif()
 
+# mimalloc (windows-only static malloc override; link the object so its
+# malloc/free take precedence over the crt)
+if(WIN32 AND UVGAMI_USE_MIMALLOC AND NOT TARGET mimalloc-obj)
+  download_mimalloc()
+  set(MI_BUILD_SHARED OFF CACHE BOOL " " FORCE)
+  set(MI_BUILD_STATIC OFF CACHE BOOL " " FORCE)
+  set(MI_BUILD_OBJECT ON CACHE BOOL " " FORCE)
+  set(MI_BUILD_TESTS OFF CACHE BOOL " " FORCE)
+  set(MI_OVERRIDE ON CACHE BOOL " " FORCE)
+  add_subdirectory(${UVGAMI_EXTERNAL}/mimalloc EXCLUDE_FROM_ALL)
+endif()
+
 # AMGCL
 #if(NOT TARGET amgcl::amgcl)
 #  download_amgcl()
