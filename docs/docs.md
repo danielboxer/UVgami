@@ -14,8 +14,9 @@ Blender 2.9+
 ## Table of Contents <!-- omit in toc -->
 
 - [Installation](#installation)
-  - [Option 1: Install Add-on and Engine Separately](#option-1-install-add-on-and-engine-separately)
-  - [Option 2: Install the Bundled Version](#option-2-install-the-bundled-version)
+  - [Option 1: Bundled Version](#option-1-bundled-version)
+  - [Option 2: Add-on and OptCuts Engine Separately](#option-2-add-on-and-optcuts-engine-separately)
+  - [Option 3: PartUV Engine](#option-3-partuv-engine)
 - [Instructions](#instructions)
   - [Unwrap a Mesh](#unwrap-a-mesh)
   - [Unwrap Buttons](#unwrap-buttons)
@@ -62,31 +63,40 @@ Blender 2.9+
   - [High Poly Meshes](#high-poly-meshes)
   - [Triangulation](#triangulation)
   - [Invalid Objects](#invalid-objects)
+- [Development](#development)
+  - [Developer CLI](#developer-cli)
+  - [PartUV](#partuv)
+    - [Build Setup (Windows)](#build-setup-windows)
+    - [Build Setup (Linux/WSL)](#build-setup-linuxwsl)
+    - [Advanced Options](#advanced-options)
+  - [Tests](#tests)
 
 ## Installation
 
 Download the add-on [here](https://github.com/DanielBoxer/UVgami/releases/latest)
 
-### Option 1: Install Add-on and Engine Separately
+### Option 1: Bundled Version
+
+- Download `UVgami-bundled-with-engines.zip` (don't extract it)
+- Drag and drop the zip file into Blender
+- The add-on auto detects the OptCuts engine since it's bundled. Preferences shows `Using bundled engine` under the `Engine Path` field
+
+### Option 2: Add-on and OptCuts Engine Separately
 
 1. Install Add-on
     - Download `UVgami.zip` (don't extract it)
     - Drag and drop `UVgami.zip` into Blender
 
 2. Setup Engine
-    - Download `uvgami-engine-X.X.X-operating-system.zip` (pick the one based on your operating system)
-    - Unzip the folder
-    - Move the unzipped folder to a place where you keep applications. This can be anywhere on your filesystem
+    - Download `optcuts-engine-X.X.X-operating-system.zip` for your operating system from the [OptCuts engine releases](https://github.com/DanielBoxer/UVgami/releases?q=optcuts%20engine)
+    - Unzip the folder and move it somewhere you keep applications, anywhere on your filesystem
     - In Blender, open UVgami preferences and select the engine path using the button on the right of the input field. The `uvgami` app inside the engine folder is what should be selected
 
 ![Engine Path](img/engine_path.jpg)
 
-### Option 2: Install the Bundled Version
+### Option 3: PartUV Engine
 
-- Download the bundle: `UVgami-bundled-with-engines.zip` (don't extract it)
-- Drag and drop the zip file into Blender
-- The add-on will auto detect the engine since it's bundled
-- You can tell that you're using the bundled version if it says `Using bundled engine` in the preferences under the `Engine Path` field
+PartUV needs CUDA and runs on Windows or Linux. Install the add-on first (Option 1 or 2), then in UVgami preferences click `Install PartUV Engine`. It downloads the engine and installs it into a managed Python venv.
 
 
 ## Instructions
