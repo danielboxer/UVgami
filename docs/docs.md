@@ -11,13 +11,6 @@ Supported Versions:
 
 Blender 2.9+
 
-> [!NOTE]
-> It's recommended and possible to use the Linux version on Windows since it's much faster.
-> 
-> [See how to use Linux version on Windows](#linux-faster-version-on-windows)
-
-
-
 ## Table of Contents <!-- omit in toc -->
 
 - [Installation](#installation)
@@ -65,8 +58,6 @@ Blender 2.9+
     - [Not Unwrapped Collection](#not-unwrapped-collection)
     - [Input Cleanup](#input-cleanup)
     - [Viewer Workspace](#viewer-workspace)
-  - [Linux (Faster) Version on Windows](#linux-faster-version-on-windows)
-    - [WSL Installation](#wsl-installation)
 - [Limitations](#limitations)
   - [High Poly Meshes](#high-poly-meshes)
   - [Triangulation](#triangulation)
@@ -384,38 +375,6 @@ The action to perform on the original input mesh.
 
 The name of the workspace that will be opened when viewing an unwrap. If this is empty, the UV editor will be opened instead.
 
-### Linux (Faster) Version on Windows
-
-- The Linux version can be used on Windows by installing WSL (Windows Subsystem for Linux)
-- This version is faster for high poly meshes
-- For example, a mesh with 35K tris:
-  - Windows: 40 minutes
-  - Linux: 3 minutes
-
-#### WSL Installation
-
-(applies to the optcuts engine only, partuv runs natively)
-
-[YouTube Tutorial for WSL Installation](https://youtu.be/FQ6ahcJOVz0?t=30) 0:30 - 2:12
-
-1. Open the Windows start menu
-2. Search for `Windows PowerShell`
-![Windows PowerShell](img/windows_powershell_search.jpg)
-3. Right click on `Windows PowerShell`
-4. Click `Run as administrator`
-![Run As Admin](img/run_as_admin.jpg)
-5. When prompted to make changes to your device, click Yes
-6. Type `wsl --install` in the Windows PowerShell terminal and press enter
-7. Once installation is complete, restart your computer. An Ubuntu window will appear to finish the installation
-8. Enter your new Linux username and password. This can be anything, it won't be needed again. Note: when typing in your password, no characters will appear in the terminal
-9. Open Blender and go to UVgami preferences
-10. Select the Linux engine instead of Windows in the `Engine Path` field (the Linux file doesn't end in .exe)
-11. Press `Unwrap` to complete the rest of the setup automatically. This will take a few seconds for the first unwrap with WSL
-
-**Important: Whenever you get a new version of the engine, you need to press the `Setup WSL` button. If you don't, the older version will be used when you use WSL**
-
-![Setup WSL](img/setup_wsl.jpg)
-
 ## Limitations
 
 ### High Poly Meshes
@@ -424,7 +383,6 @@ Unwrapping high/medium poly meshes is very slow
 
 Current ways to speed up the unwrap:
 
-- [Use the Linux version if on Windows](#linux-faster-version-on-windows)
 - Turn `Concurrent` mode on and increase the max cores
 - Turn `Symmetry` on if the mesh is symmetrical
 - Don't add too many seam restrictions

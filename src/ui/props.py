@@ -3,7 +3,6 @@
 
 import multiprocessing
 import pathlib
-import platform
 
 import bpy
 
@@ -332,8 +331,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
             " If this is empty, the UV editor will be opened instead"
         ),
     )
-    # non ui
-    is_wsl_setup: bpy.props.BoolProperty()
 
     def draw(self, context):
         layout = self.layout
@@ -348,15 +345,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         split.prop(self, "engine_path")
 
         engine_path = pathlib.Path(prefs.engine_path)
-        if (
-            str(engine_path) != "."
-            and engine_path.is_file()
-            and engine_path.stem == "uvgami"
-            and engine_path.suffix == ""
-            and platform.system() == "Windows"
-        ):
-            row.operator("uvgami.setup_wsl")
-
         if str(engine_path) == "." and get_bundled_engine_path() is not None:
             row = box.row()
             row.label(text="Using bundled engine", icon="CHECKMARK")
