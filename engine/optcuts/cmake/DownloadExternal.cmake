@@ -35,7 +35,8 @@ function(download_tbb)
     # GIT_REPOSITORY https://github.com/intel/tbb.git
     # GIT_TAG        2018_U5
     GIT_REPOSITORY https://github.com/wjakob/tbb.git
-    GIT_TAG        9e219e24fe223b299783200f217e9d27790a87b0
+    # final commit of the now-archived repo
+    GIT_TAG        e07dd0fd6b215325d3b9fd272c6cdb6d2c55e093
   )
 endfunction()
 

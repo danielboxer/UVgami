@@ -4,6 +4,10 @@ project(uvgami)
 option(UVGAMI_USE_MIMALLOC "Use mimalloc on Windows" ON)
 option(UVGAMI_ENABLE_AVX2 "Compile with the AVX2 floor on x86-64" ON)
 
+# some third-party deps (libigl's glad) declare pre-3.5 cmake minimums,
+# which cmake 4 rejects
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+
 # mimalloc's static override needs the whole tree on the static release crt.
 # cmp0091 must be new or wjakob/tbb (pre-3.15 min) ignores the runtime-library
 # setting and links /md, mixing crts and emitting lnk4098.
