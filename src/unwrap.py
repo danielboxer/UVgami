@@ -92,7 +92,7 @@ class Unwrap:
 
     def start_unwrap(self):
         props = bpy.context.scene.uvgami
-        args = manager.engine.build_args(manager.engine_path, self.path, props)
+        args = manager.engine.build_args(manager.engine_ctx, self.path, props)
 
         self.process = subprocess.Popen(
             args,
@@ -100,7 +100,7 @@ class Unwrap:
             stdin=subprocess.PIPE,
             stderr=subprocess.PIPE,
             universal_newlines=True,
-            env=manager.engine.build_env(manager.engine_path),
+            env=manager.engine.build_env(manager.engine_ctx),
         )
 
         # start reading thread
@@ -144,7 +144,7 @@ class Unwrap:
     def stop_process(self):
         """Hard stop: for a batch member this kills the whole batch process."""
         if self.process is not None and self.process.poll() is None:
-            manager.engine.stop(self.process, manager.engine_path)
+            manager.engine.stop(self.process, manager.engine_ctx)
 
     def release_engine(self):
         """This unwrap no longer needs the engine. A batch process is left

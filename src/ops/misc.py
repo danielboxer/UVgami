@@ -12,6 +12,16 @@ from ..utils.mesh import check_exists, deselect_all, validate_obj
 sym_planes = {}
 
 
+def reset_group(group):
+    # property_unset is a no-op on pointer props, recurse into nested groups
+    for prop in group.__annotations__.keys():
+        value = getattr(group, prop)
+        if isinstance(value, bpy.types.PropertyGroup):
+            reset_group(value)
+        else:
+            group.property_unset(prop)
+
+
 class UVGAMI_OT_expand(bpy.types.Operator):
     bl_idname = "uvgami.expand"
     bl_label = "Expand"
@@ -33,9 +43,7 @@ class UVGAMI_OT_reset_settings(bpy.types.Operator):
     bl_options = {"UNDO"}
 
     def execute(self, context):
-        props = context.scene.uvgami
-        for prop in props.__annotations__.keys():
-            props.property_unset(prop)
+        reset_group(context.scene.uvgami)
         return {"FINISHED"}
 
 

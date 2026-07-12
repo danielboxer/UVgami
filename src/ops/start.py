@@ -37,7 +37,7 @@ class ExportDrain:
     def __init__(
         self,
         engine,
-        engine_path,
+        engine_ctx,
         input_path,
         names,
         jobs,
@@ -48,7 +48,7 @@ class ExportDrain:
         temp_collection,
     ):
         self.engine = engine
-        self.engine_path = engine_path
+        self.engine_ctx = engine_ctx
         self.input_path = input_path
         self.names = names
         self.jobs = jobs
@@ -171,7 +171,7 @@ class ExportDrain:
         manager.add(unwrap)
         if not manager.is_active:
             manager.engine = self.engine
-            manager.engine_path = self.engine_path
+            manager.engine_ctx = self.engine_ctx
             manager.start()
             # start() only counted the queue; include still-pending pieces
             # in the bar total (the active case was counted in execute)
@@ -195,7 +195,7 @@ class ExportDrain:
         # (e.g. every piece had zero polygons)
         if not manager.is_active:
             manager.engine = self.engine
-            manager.engine_path = self.engine_path
+            manager.engine_ctx = self.engine_ctx
             manager.start()
         bpy.context.view_layer.objects.active = self.old_active
         bpy.ops.object.mode_set(mode=self.old_mode)
@@ -329,7 +329,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
     def reset_variables(self):
         self.engine = None
-        self.engine_path = None
+        self.engine_ctx = None
         self.input_path = None
 
         self.old_active = None
@@ -359,7 +359,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
             drain = ExportDrain(
                 engine=self.engine,
-                engine_path=self.engine_path,
+                engine_ctx=self.engine_ctx,
                 input_path=self.input_path,
                 names=self.names,
                 jobs=self.jobs,
@@ -438,11 +438,11 @@ class UVGAMI_OT_start(bpy.types.Operator):
         if self._run_autosave_check(prefs) is not None:
             return {"CANCELLED"}
 
-        engine_path, error = self.engine.validate(prefs)
+        engine_ctx, error = self.engine.validate(prefs)
         if error is not None:
             self.report({"ERROR"}, error)
             return {"CANCELLED"}
-        self.engine_path = engine_path
+        self.engine_ctx = engine_ctx
 
         return None
 

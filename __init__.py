@@ -62,6 +62,8 @@ from .src.ui.panels import (
     UVGAMI_PT_info,
 )
 from .src.ui.props import (
+    UVGAMI_PG_optcuts,
+    UVGAMI_PG_partuv,
     UVGAMI_PG_properties,
     UVGAMI_AP_preferences,
 )
@@ -111,6 +113,9 @@ classes = (
     UVGAMI_PT_uv,
     UVGAMI_PT_info,
     UVGAMI_PT_misc,
+    # engine groups must register before the main group that points to them
+    UVGAMI_PG_optcuts,
+    UVGAMI_PG_partuv,
     UVGAMI_PG_properties,
     UVGAMI_AP_preferences,
 )

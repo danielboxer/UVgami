@@ -44,21 +44,7 @@ class UVGAMI_PT_main(bpy.types.Panel):
         row.prop(props, "engine", text="")
 
         engine = get_engine(props.engine)
-
-        if engine.supports_quality:
-            row = box.row()
-            row.label(icon="SOLO_OFF", text="Quality")
-            row.prop(props, "quality", text="")
-
-        if engine.uses_segmentation:
-            row = box.row()
-            row.label(icon="MOD_EXPLODE", text="Segmentation")
-            row.prop(props, "partuv_segmentation", text="")
-
-        if engine.uses_threshold:
-            row = box.row()
-            row.label(icon="MOD_LENGTH", text="Threshold")
-            row.prop(props, "partuv_threshold")
+        engine.draw_settings(box, props)
 
         if engine.supports_import_uvs:
             split = box.split(factor=0.7)

@@ -2,18 +2,11 @@
 # See __init__.py and LICENSE for more information
 
 import multiprocessing
-import pathlib
 
 import bpy
 
-from ..engines import (
-    find_partuv_dev_repo,
-    get_engine,
-    is_partuv_ai_installed,
-    is_partuv_installed,
-)
-from ..ops.install import install_state
-from ..utils.paths import get_addon_id, get_bundled_engine_path, get_preferences
+from ..engines import ENGINES, get_engine
+from ..utils.paths import get_addon_id
 
 
 def update_engine(self, context):
@@ -21,22 +14,24 @@ def update_engine(self, context):
     self.pack_after_unwrap = get_engine(self.engine).pack_by_default
 
 
-class UVGAMI_PG_properties(bpy.types.PropertyGroup):
-    engine: bpy.props.EnumProperty(
-        name="Engine",
-        description="The unwrapping engine to use",
-        items=(
-            ("UVGAMI", "Optcuts", "The default Optcuts unwrapping engine"),
-            (
-                "PARTUV",
-                "PartUV",
-                "Part-based unwrapping engine, requires an NVIDIA GPU",
-            ),
+class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
+    quality: bpy.props.EnumProperty(
+        name="Unwrap Quality",
+        description=(
+            "A higher quality unwrap will have less stretching, "
+            "but it will take longer to finish"
         ),
-        default="UVGAMI",
-        update=update_engine,
+        items=(
+            ("HIGH", "High", ""),
+            ("MEDIUM", "Medium", ""),
+            ("LOW", "Low", ""),
+        ),
+        default="MEDIUM",
     )
-    partuv_segmentation: bpy.props.EnumProperty(
+
+
+class UVGAMI_PG_partuv(bpy.types.PropertyGroup):
+    segmentation: bpy.props.EnumProperty(
         name="Segmentation",
         description="How PartUV splits the mesh into parts",
         items=(
@@ -53,26 +48,25 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         ),
         default="AI",
     )
-    partuv_threshold: bpy.props.FloatProperty(
+    threshold: bpy.props.FloatProperty(
         name="",
         description="Distortion threshold. Lower values cut the mesh into more UV islands",
         default=1.25,
         min=1.0,
         max=10.0,
     )
-    quality: bpy.props.EnumProperty(
-        name="Unwrap Quality",
-        description=(
-            "A higher quality unwrap will have less stretching, "
-            "but it will take longer to finish"
-        ),
-        items=(
-            ("HIGH", "High", ""),
-            ("MEDIUM", "Medium", ""),
-            ("LOW", "Low", ""),
-        ),
-        default="MEDIUM",
+
+
+class UVGAMI_PG_properties(bpy.types.PropertyGroup):
+    engine: bpy.props.EnumProperty(
+        name="Engine",
+        description="The unwrapping engine to use",
+        items=tuple((e.id, e.label, e.description) for e in ENGINES.values()),
+        default="OPTCUTS",
+        update=update_engine,
     )
+    optcuts: bpy.props.PointerProperty(type=UVGAMI_PG_optcuts)
+    partuv: bpy.props.PointerProperty(type=UVGAMI_PG_partuv)
     import_uvs: bpy.props.BoolProperty(
         name="", description="Use the UV map on the mesh as input"
     )
@@ -334,57 +328,9 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
 
     def draw(self, context):
         layout = self.layout
-        prefs = get_preferences()
 
-        box = layout.box()
-        row = box.row()
-        row.scale_y = 1.5
-        split = row.split(factor=0.2)
-        split.scale_x = 1.5
-        split.label(text="Engine Path")
-        split.prop(self, "engine_path")
-
-        engine_path = pathlib.Path(prefs.engine_path)
-        if str(engine_path) == "." and get_bundled_engine_path() is not None:
-            row = box.row()
-            row.label(text="Using bundled engine", icon="CHECKMARK")
-
-        box = layout.box()
-        if find_partuv_dev_repo() is not None:
-            box.row().label(
-                text="PartUV: dev mode (running from repo)", icon="CHECKMARK"
-            )
-        else:
-            row = box.row()
-            if is_partuv_ai_installed():
-                row.label(text="PartUV installed (AI ready)", icon="CHECKMARK")
-            elif is_partuv_installed():
-                row.label(text="PartUV installed (Geometric)", icon="CHECKMARK")
-            else:
-                row.label(text="PartUV not installed")
-
-            row = box.row()
-            row.scale_y = 1.5
-            geometric = row.operator(
-                "uvgami.install_partuv", text="Geometric", icon="IMPORT"
-            )
-            geometric.tier = "GEOMETRIC"
-            ai = row.operator("uvgami.install_partuv", text="AI (~5 GB)", icon="IMPORT")
-            ai.tier = "AI"
-        if install_state["running"]:
-            row = box.row()
-            phase = install_state["phase"] or "Installing PartUV"
-            total = install_state["bytes_total"]
-            if total:
-                factor = install_state["bytes_done"] / total
-                row.progress(
-                    factor=factor, type="BAR", text=f"{phase}  {factor * 100:.0f}%"
-                )
-            else:
-                row.label(text=phase, icon="SORTTIME")
-        elif install_state["error"] is not None:
-            row = box.row()
-            row.label(text=install_state["error"], icon="ERROR")
+        for engine in ENGINES.values():
+            engine.draw_prefs(layout.box(), self)
 
         box = layout.box()
 
@@ -422,7 +368,7 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         row.label(icon="MOD_WIREFRAME")
         row.prop(self, "cleanup")
 
-        if prefs.cleanup == "DELETE":
+        if self.cleanup == "DELETE":
             row = box.row()
             row.label(
                 text=(
