@@ -26,7 +26,7 @@ on:
 env:
   ADDON_NAME: "UVgami"
   INCLUDED_FILES: "src LICENSE __init__.py blender_manifest.toml"
-  ENGINE_PREFIX: uvgami-engine
+  ENGINE_PREFIX: optcuts-engine
   BUNDLED_NAME: "UVgami-bundled-with-engines"
 
 jobs:
@@ -78,7 +78,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ENGINE_VERSION=$(cat engine/optcuts/VERSION | tr -d '[:space:]')
-          gh release download "engine-v$ENGINE_VERSION" -p "${ENGINE_PREFIX}-*.zip"
+          gh release download "optcuts-v$ENGINE_VERSION" -p "${ENGINE_PREFIX}-*.zip"
 
       # 2. package add-on
       - name: Move to nested folder
@@ -120,11 +120,3 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ env.TAG }}
         run: gh release upload "$TAG" "${BUNDLED_NAME}.zip"
-
-      # 6. mirror the engine zips onto the addon release so the docs' latest
-      # release link keeps working
-      - name: Upload engine
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ env.TAG }}
-        run: gh release upload "$TAG" ${ENGINE_PREFIX}-*.zip
