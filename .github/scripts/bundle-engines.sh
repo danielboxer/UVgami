@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Extract engine binaries from engine zip files and bundle them into the addon.
 # Usage: bundle-engines.sh <addon_dir> <engine_zip_prefix>
-# Example: bundle-engines.sh UVgami uvgami-engine
+# Example: bundle-engines.sh UVgami optcuts-engine
 
 set -euo pipefail
 
@@ -17,7 +17,7 @@ fi
 mkdir -p "${ADDON_DIR}/engines"
 
 for zip_file in "${engine_zips[@]}"; do
-  # extract platform from filename (e.g., uvgami-engine-1.1.2-windows.zip -> windows)
+  # extract platform from filename (e.g., optcuts-engine-1.1.2-windows.zip -> windows)
   platform=$(echo "$zip_file" | sed "s/${ENGINE_ZIP_PREFIX}-[0-9.]*-//" | sed 's/\.zip//')
 
   tmp_dir=$(mktemp -d)

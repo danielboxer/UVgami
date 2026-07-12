@@ -13,7 +13,7 @@ permissions:
 
 env:
   BUILD_TYPE: Release
-  PACKAGE_PREFIX: uvgami-engine
+  PACKAGE_PREFIX: optcuts-engine
   ADDON_NAME: "UVgami"
   BUNDLED_NAME: "UVgami-bundled-with-engines"
 
@@ -102,7 +102,7 @@ jobs:
       - name: Publish engine release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: engine-v${{ steps.engine_version.outputs.version }}
+          TAG: optcuts-v${{ steps.engine_version.outputs.version }}
         run: |
           gh release view "$TAG" >/dev/null 2>&1 \
             || gh release create "$TAG" --latest=false --title "$TAG" --notes "OptCuts engine binaries"
@@ -143,11 +143,9 @@ jobs:
           bash .github/scripts/bundle-engines.sh $ADDON_NAME $PACKAGE_PREFIX
           zip -r ${BUNDLED_NAME}.zip $ADDON_NAME
 
-      # refresh the bundled zip and the mirrored engine zips on the addon release
-      - name: Upload bundled addon and engine mirror
+      # refresh the bundled zip on the addon release
+      - name: Upload bundled addon
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.addon_tag.outputs.tag }}
-        run: |
-          gh release upload "$TAG" "${BUNDLED_NAME}.zip" --clobber
-          gh release upload "$TAG" ${PACKAGE_PREFIX}-*.zip --clobber
+        run: gh release upload "$TAG" "${BUNDLED_NAME}.zip" --clobber

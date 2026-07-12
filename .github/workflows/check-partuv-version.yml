@@ -1,0 +1,32 @@
+name: Check partuv version sync
+
+# install.py ships to blender without engine/pyproject.toml, so it carries its
+# own copy of the version. this fails the build if the two ever disagree.
+on:
+  pull_request:
+    paths:
+      - engine/partuv/pyproject.toml
+      - src/ops/install.py
+  push:
+    branches:
+      - master
+    paths:
+      - engine/partuv/pyproject.toml
+      - src/ops/install.py
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Compare partuv versions
+        shell: bash
+        run: |
+          pyproject=$(grep -m1 '^version' engine/partuv/pyproject.toml | sed -E 's/version *= *"(.*)"/\1/')
+          install=$(grep -m1 '^PARTUV_VERSION' src/ops/install.py | sed -E 's/PARTUV_VERSION *= *"(.*)"/\1/')
+          echo "pyproject.toml: $pyproject"
+          echo "install.py:     $install"
+          if [ "$pyproject" != "$install" ]; then
+            echo "::error::PARTUV_VERSION ($install) != pyproject version ($pyproject). Update src/ops/install.py to match."
+            exit 1
+          fi
