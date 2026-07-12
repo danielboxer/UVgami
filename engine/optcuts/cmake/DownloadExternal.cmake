@@ -39,6 +39,14 @@ function(download_tbb)
   )
 endfunction()
 
+# mimalloc
+function(download_mimalloc)
+  custom_download_project(mimalloc
+    GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
+    GIT_TAG        v3.3.2
+  )
+endfunction()
+
 # AMGCL
 #function(download_amgcl)
 #    custom_download_project(amgcl

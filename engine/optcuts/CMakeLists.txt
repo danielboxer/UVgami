@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.15)
 project(uvgami)
 
+option(UVGAMI_USE_MIMALLOC "Use mimalloc on Windows" ON)
+option(UVGAMI_ENABLE_AVX2 "Compile with the AVX2 floor on x86-64" ON)
+
+# mimalloc's static override needs the whole tree on the static release crt.
+# cmp0091 must be new or wjakob/tbb (pre-3.15 min) ignores the runtime-library
+# setting and links /md, mixing crts and emitting lnk4098.
+if(MSVC)
+  set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -29,6 +40,31 @@ set(PACKAGE_VERSION
 set(UVGAMI_EXTERNAL "${CMAKE_CURRENT_SOURCE_DIR}/ext")
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 add_compile_definitions(_USE_MATH_DEFINES)
+
+# avx2 floor: x86-64 only. resolve the effective target arch, honoring mac
+# cross-builds via CMAKE_OSX_ARCHITECTURES so arm64 gets no x86 flags.
+# must be global (before deps): mixing avx2 and non-avx2 tus changes
+# EIGEN_MAX_ALIGN_BYTES per tu, and the linker folds eigen's inline
+# malloc/free instantiations into mismatched pairs (heap corruption).
+set(UVGAMI_TARGET_ARCH "${CMAKE_SYSTEM_PROCESSOR}")
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+  set(UVGAMI_TARGET_ARCH "${CMAKE_OSX_ARCHITECTURES}")
+endif()
+string(TOLOWER "${UVGAMI_TARGET_ARCH}" UVGAMI_TARGET_ARCH)
+if(UVGAMI_TARGET_ARCH MATCHES "arm|aarch64")
+  set(UVGAMI_IS_X86_64 FALSE)
+elseif(UVGAMI_TARGET_ARCH MATCHES "x86_64|amd64|x64|em64t")
+  set(UVGAMI_IS_X86_64 TRUE)
+else()
+  set(UVGAMI_IS_X86_64 FALSE)
+endif()
+if(UVGAMI_IS_X86_64 AND UVGAMI_ENABLE_AVX2)
+  if(MSVC)
+    add_compile_options(/arch:AVX2)
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    add_compile_options(-mavx2 -mfma)
+  endif()
+endif()
 
 include(GNUInstallDirs)
 set(UVGAMI_INSTALL_SUBDIR "uvgami-${UVGAMI_VERSION_MAJOR}.${UVGAMI_VERSION_MINOR}")
@@ -82,6 +118,11 @@ endif()
 add_executable(${PROJECT_NAME} ${SRCFILES})
 
 target_link_libraries(${PROJECT_NAME} PRIVATE igl::glfw  igl::png  igl_restricted::triangle  TBB::tbb ${UVGAMI_COMPILE_OPTIONS})
+
+# link the mimalloc object file so its malloc/free override the crt (windows only)
+if(WIN32 AND UVGAMI_USE_MIMALLOC AND TARGET mimalloc-obj)
+  target_link_libraries(${PROJECT_NAME} PRIVATE mimalloc-obj)
+endif()
 
 install(TARGETS ${PROJECT_NAME}
     EXPORT UvgamiTargets

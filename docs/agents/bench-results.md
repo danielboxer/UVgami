@@ -39,6 +39,52 @@
 - partuv mean uv_utilization is over 1 (spot 1.57 in one run), which should be impossible; metrics.py utilization may be miscomputed or charts overlap. Uninvestigated.
 - woody and alligator are open surfaces (1 chart, zero seams for both engines), useful as a sanity floor, useless for comparison.
 
+## optcuts Windows vs WSL (engine 1.1.2)
+
+2026-07-11, same machine as above. Both binaries from the engine-v1.1.2 release (Windows exe matches the bundled `engines/windows/uvgami.exe` by hash). Direct invocation with `-u 4.1 -s 100 -g`, models copied into each side's native filesystem, two runs each, no other load. `bench/run.py` can't drive WSL or a custom exe path, so these were timed by hand.
+
+| mesh | Windows | WSL |
+|---|---|---|
+| spot | 179.9s / 193.3s | 73.9s / 85.0s |
+| alligator | 3.5s / 3.5s | 1.5s / 1.7s |
+
+WSL is ~2.2-2.4x faster on identical source. This is the bar for the Windows perf work (mimalloc, AVX2, source-level wins) whose goal is removing the addon's WSL path. The gap bundles GCC-vs-MSVC codegen and allocator differences, so no single change is expected to close it alone. The WSL numbers stay valid as a target while the shipped Linux binary is unchanged.
+
+## optcuts perf branch ladder (spot)
+
+2026-07-12, same machine and invocation as the Windows-vs-WSL table, two runs per config, Release/Ninja/MSVC, static CRT in all configs. Configs toggle `UVGAMI_ENABLE_AVX2` and `UVGAMI_USE_MIMALLOC`.
+
+| config | run 1 | run 2 |
+|---|---|---|
+| baseline 1.1.2 | 179.9s | 193.3s |
+| source changes only | 196.9s | 178.7s |
+| source + AVX2 | 188.4s | 186.6s |
+| source + mimalloc | 85.6s | 85.3s |
+| source + AVX2 + mimalloc | 78.0s | 68.1s |
+
+- mimalloc is the win on spot (~2.2x). AVX2 alone does nothing, but adds ~15% once mimalloc removes the allocator bottleneck. Source changes are spot-neutral (they help alligator: 3.32s vs 4.52s source-only, 1.50s full config).
+- Run-to-run noise is ~10% (see source-only), so single-run deltas below that are meaningless.
+- Full config beats the WSL target (73.9-85.0s) and closes the 2.3x gap.
+- Correctness: full-config spot metrics (charts, seam, area/angle distortion, utilization) identical to baseline to 4 decimals; two runs byte-identical, so the parallel loops stay deterministic.
+- AVX2 must be applied to every TU. Per-target `/arch:AVX2` changed `EIGEN_MAX_ALIGN_BYTES` in only some TUs and the linker folded Eigen's inline aligned malloc/free into mismatched pairs: allocation with the 32-byte offset-pointer variant, free with plain `free` (heap corruption, caught by ASan in `igl::unique_rows`). Global `add_compile_options` before the deps fixes it.
+
+## optcuts perf branch full run
+
+2026-07-12, `bench/run.py --engine optcuts --optcuts-path build-perf/uvgami.exe` (commit db3e3a8: parallel loops, global AVX2, mimalloc, static CRT), same machine as the baseline table. Big meshes ran solo with a small warmup mesh globbed in.
+
+| mesh | baseline | new | speedup |
+|---|---|---|---|
+| woody | 0.4s | 0.3s | 1.3x |
+| alligator | 3.4s | 1.5s | 2.3x |
+| spot | 153.1s | 68.0s | 2.3x |
+| fandisk | 298.7s | 53.6s | 5.6x |
+| homer | 933.5s | 177.6s | 5.3x |
+| cheburashka | 1102.5s | 212.8s | 5.2x |
+
+- Chart count, seam length, and distortion metrics identical to the baseline run on every mesh. suzanne, beetle, cow still fail (non-manifold, expected).
+- Speedup grows with mesh size (2.3x at 6k tris, ~5x at 12-13.5k): allocator pressure scales with the solver's working set, so mimalloc gains more on bigger meshes.
+- The 12-13.5k meshes now beat the old WSL-side expectation, so the WSL path in the addon has no remaining reason to exist.
+
 ## optcuts mesh requirements
 
 optcuts requires a single connected manifold surface: one component, no non-manifold edges, no non-manifold vertices. Boundary is fine (woody and alligator are open). Validated 6/6 against real runs with a static OBJ check:
