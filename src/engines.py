@@ -12,7 +12,6 @@ from .utils.paths import (
     get_bundled_engine_path,
     get_dir_path,
     get_extension_dir_path,
-    get_linux_path,
     get_partuv_checkpoint_path,
     get_partuv_venv_path,
     get_partuv_venv_python,
@@ -112,42 +111,13 @@ class UvgamiEngine(Engine):
                 return None, "Engine path is incorrect"
             path = raw
 
-        wsl_error = self._setup_wsl(path, prefs)
-        if wsl_error is not None:
-            return None, wsl_error
         return path, None
-
-    def _setup_wsl(self, path, prefs):
-        if platform.system() != "Windows" or path.suffix != "" or prefs.is_wsl_setup:
-            return None
-
-        if shutil.which("wsl") is None:
-            return "WSL is not installed. Either install WSL or use UVgami for Windows"
-
-        r = subprocess.run(["bash", "-c", "test -e ~/uvgami"]).returncode
-        if r == 1:
-            # copy uvgami to wsl
-            subprocess.run(["bash", "-c", f"cp {get_linux_path(path)} ~/"])
-            prefs.is_wsl_setup = True
-        elif r == 0:
-            prefs.is_wsl_setup = True
-        else:
-            return "Unknown error configuring engine in WSL"
-        return None
 
     def build_args(self, engine_path, input_path, props):
         u = {"HIGH": "4.05", "MEDIUM": "4.1"}.get(props.quality, "4.2")
         s = {5: "200", 4: "150", 3: "100", 2: "50", 1: "25"}.get(props.weight_value, "")
         shared_args = f"-u {u} -s {s}"
 
-        if platform.system() == "Windows" and engine_path.suffix == "":
-            input_arg = get_linux_path(input_path)
-            output_arg = get_linux_path(get_extension_dir_path() / "output")
-            return [
-                "bash",
-                "-c",
-                f"~/uvgami -i {input_arg} -o {output_arg}/ {shared_args}",
-            ]
         return [str(engine_path), "-i", str(input_path)] + shared_args.split()
 
     def describe_failure(self, code):
@@ -164,14 +134,6 @@ class UvgamiEngine(Engine):
 
     def request_snapshot(self, process):
         print_stdin(process, "snapshot")
-
-    def stop(self, process, engine_path):
-        if platform.system() == "Windows" and engine_path.suffix == "":
-            # wsl
-            print_stdin(process, "cancel")
-        else:
-            # windows
-            process.kill()
 
 
 def find_partuv_dev_repo():
