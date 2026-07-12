@@ -50,6 +50,24 @@
 
 WSL is ~2.2-2.4x faster on identical source. This is the bar for the Windows perf work (mimalloc, AVX2, source-level wins) whose goal is removing the addon's WSL path. The gap bundles GCC-vs-MSVC codegen and allocator differences, so no single change is expected to close it alone. The WSL numbers stay valid as a target while the shipped Linux binary is unchanged.
 
+## optcuts perf branch ladder (spot)
+
+2026-07-12, same machine and invocation as the Windows-vs-WSL table, two runs per config, Release/Ninja/MSVC, static CRT in all configs. Configs toggle `UVGAMI_ENABLE_AVX2` and `UVGAMI_USE_MIMALLOC`.
+
+| config | run 1 | run 2 |
+|---|---|---|
+| baseline 1.1.2 | 179.9s | 193.3s |
+| source changes only | 196.9s | 178.7s |
+| source + AVX2 | 188.4s | 186.6s |
+| source + mimalloc | 85.6s | 85.3s |
+| source + AVX2 + mimalloc | 78.0s | 68.1s |
+
+- mimalloc is the win on spot (~2.2x). AVX2 alone does nothing, but adds ~15% once mimalloc removes the allocator bottleneck. Source changes are spot-neutral (they help alligator: 3.32s vs 4.52s source-only, 1.50s full config).
+- Run-to-run noise is ~10% (see source-only), so single-run deltas below that are meaningless.
+- Full config beats the WSL target (73.9-85.0s) and closes the 2.3x gap.
+- Correctness: full-config spot metrics (charts, seam, area/angle distortion, utilization) identical to baseline to 4 decimals; two runs byte-identical, so the parallel loops stay deterministic.
+- AVX2 must be applied to every TU. Per-target `/arch:AVX2` changed `EIGEN_MAX_ALIGN_BYTES` in only some TUs and the linker folded Eigen's inline aligned malloc/free into mismatched pairs: allocation with the 32-byte offset-pointer variant, free with plain `free` (heap corruption, caught by ASan in `igl::unique_rows`). Global `add_compile_options` before the deps fixes it.
+
 ## optcuts mesh requirements
 
 optcuts requires a single connected manifold surface: one component, no non-manifold edges, no non-manifold vertices. Boundary is fine (woody and alligator are open). Validated 6/6 against real runs with a static OBJ check:

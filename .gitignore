@@ -19,3 +19,4 @@ bench/out/
 bench/results.csv
 
 build-perf/
+build-asan/
