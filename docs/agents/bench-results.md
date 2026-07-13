@@ -112,3 +112,23 @@ optcuts requires a single connected manifold surface: one component, no non-mani
 | cow | 1 | 0 | 0 | 1 | fail |
 
 cow is the subtle one: edge-manifold and single-component, but one non-manifold vertex (a bowtie pinch where two fans share a point but no edge). An edge-only manifold check misses it. The common-3d-test-models repo has no other manifold meshes under 10k tris; homer, fandisk, and cheburashka (12-13.5k) are clean manifolds and now inside the optcuts cap.
+
+## PAMO on/off (partuv)
+
+2026-07-13, RTX 3060 Laptop GPU, native core rebuilt today. geometric segmentation both arms (the tables above use ai), so times here are not comparable to those runs, only pamo-on vs pamo-off. pamo-on is the default packaged config; pamo-off is a temp copy of `engine/partuv/config/config.yaml` with the `pamo: true` line flipped to false (same edit as `_config_without_pamo`). Confirmed cuda was live in the pamo-on arm, so pamo actually ran on the GPU rather than the silent cpu fallback. seconds is wall clock of the full invocation. Command per run:
+
+`uv run --no-sync python -m partuv <mesh> -o <out.obj> --overwrite --segmentation geometric [--config <pamo-off.yaml>]`
+
+| mesh | tris | pamo | seconds | charts | seam_length | area_dist | angle_dist |
+|---|---|---|---|---|---|---|---|
+| beast | 64,618 | on | 97.8 | 177 | 31.027 | 1.101 | 1.010 |
+| beast | 64,618 | off | 99.2 | 181 | 33.353 | 1.070 | 1.005 |
+| armadillo | 99,976 | on | 136.2 | 28 | 18.516 | 1.226 | 1.036 |
+| armadillo | 99,976 | off | 206.1 | 27 | 20.267 | 1.123 | 1.012 |
+| ogre | 124,008 | on | 380.1 | 166 | 29.216 | 1.099 | 1.009 |
+| ogre | 124,008 | off | 384.3 | 163 | 28.556 | 1.091 | 1.008 |
+
+- PAMO only speeds up meshes that have large charts. armadillo (28 charts, some over the 1000-face threshold) is the only mesh it helps: 136s vs 206s, 1.5x. beast and ogre are already split into many small sub-threshold charts by geometric segmentation, so PAMO barely triggers and the delta is noise (97.8 vs 99.2, 380.1 vs 384.3).
+- Where it triggers, PAMO costs quality: armadillo area distortion 1.226 vs 1.123, angle 1.036 vs 1.012. It raises area distortion on every mesh (unwrap-simplified-then-restore is less accurate than a direct solve), but only armadillo shows a material gap. Chart count and seam are essentially unchanged, so PAMO changes a chart's UVs, not the segmentation.
+- Proxy question: PAMO does not deliver the speedup a proxy mode would. Its win is bounded by the per-chart ABF solve on above-threshold charts (1.5x at best here, nothing on many-small-chart meshes), while a genuine low-poly proxy would cut preprocessing, segmentation, and every chart solve. So a future proxy mode should project an external proxy atlas rather than extend PAMO; extending PAMO would only help the large-chart case and inherits its ~10% area-distortion cost.
+- No crashes or timeouts across the six runs. metrics.py parses the new split `f v/vt` output (v = source verts, vt per chart corner) correctly with no change, since parse_obj already resolves position and uv indices independently.
