@@ -17,7 +17,7 @@
 ### Option 2: Download the Optcuts engine separately
 
 1. Get the add-on: `UVgami.zip`
-2. Get the engine for your operating system (`optcuts-engine-X.X.X-operating-system.zip`) from the [OptCuts engine releases](https://github.com/DanielBoxer/UVgami/releases?q=optcuts%20engine)
+2. Get the engine for your operating system (`optcuts-engine-X.X.X-operating-system.zip`) from the [OptCuts engine releases](https://github.com/danielboxer/UVgami/releases?q=optcuts-v1)
 3. Set the engine path in the add-on preferences after installing
 
 ### Option 3: PartUV engine
