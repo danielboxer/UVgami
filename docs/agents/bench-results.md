@@ -113,6 +113,22 @@ optcuts requires a single connected manifold surface: one component, no non-mani
 
 cow is the subtle one: edge-manifold and single-component, but one non-manifold vertex (a bowtie pinch where two fans share a point but no edge). An edge-only manifold check misses it. The common-3d-test-models repo has no other manifold meshes under 10k tris; homer, fandisk, and cheburashka (12-13.5k) are clean manifolds and now inside the optcuts cap.
 
+## optcuts sparse solver share (engine 1.2.2)
+
+2026-07-13, same machine, direct invocation `-u 4.1 -s 100 -g`, master build in `build-perf` (mimalloc + AVX2). Cumulative timers around `analyze_pattern`/`factorize`/`solve` in EigenLibSolver, printed to stderr at exit; instrumentation not committed (patch kept in session scratchpad as `solver-timing.patch`). One run per mesh, counts in parentheses.
+
+| mesh | tris | wall | analyze | factorize | solve | solver share |
+|---|---|---|---|---|---|---|
+| alligator | 5,981 | 1.6s | 0.15s (17) | 0.17s (16) | 0.01s | 20% |
+| spot | 5,856 | 66.1s | 5.2s (621) | 10.4s (693) | 0.7s | 25% |
+| fandisk | 12,946 | 48.2s | 4.0s (220) | 20.8s (306) | 0.9s | 53% |
+| homer | 12,000 | 163.9s | 15.8s (905) | 35.1s (1169) | 2.6s | 33% |
+
+- The linear solver (Eigen single-thread SimplicialLDLT) is 25% of wall at 6k tris, 33-53% at 12-13k. `pardisoThreadAmt = 4` in Optimizer.cpp is dead: this fork has no PARDISO or CHOLMOD code, the parameter is ignored.
+- Amdahl ceiling for a threaded factorize+solve (3x on 4 threads, optimistic at 12-24k unknowns): spot 1.13x, homer 1.18x, fandisk 1.43x. An infinitely fast solver caps at 1.33x/1.5x/2.1x.
+- The symbolic pattern changes almost every fracture: spot re-analyzes 621 times for 693 factorizations. PARDISO's reusable symbolic analysis buys nothing here, and its METIS reordering is costlier per analyze than Eigen's AMD, which could eat the factorization win. Combined with shipping MKL redist DLLs (tens to hundreds of MB next to a ~4MB exe), oneMKL PARDISO is not worth it at these sizes.
+- If solver time becomes worth attacking, fandisk-like CAD meshes gain most; a faster ordering or supernodal factorization (CHOLMOD, license permitting) is a cheaper direction than MKL. The larger 67-75% (spot/homer) is outside the solver entirely.
+
 ## PAMO on/off (partuv)
 
 2026-07-13, RTX 3060 Laptop GPU, native core rebuilt today. geometric segmentation both arms (the tables above use ai), so times here are not comparable to those runs, only pamo-on vs pamo-off. pamo-on is the default packaged config; pamo-off is a temp copy of `engine/partuv/config/config.yaml` with the `pamo: true` line flipped to false (same edit as `_config_without_pamo`). Confirmed cuda was live in the pamo-on arm, so pamo actually ran on the GPU rather than the silent cpu fallback. seconds is wall clock of the full invocation. Command per run:
