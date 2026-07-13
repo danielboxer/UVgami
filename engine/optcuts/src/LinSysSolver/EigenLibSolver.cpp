@@ -26,8 +26,6 @@ void EigenLibSolver<vectorTypeI, vectorTypeS>::set_pattern(
         // TODO: directly save into mtr
         coefMtr.resize(Base::numRows, Base::numRows);
         coefMtr.reserve(Base::ja.size());
-        Base::ia.array() -= 1.0;
-        Base::ja.array() -= 1.0;
         memcpy(coefMtr.innerIndexPtr(), Base::ja.data(),
                Base::ja.size() * sizeof(Base::ja[0]));
         memcpy(coefMtr.outerIndexPtr(), Base::ia.data(),
@@ -121,14 +119,12 @@ void EigenLibSolver<vectorTypeI, vectorTypeS>::setCoeff(int rowI, int colI,
                                                         double val) {
     // TODO: useDense
     // TODO: directly manipulate valuePtr without a
-    // TODO: faster O(1) indices!!
 
     if (rowI <= colI) {
-        assert(rowI < Base::IJ2aI.size());
-        const auto finder = Base::IJ2aI[rowI].find(colI);
-        assert(finder != Base::IJ2aI[rowI].end());
-        Base::a[finder->second] = val;
-        coefMtr.valuePtr()[finder->second] = val;
+        const int dest = Base::find_a_index(rowI, colI);
+        assert(dest >= 0);
+        Base::a[dest] = val;
+        coefMtr.valuePtr()[dest] = val;
     }
 }
 
@@ -137,14 +133,12 @@ void EigenLibSolver<vectorTypeI, vectorTypeS>::addCoeff(int rowI, int colI,
                                                         double val) {
     // TODO: useDense
     // TODO: directly manipulate valuePtr without a
-    // TODO: faster O(1) indices!!
 
     if (rowI <= colI) {
-        assert(rowI < Base::IJ2aI.size());
-        const auto finder = Base::IJ2aI[rowI].find(colI);
-        assert(finder != Base::IJ2aI[rowI].end());
-        Base::a[finder->second] += val;
-        coefMtr.valuePtr()[finder->second] += val;
+        const int dest = Base::find_a_index(rowI, colI);
+        assert(dest >= 0);
+        Base::a[dest] += val;
+        coefMtr.valuePtr()[dest] += val;
     }
 }
 

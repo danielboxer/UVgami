@@ -85,6 +85,19 @@ WSL is ~2.2-2.4x faster on identical source. This is the bar for the Windows per
 - Speedup grows with mesh size (2.3x at 6k tris, ~5x at 12-13.5k): allocator pressure scales with the solver's working set, so mimalloc gains more on bigger meshes.
 - The 12-13.5k meshes now beat the old WSL-side expectation, so the WSL path in the addon has no remaining reason to exist.
 
+## optcuts cached sparse assembly (engine 1.2.2)
+
+2026-07-12, same machine, direct invocation `-u 4.1 -s 100 -g`, baseline is the 1.2.1 master build (mimalloc + AVX2). The change removes the quadratic `conservativeResize` churn in triplet building and `set_pattern`, replaces the per-triplet `std::map` lookups with binary search over sorted CSR rows, and caches triplet destinations between `update_a` calls under the same pattern.
+
+| mesh | baseline | new |
+|---|---|---|
+| alligator | 1.3s | 1.2s |
+| spot | 76.3s / 75.8s | 65.2s / 67.8s |
+| fandisk | 64.5s | 50.3s |
+
+- ~13% on spot, ~22% on fandisk. mimalloc had already absorbed most of the allocation cost, so this is the remaining copy and map overhead, growing with mesh size.
+- Output OBJs byte-identical to baseline on all three meshes: triplet order and summation order are unchanged, so this is a pure assembly-cost change.
+
 ## optcuts mesh requirements
 
 optcuts requires a single connected manifold surface: one component, no non-manifold edges, no non-manifold vertices. Boundary is fine (woody and alligator are open). Validated 6/6 against real runs with a static OBJ check:

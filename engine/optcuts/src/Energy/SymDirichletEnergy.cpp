@@ -622,8 +622,28 @@ void SymDirichletEnergy::computeHessian(const TriMesh &data, Eigen::VectorXd *V,
         }
         //        }
     });
-    for (int triI = 0; triI < data.F.rows(); triI++)
-        IglUtils::addBlockToMatrix(triHessians[triI], vInds[triI], 2, V, I, J);
+    // size the triplet arrays once and fill disjoint slices in parallel;
+    // the per-triangle offsets keep the exact order of serial appends
+    std::vector<int> triTripletStart(data.F.rows() + 1);
+    triTripletStart[0] = static_cast<int>(V->size());
+    for (int triI = 0; triI < data.F.rows(); triI++) {
+        int numFree = 0;
+        for (int vI = 0; vI < 3; vI++) {
+            if (vInds[triI][vI] >= 0) {
+                numFree++;
+            }
+        }
+        triTripletStart[triI + 1] = triTripletStart[triI] + 4 * numFree * numFree;
+    }
+    V->conservativeResize(triTripletStart[data.F.rows()]);
+    if (I) {
+        I->conservativeResize(triTripletStart[data.F.rows()]);
+        J->conservativeResize(triTripletStart[data.F.rows()]);
+    }
+    tbb::parallel_for(0, (int)data.F.rows(), 1, [&](int triI) {
+        IglUtils::addBlockToMatrix(triHessians[triI], vInds[triI], 2, V, I, J,
+                                   triTripletStart[triI]);
+    });
     //        std::cout << static_cast<double>(clock() - start) / CLOCKS_PER_SEC
     //        << "s" << std::endl;
 

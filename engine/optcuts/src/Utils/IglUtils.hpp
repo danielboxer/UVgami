@@ -53,10 +53,12 @@ class IglUtils {
                                  Eigen::Ref<const Eigen::MatrixXd> block,
                                  Eigen::Ref<const Eigen::VectorXi> index,
                                  int dim);
+    // writes into presized V, I, J starting at tripletInd so callers can
+    // fill disjoint slices in parallel
     static void addBlockToMatrix(Eigen::Ref<const Eigen::MatrixXd> block,
                                  Eigen::Ref<const Eigen::VectorXi> index, int dim,
-                                 Eigen::VectorXd *V, Eigen::VectorXi *I = NULL,
-                                 Eigen::VectorXi *J = NULL);
+                                 Eigen::VectorXd *V, Eigen::VectorXi *I,
+                                 Eigen::VectorXi *J, int tripletInd);
     static void addDiagonalToMatrix(Eigen::Ref<const Eigen::VectorXd> diagonal,
                                     Eigen::Ref<const Eigen::VectorXi> index,
                                     int dim, Eigen::VectorXd *V,

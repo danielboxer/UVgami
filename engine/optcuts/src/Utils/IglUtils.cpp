@@ -436,7 +436,7 @@ void IglUtils::addDiagonalToMatrix(Eigen::Ref<const Eigen::VectorXd> diagonal,
 void IglUtils::addBlockToMatrix(Eigen::Ref<const Eigen::MatrixXd> block,
                                 Eigen::Ref<const Eigen::VectorXi> index, int dim,
                                 Eigen::VectorXd *V, Eigen::VectorXi *I,
-                                Eigen::VectorXi *J) {
+                                Eigen::VectorXi *J, int tripletInd) {
     int num_free = 0;
     for (int indI = 0; indI < index.size(); indI++) {
         if (index[indI] >= 0) {
@@ -451,15 +451,12 @@ void IglUtils::addBlockToMatrix(Eigen::Ref<const Eigen::MatrixXd> block,
     assert(index.size() * dim == block.rows());
 
     assert(V);
-    int tripletInd = static_cast<int>(V->size());
     const int entryAmt = static_cast<int>(dim * dim * num_free * num_free);
-    V->conservativeResize(tripletInd + entryAmt);
+    assert(V->size() >= tripletInd + entryAmt);
     if (I) {
         assert(J);
-        assert(I->size() == tripletInd);
-        assert(J->size() == tripletInd);
-        I->conservativeResize(tripletInd + entryAmt);
-        J->conservativeResize(tripletInd + entryAmt);
+        assert(I->size() == V->size());
+        assert(J->size() == V->size());
     }
 
     for (int indI = 0; indI < index.size(); indI++) {
@@ -489,7 +486,6 @@ void IglUtils::addBlockToMatrix(Eigen::Ref<const Eigen::MatrixXd> block,
             }
         }
     }
-    assert(tripletInd == V->size());
 }
 
 void IglUtils::addBlockToMatrix(Eigen::Ref<const Eigen::MatrixXd> block,
