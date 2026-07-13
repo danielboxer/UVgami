@@ -41,6 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
 
     steps:
       # this needs to be before engine download
@@ -71,6 +72,44 @@ jobs:
             echo "Tag ${TAG} already exists — version was not bumped. Skipping release."
             exit 1
           fi
+
+      # when the engine version is bumped in the same push, its build runs in
+      # parallel and the engine release does not exist yet. wait for that build
+      # to finish before downloading, otherwise the download below fails
+      - name: Wait for engine build
+        if: ${{ github.event_name == 'push' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="optcuts-v$(cat engine/optcuts/VERSION | tr -d '[:space:]')"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "engine release $TAG exists"
+            exit 0
+          fi
+          echo "engine release $TAG missing, waiting for the engine build on this commit"
+          for i in $(seq 1 20); do
+            RUN_ID=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/engine-build.yml/runs?head_sha=$GITHUB_SHA&event=push" -q '.workflow_runs[0].id')
+            [ -n "$RUN_ID" ] && break
+            echo "engine build run not registered yet ($i)"
+            sleep 15
+          done
+          if [ -z "$RUN_ID" ]; then
+            echo "no engine build run found for $GITHUB_SHA"
+            exit 1
+          fi
+          for i in $(seq 1 120); do
+            STATUS=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" -q .status)
+            echo "engine build status: $STATUS"
+            if [ "$STATUS" = "completed" ]; then
+              CONCLUSION=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" -q .conclusion)
+              [ "$CONCLUSION" = "success" ] && exit 0
+              echo "engine build finished with: $CONCLUSION"
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "timed out waiting for engine build"
+          exit 1
 
       # 1. get the canonical engine zips from the engine release
       - name: Download engines
