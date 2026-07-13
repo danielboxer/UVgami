@@ -2,11 +2,10 @@ name: Engine build
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - master
-    paths:
-      - engine/optcuts/VERSION
+  workflow_call:
+    outputs:
+      built:
+        value: ${{ jobs.prepare.outputs.built }}
 
 permissions:
   contents: write
@@ -18,7 +17,34 @@ env:
   BUNDLED_NAME: "UVgami-bundled-with-engines"
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      built: ${{ steps.release.outputs.built }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check component release
+        id: release
+        shell: bash
+        run: |
+          VERSION=$(tr -d '[:space:]' < engine/optcuts/VERSION)
+          TAG="optcuts-v$VERSION"
+          if git rev-parse --quiet --verify "refs/tags/$TAG" >/dev/null; then
+            if ! git diff --quiet "$TAG" HEAD -- engine/optcuts; then
+              echo "::error::OptCuts changed since $TAG. Bump engine/optcuts/VERSION."
+              exit 1
+            fi
+            echo "built=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "built=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: prepare
+    if: needs.prepare.outputs.built == 'true'
     strategy:
       matrix:
         include:
@@ -80,7 +106,8 @@ jobs:
 
   # publish the canonical engine release the addon and its bundled zip source from
   publish:
-    needs: build
+    needs: [prepare, build]
+    if: needs.prepare.outputs.built == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -107,45 +134,3 @@ jobs:
           gh release view "$TAG" >/dev/null 2>&1 \
             || gh release create "$TAG" --latest=false --title "$TAG" --notes "OptCuts engine binaries"
           gh release upload "$TAG" ${PACKAGE_PREFIX}-*.zip --clobber
-
-  rebuild-bundled:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Download all engine artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: engine-*
-          merge-multiple: true
-
-      # the releases/latest endpoint ignores the not-latest component releases,
-      # so this resolves the current addon release
-      - name: Get latest addon tag
-        id: addon_tag
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "tag=$(gh api "repos/${{ github.repository }}/releases/latest" -q .tag_name)" >> $GITHUB_OUTPUT
-
-      - name: Download addon zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.addon_tag.outputs.tag }}
-        run: gh release download "$TAG" -p "${ADDON_NAME}.zip"
-
-      - name: Create bundled addon with engines
-        run: |
-          unzip -o ${ADDON_NAME}.zip
-          bash .github/scripts/bundle-engines.sh $ADDON_NAME $PACKAGE_PREFIX
-          zip -r ${BUNDLED_NAME}.zip $ADDON_NAME
-
-      # refresh the bundled zip on the addon release
-      - name: Upload bundled addon
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.addon_tag.outputs.tag }}
-        run: gh release upload "$TAG" "${BUNDLED_NAME}.zip" --clobber

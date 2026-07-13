@@ -2,20 +2,6 @@ name: Release
 
 on:
   workflow_dispatch:
-    inputs:
-      increment:
-        description: "Which part of the version to increment"
-        type: choice
-        options:
-          - major
-          - minor
-          - patch
-        default: "patch"
-        required: true
-
-      version:
-        description: "Override version increment"
-        required: false
 
   push:
     branches:
@@ -35,91 +21,67 @@ jobs:
     with:
       file: blender_manifest.toml
 
-  package:
+  prepare:
     needs: check-version
     if: needs.check-version.outputs.bumped == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check addon version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(grep '^version' blender_manifest.toml | sed -E 's/version *= *"(.*)"/\1/')
+          TAG="v$VERSION"
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+            echo "::error::Tag $TAG already exists. Bump blender_manifest.toml."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  optcuts:
+    needs: prepare
+    uses: ./.github/workflows/engine-build.yml
+    secrets: inherit
+    permissions:
+      contents: write
+
+  partuv:
+    needs: prepare
+    uses: ./.github/workflows/partuv-build.yml
+    secrets: inherit
+    permissions:
+      contents: write
+
+  package:
+    needs: [prepare, optcuts, partuv]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       actions: read
 
     steps:
-      # this needs to be before engine download
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Get Next Version (workflow_dispatch)
-        id: get_version
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses: danielboxer/next-version-action@v1
+      - name: Download built engines
+        if: needs.optcuts.outputs.built == 'true'
+        uses: actions/download-artifact@v4
         with:
-          increment: ${{ inputs.increment }}
-          version: ${{ inputs.version }}
-          use_v_prefix: true
+          pattern: engine-*
+          merge-multiple: true
 
-      - name: Get Version from manifest (push)
-        id: get_version_push
-        if: ${{ github.event_name == 'push' }}
-        run: |
-          version=$(grep '^version' blender_manifest.toml | sed -E 's/version *= *"(.*)"/\1/')
-          echo "new_version=v${version}" >> $GITHUB_OUTPUT
-
-      - name: Check if version tag already exists
-        if: ${{ github.event_name == 'push' }}
-        run: |
-          TAG="${{ steps.get_version_push.outputs.new_version }}"
-          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
-            echo "Tag ${TAG} already exists — version was not bumped. Skipping release."
-            exit 1
-          fi
-
-      # when the engine version is bumped in the same push, its build runs in
-      # parallel and the engine release does not exist yet. wait for that build
-      # to finish before downloading, otherwise the download below fails
-      - name: Wait for engine build
-        if: ${{ github.event_name == 'push' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="optcuts-v$(cat engine/optcuts/VERSION | tr -d '[:space:]')"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "engine release $TAG exists"
-            exit 0
-          fi
-          echo "engine release $TAG missing, waiting for the engine build on this commit"
-          for i in $(seq 1 20); do
-            RUN_ID=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/engine-build.yml/runs?head_sha=$GITHUB_SHA&event=push" -q '.workflow_runs[0].id')
-            [ -n "$RUN_ID" ] && break
-            echo "engine build run not registered yet ($i)"
-            sleep 15
-          done
-          if [ -z "$RUN_ID" ]; then
-            echo "no engine build run found for $GITHUB_SHA"
-            exit 1
-          fi
-          for i in $(seq 1 120); do
-            STATUS=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" -q .status)
-            echo "engine build status: $STATUS"
-            if [ "$STATUS" = "completed" ]; then
-              CONCLUSION=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" -q .conclusion)
-              [ "$CONCLUSION" = "success" ] && exit 0
-              echo "engine build finished with: $CONCLUSION"
-              exit 1
-            fi
-            sleep 30
-          done
-          echo "timed out waiting for engine build"
-          exit 1
-
-      # 1. get the canonical engine zips from the engine release
-      - name: Download engines
+      - name: Download released engines
+        if: needs.optcuts.outputs.built != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ENGINE_VERSION=$(cat engine/optcuts/VERSION | tr -d '[:space:]')
           gh release download "optcuts-v$ENGINE_VERSION" -p "${ENGINE_PREFIX}-*.zip"
 
-      # 2. package add-on
       - name: Move to nested folder
         run: |
           mkdir $ADDON_NAME
@@ -128,24 +90,13 @@ jobs:
       - name: Zip folder
         run: zip -r ${ADDON_NAME}.zip $ADDON_NAME
 
-      # 3. create bundled variant with engines
       - name: Create bundled addon with engines
         run: |
           bash .github/scripts/bundle-engines.sh $ADDON_NAME $ENGINE_PREFIX
           zip -r ${BUNDLED_NAME}.zip $ADDON_NAME
 
-      # 4. create new release
       - name: Determine TAG
-        id: determine_tag
-        env:
-          DISPATCH_TAG: ${{ steps.get_version.outputs.new_version }}
-          PUSH_TAG: ${{ steps.get_version_push.outputs.new_version }}
-        run: |
-          if [ -n "$DISPATCH_TAG" ]; then
-            echo "TAG=$DISPATCH_TAG" >> $GITHUB_ENV
-          else
-            echo "TAG=$PUSH_TAG" >> $GITHUB_ENV
-          fi
+        run: echo "TAG=${{ needs.prepare.outputs.tag }}" >> $GITHUB_ENV
 
       - name: Create release
         env:
@@ -153,7 +104,6 @@ jobs:
           TAG: ${{ env.TAG }}
         run: gh release create "$TAG" "${ADDON_NAME}.zip" --title "$TAG"
 
-      # 5. upload bundled addon
       - name: Upload bundled addon
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
