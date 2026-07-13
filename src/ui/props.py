@@ -246,7 +246,9 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         name="",
         description=(
             "Transfer the UV map from the output mesh to the original input mesh."
-            " Only works when the topology matches (same vertex and face count)"
+            " Works when the output has the same topology as the input, or a"
+            " triangulated version of it. The original object must be unchanged"
+            " since starting the unwrap"
         ),
     )
     preview_unwrap_sharp: bpy.props.BoolProperty(

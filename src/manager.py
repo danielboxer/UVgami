@@ -76,6 +76,7 @@ class UnwrapManager:
         self.is_active = True
         self.found_invalid_objects = False
         self.transfer_uv_failed = False
+        self.transfer_uv_fail_detail = ""
         self.transfer_uv_topology_differed = False
         self.finished_count = 0
         self.cancelled_count = 0
@@ -426,11 +427,9 @@ class UnwrapManager:
                         self._pack_output_objects[i] = input_mesh
                         pack_replaced = True
                         break
-            success, topology_matched = unwrap.transfer_uvs_job.finish(
-                input_mesh, output
-            )
-            if success:
-                if not topology_matched:
+            outcome = unwrap.transfer_uvs_job.finish(input_mesh, output)
+            if outcome.applied:
+                if not outcome.exact_topology:
                     self.transfer_uv_topology_differed = True
                 return
             else:
@@ -441,9 +440,10 @@ class UnwrapManager:
                             self._pack_output_objects[i] = output
                             break
                 self.transfer_uv_failed = True
+                self.transfer_uv_fail_detail = outcome.detail
                 logger.add_data(
                     "errors",
-                    "UV transfer failed (vertex count mismatch), keeping output",
+                    f"UV transfer failed ({outcome.detail}), keeping output",
                 )
 
         collection = check_collection("UVgami Unwrapped", bpy.context.scene.collection)
@@ -578,8 +578,9 @@ class UnwrapManager:
                     )
 
                 if self.transfer_uv_failed:
+                    detail = self.transfer_uv_fail_detail or "unknown reason"
                     msg.append(
-                        "UV transfer failed: vertex count mismatch."
+                        f"UV transfer failed: {detail}."
                         " This can happen with cuts or symmetry enabled."
                     )
 
