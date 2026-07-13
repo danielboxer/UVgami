@@ -98,6 +98,11 @@ PYBIND11_MODULE(_core, m)
         .def_readwrite("distortion", &Component::distortion)
         .def_readwrite("index",      &Component::index)
         .def_readwrite("faces",      &Component::faces)
+        // numpy copy of the processed-input vertex index behind each V row
+        .def_property_readonly("source_vid", [](const Component& c) {
+            return Eigen::VectorXi(Eigen::Map<const Eigen::VectorXi>(
+                c.source_vid.data(), (Eigen::Index)c.source_vid.size()));
+        })
         .def("save_mesh",            &Component::save_mesh)
         .def("__add__",              &Component::operator+);
 

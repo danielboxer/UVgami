@@ -281,15 +281,17 @@ def run(pairs, checkpoint, config, threshold, segmentation="ai", visual=False):
             log("running PartUV pipeline", style="step")
             if visual:
                 emit("progress: 0.05 0 0.95")
+            source_V = np.asarray(mesh.vertices, dtype=np.float64)
+            source_F = np.asarray(mesh.faces, dtype=np.int32)
             final_part, individual_parts = pipeline_numpy(
-                np.asarray(mesh.vertices, dtype=np.float64),
-                np.asarray(mesh.faces, dtype=np.int32),
+                source_V,
+                source_F,
                 tree_dict,
                 str(config),
                 threshold,
                 visual=visual,
             )
-            save_results(work, final_part, individual_parts)
+            save_results(work, final_part, individual_parts, source_V, source_F)
 
             deliver(work / "final_components.obj", output_path)
 

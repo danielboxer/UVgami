@@ -563,7 +563,8 @@ std::vector<Component> unwrap_aligning_BB( const Eigen::MatrixXd &V, const Eigen
         Eigen::MatrixXd UVc;
         Eigen::MatrixXd Vc;Eigen::MatrixXi Fc;
 
-        ExtractSubmesh(comp.faces, F, V, Fc, Vc);
+        std::vector<int> local2global;
+        ExtractSubmesh(comp.faces, F, V, Fc, Vc, &local2global);
         EASY_BLOCK("Unwrapin BB", profiler::colors::Brown);
         auto start = std::chrono::high_resolution_clock::now();
         int lscm_success = unwrap(Vc, Fc, UVc);
@@ -601,6 +602,8 @@ std::vector<Component> unwrap_aligning_BB( const Eigen::MatrixXd &V, const Eigen
 
         comp.V = Vc;
         comp.F = Fc;
+        // V_original is empty for these components, so no source_vid_original
+        comp.source_vid = local2global;
         comp.UV = UVc;
         comp.distortion = calculate_distortion_area(Vc, Fc, UVc);
 

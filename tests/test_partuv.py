@@ -179,7 +179,7 @@ def fake_partuv_runtime(monkeypatch, tmp_path):
         calls["visual"] = visual
         return "final", ["part0"]
 
-    def fake_save_results(output_dir, final_part, individual_parts):
+    def fake_save_results(output_dir, final_part, individual_parts, source_V, source_F):
         calls["save"] = (final_part, individual_parts)
         result = output_dir / "final_components.obj"
         result.write_text("v 0 0 0\nvt 0 0\nf 1/1 1/1 1/1\n")

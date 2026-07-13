@@ -439,10 +439,13 @@ std::vector<Component> merge_components(
         }
         
         Eigen::MatrixXd Vc;Eigen::MatrixXi Fc;
-        ExtractSubmesh(comp, F, V, Fc, Vc);
+        std::vector<int> local2global;
+        ExtractSubmesh(comp, F, V, Fc, Vc, &local2global);
 
         Component curr_comp = Component(allComponents.size(), comp, -1, curr_FN, Fc,Vc);
-        if(!comp.empty()) 
+        curr_comp.source_vid = local2global;
+        curr_comp.source_vid_original = local2global;
+        if(!comp.empty())
             allComponents.push_back(curr_comp);
 
     }
@@ -468,15 +471,15 @@ std::vector<Component> merge_components(
     {
         std::cout << "Row: " << row_num++ << ": ";
        for ( const auto &s : row ){  std::cout << "(" << s.first << "," << s.second << ") ";}
-       std::cout << std::endl;  
+       std::cout << std::endl;
     }
     #endif
 
 
     std::vector<int> sortedIndices(allComponents.size());
     std::iota(sortedIndices.begin(), sortedIndices.end(), 0);  // Fill with 0,1,2,...
-    
-    std::sort(sortedIndices.begin(), 
+
+    std::sort(sortedIndices.begin(),
               sortedIndices.end(),
               [&allComponents](int a, int b)
               {
@@ -641,7 +644,8 @@ bool hasError = false;
         Eigen::MatrixXi Fc;
 
         // Extract the submesh for this component.
-        ExtractSubmesh(comp.faces, F, V, Fc, Vc);
+        std::vector<int> local2global;
+        ExtractSubmesh(comp.faces, F, V, Fc, Vc, &local2global);
 
         // Perform the LSCM projection.
         int lscm_success = unwrap(Vc, Fc, UVc);
@@ -675,6 +679,8 @@ bool hasError = false;
         // Only update the component if no error occurred.
         comp.V = Vc;
         comp.F = Fc;
+        // V_original is untouched here, so source_vid_original stays as-is
+        comp.source_vid = local2global;
         comp.UV = UVc;
         comp.distortion = calculate_distortion_area(Vc, Fc, UVc);
     }
