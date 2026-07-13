@@ -2,14 +2,10 @@ name: PartUV build
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - master
-    # narrow gate: only a pyproject change can release. the check-version job
-    # then confirms the version line actually moved, so dep/config edits and
-    # vcpkg changes don't rebuild and clobber the released wheels
-    paths:
-      - engine/partuv/pyproject.toml
+  workflow_call:
+    outputs:
+      built:
+        value: ${{ jobs.prepare.outputs.built }}
 
 permissions:
   contents: write
@@ -21,14 +17,40 @@ env:
   LLVM_VERSION: "22.1.8"
 
 jobs:
-  check-version:
-    uses: ./.github/workflows/check-version.yml
-    with:
-      file: engine/partuv/pyproject.toml
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      built: ${{ steps.release.outputs.built }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check component release
+        id: release
+        shell: bash
+        run: |
+          VERSION=$(grep -m1 '^version' engine/partuv/pyproject.toml | sed -E 's/version *= *"(.*)"/\1/')
+          INSTALL_VERSION=$(grep -m1 '^PARTUV_VERSION' src/ops/install.py | sed -E 's/PARTUV_VERSION *= *"(.*)"/\1/')
+          if [ "$VERSION" != "$INSTALL_VERSION" ]; then
+            echo "::error::PartUV version $VERSION does not match install.py version $INSTALL_VERSION."
+            exit 1
+          fi
+
+          TAG="partuv-v$VERSION"
+          if git rev-parse --quiet --verify "refs/tags/$TAG" >/dev/null; then
+            if ! git diff --quiet "$TAG" HEAD -- engine/partuv; then
+              echo "::error::PartUV changed since $TAG. Bump engine/partuv/pyproject.toml and PARTUV_VERSION."
+              exit 1
+            fi
+            echo "built=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "built=true" >> "$GITHUB_OUTPUT"
+          fi
 
   build:
-    needs: check-version
-    if: needs.check-version.outputs.bumped == 'true' || github.event_name == 'workflow_dispatch'
+    needs: prepare
+    if: needs.prepare.outputs.built == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -172,7 +194,8 @@ jobs:
           path: dist/*.whl
 
   upload:
-    needs: build
+    needs: [prepare, build]
+    if: needs.prepare.outputs.built == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
