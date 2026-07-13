@@ -25,9 +25,7 @@ PARTUV_VERSION = "0.1.2.3"
 PARTUV_RELEASE_API = f"https://api.github.com/repos/DanielBoxer/UVgami/releases/tags/partuv-v{PARTUV_VERSION}"
 # mirrored onto the fixed `checkpoint` release so installs don't depend on the HF
 # repo staying up or its main branch not moving (see mirror-checkpoint.yml)
-CHECKPOINT_URL = (
-    "https://github.com/DanielBoxer/UVgami/releases/download/checkpoint/model_objaverse.ckpt"
-)
+CHECKPOINT_URL = "https://github.com/DanielBoxer/UVgami/releases/download/checkpoint/model_objaverse.ckpt"
 # the ai extra pins torch 2.3.0 (cu121); torch-scatter has no matching pypi
 # wheel, so pip must be pointed at the pyg wheel index to avoid a source build
 TORCH_SCATTER_FIND_LINKS = "https://data.pyg.org/whl/torch-2.3.0+cu121.html"
@@ -92,7 +90,9 @@ def ensure_uv():
     if uv.is_file():
         return uv
     archive_name = UV_ARCHIVES[platform.system()]
-    url = f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/{archive_name}"
+    url = (
+        f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/{archive_name}"
+    )
     uv.parent.mkdir(parents=True, exist_ok=True)
     tmp = uv.parent / archive_name
     install_state["phase"] = "Downloading uv"
@@ -154,10 +154,21 @@ def download_checkpoint():
 class UVGAMI_OT_install_partuv(bpy.types.Operator):
     bl_idname = "uvgami.install_partuv"
     bl_label = "Install PartUV Engine"
-    bl_description = (
-        "Download the PartUV engine and install it into a managed Python 3.11"
-        " environment. Needs an NVIDIA GPU with CUDA"
-    )
+
+    @classmethod
+    def description(cls, context, properties):
+        if properties.tier == "AI":
+            return (
+                "Install the PartUV engine with AI segmentation: the engine, the"
+                " PyTorch stack and the PartField model, ~5 GB total. Includes"
+                " geometric segmentation. Needs an NVIDIA GPU with CUDA."
+                " If already installed, reinstalls it"
+            )
+        return (
+            "Install the PartUV engine with geometric segmentation only, which"
+            " splits meshes by shape without an AI model, a much smaller download."
+            " Needs an NVIDIA GPU with CUDA. If already installed, reinstalls it"
+        )
 
     tier: bpy.props.EnumProperty(
         items=(
@@ -181,13 +192,9 @@ class UVGAMI_OT_install_partuv(bpy.types.Operator):
         install_state["phase"] = ""
         install_state["bytes_done"] = 0
         install_state["bytes_total"] = None
-        threading.Thread(
-            target=self._install, args=(self.tier,), daemon=True
-        ).start()
+        threading.Thread(target=self._install, args=(self.tier,), daemon=True).start()
 
-        self._timer = context.window_manager.event_timer_add(
-            0.5, window=context.window
-        )
+        self._timer = context.window_manager.event_timer_add(0.5, window=context.window)
         context.window_manager.modal_handler_add(self)
         return {"RUNNING_MODAL"}
 

@@ -138,7 +138,7 @@ class OptcutsEngine(Engine):
         engine_path = pathlib.Path(prefs.engine_path)
         if str(engine_path) == "." and get_bundled_engine_path() is not None:
             row = layout.row()
-            row.label(text="Using bundled engine", icon="CHECKMARK")
+            row.label(text="Using bundled optcuts engine", icon="CHECKMARK")
 
     def build_args(self, ctx, input_path, props):
         u = {"HIGH": "4.05", "MEDIUM": "4.1"}.get(props.optcuts.quality, "4.2")
@@ -228,24 +228,7 @@ class PartuvEngine(Engine):
             layout.row().label(
                 text="PartUV: dev mode (running from repo)", icon="CHECKMARK"
             )
-        else:
-            row = layout.row()
-            if is_partuv_ai_installed():
-                row.label(text="PartUV installed (AI ready)", icon="CHECKMARK")
-            elif is_partuv_installed():
-                row.label(text="PartUV installed (Geometric)", icon="CHECKMARK")
-            else:
-                row.label(text="PartUV not installed")
-
-            row = layout.row()
-            row.scale_y = 1.5
-            geometric = row.operator(
-                "uvgami.install_partuv", text="Geometric", icon="IMPORT"
-            )
-            geometric.tier = "GEOMETRIC"
-            ai = row.operator("uvgami.install_partuv", text="AI (~5 GB)", icon="IMPORT")
-            ai.tier = "AI"
-        if install_state["running"]:
+        elif install_state["running"]:
             row = layout.row()
             phase = install_state["phase"] or "Installing PartUV"
             total = install_state["bytes_total"]
@@ -256,9 +239,35 @@ class PartuvEngine(Engine):
                 )
             else:
                 row.label(text=phase, icon="SORTTIME")
-        elif install_state["error"] is not None:
+        else:
+            geometric_installed = is_partuv_installed()
+            ai_installed = is_partuv_ai_installed()
+            if geometric_installed:
+                layout.row().label(
+                    text="PartUV installed (Geometric)", icon="CHECKMARK"
+                )
+                if ai_installed:
+                    layout.row().label(text="PartUV installed (AI)", icon="CHECKMARK")
+            else:
+                layout.row().label(text="PartUV not installed")
+
             row = layout.row()
-            row.label(text=install_state["error"], icon="ERROR")
+            row.scale_y = 1.5
+            geometric = row.operator(
+                "uvgami.install_partuv",
+                text="Reinstall Geometric" if geometric_installed else "Geometric",
+                icon="IMPORT",
+            )
+            geometric.tier = "GEOMETRIC"
+            ai = row.operator(
+                "uvgami.install_partuv",
+                text="Reinstall AI" if ai_installed else "AI (~5 GB)",
+                icon="IMPORT",
+            )
+            ai.tier = "AI"
+            if install_state["error"] is not None:
+                row = layout.row()
+                row.label(text=install_state["error"], icon="ERROR")
 
     def build_args(self, ctx, input_path, props):
         return self.build_batch_args(ctx, [input_path], props)
