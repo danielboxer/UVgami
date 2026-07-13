@@ -23,12 +23,27 @@ int merge_mesh_B_to_A(const Component &A, const Component &B, Component &merge_r
     // Number of dimensions (e.g., 3 for 3D meshes)
     const int dim = static_cast<int>(A.V.cols());
 
+    // weld shared vertices by source id when provenance is known: same source
+    // vertex means same position, and intentionally coincident source vertices
+    // stay separate. Position hashing remains the fallback without provenance.
+    const bool provenance_ok =
+        A.source_vid.size() == (size_t)A.V.rows() &&
+        B.source_vid.size() == (size_t)B.V.rows();
+    merge_result.source_vid = provenance_ok ? A.source_vid : std::vector<int>{};
+
+    std::unordered_map<int, int> source_map;
+
     // Create a hash map for A's vertices to speed up duplicate search
     std::unordered_map<Eigen::VectorXd, int, VectorHash, VectorEqual> vertex_map;
 
     int num_A_faces = use_all_faces_A ? A.V.rows() : A.original_vertex_count;
     for (int i = 0; i < num_A_faces; ++i)
     {
+        if (provenance_ok)
+        {
+            source_map.emplace(A.source_vid[i], i);
+            continue;
+        }
         Eigen::VectorXd v = A.V.row(i);
         vertex_map.emplace(v, i);
     }
@@ -49,11 +64,24 @@ int merge_mesh_B_to_A(const Component &A, const Component &B, Component &merge_r
 
         Eigen::VectorXd vB = B.V.row(i);
 
-        auto it = vertex_map.find(vB);
-        if (it != vertex_map.end() && i < num_B_faces)
+        int existing = -1;
+        if (i < num_B_faces)
+        {
+            if (provenance_ok)
+            {
+                auto it = source_map.find(B.source_vid[i]);
+                if (it != source_map.end()) existing = it->second;
+            }
+            else
+            {
+                auto it = vertex_map.find(vB);
+                if (it != vertex_map.end()) existing = it->second;
+            }
+        }
+        if (existing != -1)
         {
             // Vertex already exists in A
-            b2merge_index_map[i] = it->second;
+            b2merge_index_map[i] = existing;
         }
         else
         {
@@ -63,7 +91,15 @@ int merge_mesh_B_to_A(const Component &A, const Component &B, Component &merge_r
             b2merge_index_map[i] = merge_result.V.rows() - 1;
 
             // Add to the hash map
-            vertex_map.emplace(vB, b2merge_index_map[i]);
+            if (provenance_ok)
+            {
+                source_map.emplace(B.source_vid[i], b2merge_index_map[i]);
+                merge_result.source_vid.push_back(B.source_vid[i]);
+            }
+            else
+            {
+                vertex_map.emplace(vB, b2merge_index_map[i]);
+            }
 
             numNewVertices++;
         }
@@ -98,5 +134,6 @@ int merge_mesh_B_to_A(const Component &A, const Component &B, Component &merge_r
     merge_result.faces.insert(merge_result.faces.end(), B.faces.begin(), B.faces.end());
     merge_result.F_original = merge_result.F;
     merge_result.V_original = merge_result.V;
+    merge_result.source_vid_original = merge_result.source_vid;
     return numNewVertices;
 }

@@ -355,7 +355,8 @@ int process_submesh(std::vector<int> faces, const Eigen::MatrixXd &V, const Eige
     Eigen::MatrixXi Fc;
     Eigen::MatrixXd UVc;
 
-    ExtractSubmesh(faces,F, V, Fc, Vc);
+    std::vector<int> local2global;
+    ExtractSubmesh(faces,F, V, Fc, Vc, &local2global);
 
     
     EASY_BLOCK("Unwrapin submesh", profiler::colors::Orange);
@@ -418,6 +419,11 @@ int process_submesh(std::vector<int> faces, const Eigen::MatrixXd &V, const Eige
     
     comp.V_original = Vc;
     comp.F_original = Fc;
+    comp.source_vid_original = local2global;
+    // pamo may have replaced V with a simplified mesh; provenance only holds
+    // for the extracted vertices and is restored by ComputeOriginalUV
+    if (comp.V.rows() == (Eigen::Index)local2global.size())
+        comp.source_vid = local2global;
     comp.UV = UVc;
     comp.distortion = unwrap_distortion;
     return 0;

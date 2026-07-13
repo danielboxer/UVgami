@@ -28,6 +28,7 @@
 #include <string>
 #include <unordered_map>
 #include <set>
+#include <numeric>
 #include <filesystem>
 
 #include "UnwrapBB.h"
@@ -54,7 +55,11 @@ std::vector<Component> unwrap_aligning_one(const Eigen::MatrixXd &V,   const  Ei
     Component comp;
     comp.V = V;
     comp.F = F;
-    
+    // provenance is identity: V is used as-is, local to the caller's mesh.
+    // V_original stays empty, so no source_vid_original either.
+    comp.source_vid.resize(V.rows());
+    std::iota(comp.source_vid.begin(), comp.source_vid.end(), 0);
+
     if (CONFIG_verbose)
         std::cout << "Unwrap One: part  With " << V.rows() << " vertices and " << F.rows() << " faces" << std::endl;    
 

@@ -66,7 +66,8 @@ void ExtractSubmesh(
     const Eigen::MatrixXi& F,
     const Eigen::MatrixXd& V,
     Eigen::MatrixXi& Fc,
-    Eigen::MatrixXd& Vc)
+    Eigen::MatrixXd& Vc,
+    std::vector<int>* local2global)
 {
     
     // Remove invalid faces
@@ -111,9 +112,15 @@ void ExtractSubmesh(
     std::unordered_map<int, int> global2local;
     global2local.reserve(verts_in_comp_set.size());
     int local_index = 0;
+    if (local2global)
+    {
+        local2global->clear();
+        local2global->reserve(verts_in_comp_set.size());
+    }
     for (int vi : verts_in_comp_set)
     {
         global2local[vi] = local_index++;
+        if (local2global) local2global->push_back(vi);
     }
 
     // Step 3: Build the submesh vertex matrix (Vc)
@@ -879,6 +886,25 @@ Component Component::operator+(const Component &other) const
         // component's original mesh).
         result.original_vertex_count = original_vertex_count + other.original_vertex_count;
 
+        // provenance concatenates like V; a mismatch on either side poisons
+        // the result so the output validation rejects it instead of writing
+        // wrong indices
+        if (source_vid.size() == (size_t)V.rows() &&
+            other.source_vid.size() == (size_t)other.V.rows())
+        {
+            result.source_vid = source_vid;
+            result.source_vid.insert(result.source_vid.end(),
+                                     other.source_vid.begin(), other.source_vid.end());
+        }
+        if (source_vid_original.size() == (size_t)V_original.rows() &&
+            other.source_vid_original.size() == (size_t)other.V_original.rows())
+        {
+            result.source_vid_original = source_vid_original;
+            result.source_vid_original.insert(result.source_vid_original.end(),
+                                              other.source_vid_original.begin(),
+                                              other.source_vid_original.end());
+        }
+
         // Done
         return result;
     }
@@ -911,6 +937,7 @@ int ComputeOriginalUV(Component &component)
     std::unordered_map<std::size_t, std::pair<double,double>>  boundary_uv = boundary_uv_dict(component.V_original, component.F_original, component.V, component.F, component.UV,1e-8);
     component.V = component.V_original;
     component.F = component.F_original;
+    component.source_vid = component.source_vid_original;
     Eigen::MatrixXd uv;
 
     int success = -1;

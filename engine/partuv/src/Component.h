@@ -46,13 +46,20 @@ struct Component
     Eigen::MatrixXd face_normals;
     Eigen::RowVector3d avg_normal;
     
-    MatrixX3I F; 
+    MatrixX3I F;
     MatrixX3R V;
     Eigen::Matrix<double, Eigen::Dynamic, 2, Eigen::RowMajor> UV;
 
     // These holds the original mesh if the component is simplified
     MatrixX3I F_original;
     MatrixX3R V_original;
+
+    // per-row provenance: source_vid[i] is the vertex index in the processed
+    // input mesh that V.row(i) came from. Empty means unknown; the python
+    // output layer rejects results without complete provenance.
+    // source_vid_original is aligned with V_original the same way.
+    std::vector<int> source_vid;
+    std::vector<int> source_vid_original;
 
     
 
@@ -151,7 +158,7 @@ int unwrap_pamo( Eigen::MatrixXd& V,
 std::vector<int> findConnectedComponent( int startFace, const std::vector<std::vector<int>> &faceAdj, const std::vector<bool> &visitedMask, std::vector<bool> &globalVisited);
 
 
-void ExtractSubmesh(const std::vector<int>& faces_in_comp, const Eigen::MatrixXi& F, const Eigen::MatrixXd& V, Eigen::MatrixXi& Fc, Eigen::MatrixXd& Vc);
+void ExtractSubmesh(const std::vector<int>& faces_in_comp, const Eigen::MatrixXi& F, const Eigen::MatrixXd& V, Eigen::MatrixXi& Fc, Eigen::MatrixXd& Vc, std::vector<int>* local2global = nullptr);
 std::unordered_map<std::size_t, std::pair<double,double>> boundary_uv_dict(const Eigen::MatrixXd&  V,const Eigen::MatrixXi& F,const Eigen::MatrixXd&  Vs,    const Eigen::MatrixXi&  Fs,    const Eigen::MatrixXd&  UVs,    double tol = 1e-8);
 
 std::vector<std::vector<std::pair<int,int>>> buildComponentAdjacency(

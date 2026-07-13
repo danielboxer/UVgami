@@ -285,6 +285,31 @@ bool load_mesh_with_validation(std::string mesh_path, Eigen::MatrixXi &F,Eigen::
 }
 
 
+// components report provenance local to the V they were built from; each
+// extraction level lifts it one space up through its local2global map.
+// out-of-range entries become -1 so the output validation rejects them.
+static void remap_source_vids(Component &comp, const std::vector<int> &l2g)
+{
+    auto remap = [&l2g](std::vector<int> &vids) {
+        for (int &vid : vids)
+            vid = (vid >= 0 && vid < (int)l2g.size()) ? l2g[vid] : -1;
+    };
+    remap(comp.source_vid);
+    remap(comp.source_vid_original);
+}
+
+static void remap_source_vids(UVParts &part, const std::vector<int> &l2g)
+{
+    for (Component &comp : part.components)
+        remap_source_vids(comp, l2g);
+}
+
+static void remap_source_vids(std::vector<UVParts> &parts, const std::vector<int> &l2g)
+{
+    for (UVParts &part : parts)
+        remap_source_vids(part, l2g);
+}
+
 std::vector<std::vector<UVParts>>  get_uv_wrapper( const Eigen::MatrixXi &F,const Eigen::MatrixXd &V, double threshold,bool check_overlap, bool use_full, int chart_limit){
 
 
@@ -312,16 +337,18 @@ std::vector<std::vector<UVParts>>  get_uv_wrapper( const Eigen::MatrixXi &F,cons
         std::vector<int> component_faces = allFaces[c];
         Eigen::MatrixXd Vc; Eigen::MatrixXi Fc;
 
-        ExtractSubmesh(component_faces, F, V, Fc, Vc);
+        std::vector<int> local2global;
+        ExtractSubmesh(component_faces, F, V, Fc, Vc, &local2global);
         std::vector<UVParts> uv_parts;
         if(use_full){
             uv_parts = get_uv(Fc, Vc, threshold, check_overlap, use_full, chart_limit);
         }else{
             uv_parts= unwrap_aligning_Agglomerative_all(Vc, Fc, threshold, check_overlap, chart_limit, /*check_break*/true);
         }
-        
+        remap_source_vids(uv_parts, local2global);
+
         allUVParts[c] = uv_parts;
-    
+
     }
 
     return allUVParts;
@@ -640,8 +667,10 @@ UVParts pipeline_helper(std::vector<int> leaves, Tree tree, int root, double cha
         return UVParts({});
     }else if(leaves.size() == 1){
         Eigen::MatrixXi Fc; Eigen::MatrixXd Vc;
-        ExtractSubmesh(leaves, gF, gV, Fc, Vc);
+        std::vector<int> local2global;
+        ExtractSubmesh(leaves, gF, gV, Fc, Vc, &local2global);
         UVParts single_part(unwrap_aligning_one(Vc, Fc, gThreshold, false, 1));
+        remap_source_vids(single_part, local2global);
         // at part level this single face never reaches save_part below
         if (chart_limit == NO_CHART_LIMIT) advance_visual_progress(single_part);
         return single_part;
@@ -673,10 +702,12 @@ UVParts pipeline_helper(std::vector<int> leaves, Tree tree, int root, double cha
     
     
     bool save_part = false;
-    ExtractSubmesh(leaves, gF, gV, Fc, Vc);
+    std::vector<int> local2global;
+    ExtractSubmesh(leaves, gF, gV, Fc, Vc, &local2global);
 
     auto candidates = get_uv_wrapper(Fc, Vc, gThreshold, /*check_overlap*/false, /*use_full*/false, (int)chart_limit);
-    
+    for (auto &parts : candidates) remap_source_vids(parts, local2global);
+
 
 
     curr_uv_parts = get_best_part(candidates, gThreshold, check_overlap);
@@ -691,6 +722,7 @@ UVParts pipeline_helper(std::vector<int> leaves, Tree tree, int root, double cha
         check_overlap = CONFIG_pipelineOverlaps;
 
         std::vector<std::vector<UVParts>>  new_candidates =  get_uv_wrapper(Fc, Vc, gThreshold, false, true, (int)chart_limit);
+        for (auto &parts : new_candidates) remap_source_vids(parts, local2global);
 
         for(int i = 0; i < candidates.size(); ++i){
             candidates[i].insert(candidates[i].end(), new_candidates[i].begin(), new_candidates[i].end());
@@ -760,8 +792,11 @@ UVParts pipeline_helper(std::vector<int> leaves, Tree tree, int root, double cha
                 assert(leaves.size() <= 1);
                 if (leaves.size() == 0) return {};
                 Eigen::MatrixXd Vc; Eigen::MatrixXi Fc;
-                ExtractSubmesh(leaves, gF, gV, Fc, Vc);
-                return unwrap_aligning_one(Vc, Fc, gThreshold, false, 1);
+                std::vector<int> local2global;
+                ExtractSubmesh(leaves, gF, gV, Fc, Vc, &local2global);
+                std::vector<Component> components = unwrap_aligning_one(Vc, Fc, gThreshold, false, 1);
+                for (Component &comp : components) remap_source_vids(comp, local2global);
+                return components;
             };
             
             UVParts left_uv_components ;
