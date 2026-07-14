@@ -18,7 +18,7 @@ from ..utils.paths import (
 )
 
 # must match engine/partuv/pyproject.toml
-PARTUV_VERSION = "0.1.3.0"
+PARTUV_VERSION = "0.1.3.1"
 PARTUV_RELEASE_API = f"https://api.github.com/repos/DanielBoxer/UVgami/releases/tags/partuv-v{PARTUV_VERSION}"
 # mirrored onto the fixed `checkpoint` release so installs don't depend on the HF
 # repo staying up or its main branch not moving (see mirror-checkpoint.yml)
