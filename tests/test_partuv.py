@@ -331,3 +331,9 @@ def test_windows_reinstall_hint_when_native_fails(triangle, tmp_path, monkeypatc
     message = str(error.value)
     assert "reinstall PartUV" in message
     assert "msvcp140 missing" in message
+
+
+def test_preprocess_module_imports():
+    from importlib import import_module
+
+    assert callable(import_module('partuv.preprocess').preprocess)

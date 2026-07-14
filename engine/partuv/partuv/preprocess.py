@@ -59,6 +59,3 @@ def preprocess(mesh_path, pf_model=None, output_path=None, save_tree_file=False,
     preprocess_times["pf"] = pf_time
     
     return mesh, binary_file_path, tree_dict, preprocess_times
-
-# moved to output.py so the torch-free path can use them; re-exported for compat
-from .output import _tm_mesh, save_results  # noqa: E402,F401
