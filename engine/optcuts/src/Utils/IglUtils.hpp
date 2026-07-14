@@ -9,6 +9,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <vector>
 
 namespace uvgami {
 
@@ -104,6 +105,13 @@ class IglUtils {
                                      const Eigen::RowVector2d &c,
                                      const Eigen::RowVector2d &d,
                                      double eps = 0.0);
+
+    // true if any two non-adjacent UV boundary edges cross, i.e. the input UV
+    // islands self-intersect or overlap each other. spatial-hash broad phase,
+    // Test2DSegmentSegment narrow phase. does not catch full containment.
+    static bool checkUVBoundaryOverlap(
+        const Eigen::MatrixXd &UV,
+        const std::vector<std::vector<int>> &bnd_all);
 
     static void
     addThickEdge(Eigen::MatrixXd &V, Eigen::MatrixXi &F, Eigen::MatrixXd &UV,

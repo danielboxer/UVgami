@@ -5,6 +5,7 @@
 #include <tbb/tbb.h>
 
 #include <set>
+#include <unordered_map>
 
 namespace uvgami {
 
@@ -614,6 +615,87 @@ bool IglUtils::Test2DSegmentSegment(const Eigen::RowVector2d &a,
     }
 
     // Segments not intersecting
+    return false;
+}
+
+bool IglUtils::checkUVBoundaryOverlap(
+    const Eigen::MatrixXd &UV,
+    const std::vector<std::vector<int>> &bnd_all) {
+    std::vector<std::pair<int, int>> edges;
+    for (const auto &loop : bnd_all) {
+        int n = loop.size();
+        for (int i = 0; i < n; ++i) {
+            edges.emplace_back(loop[i], loop[(i + 1) % n]);
+        }
+    }
+    if (edges.size() < 2) {
+        return false;
+    }
+
+    double totalLen = 0.0;
+    for (const auto &e : edges) {
+        totalLen += (UV.row(e.first) - UV.row(e.second)).norm();
+    }
+    double cellSize = totalLen / edges.size();
+    if (cellSize <= 0.0) {
+        return false;
+    }
+
+    // collisions only add narrow-phase tests, they never miss an overlap
+    auto cellKey = [](int cx, int cy) -> int64_t {
+        return ((int64_t)cx * 73856093) ^ ((int64_t)cy * 19349663);
+    };
+    auto cellRange = [&](int ei, int &cxMin, int &cxMax, int &cyMin,
+                         int &cyMax) {
+        const auto a = UV.row(edges[ei].first);
+        const auto b = UV.row(edges[ei].second);
+        cxMin = std::floor(std::min(a[0], b[0]) / cellSize);
+        cxMax = std::floor(std::max(a[0], b[0]) / cellSize);
+        cyMin = std::floor(std::min(a[1], b[1]) / cellSize);
+        cyMax = std::floor(std::max(a[1], b[1]) / cellSize);
+    };
+
+    std::unordered_map<int64_t, std::vector<int>> grid;
+    for (int ei = 0; ei < (int)edges.size(); ++ei) {
+        int cxMin, cxMax, cyMin, cyMax;
+        cellRange(ei, cxMin, cxMax, cyMin, cyMax);
+        for (int cx = cxMin; cx <= cxMax; ++cx) {
+            for (int cy = cyMin; cy <= cyMax; ++cy) {
+                grid[cellKey(cx, cy)].push_back(ei);
+            }
+        }
+    }
+
+    for (int ei = 0; ei < (int)edges.size(); ++ei) {
+        const Eigen::RowVector2d a = UV.row(edges[ei].first).head<2>();
+        const Eigen::RowVector2d b = UV.row(edges[ei].second).head<2>();
+        int cxMin, cxMax, cyMin, cyMax;
+        cellRange(ei, cxMin, cxMax, cyMin, cyMax);
+        std::set<int> candidates;
+        for (int cx = cxMin; cx <= cxMax; ++cx) {
+            for (int cy = cyMin; cy <= cyMax; ++cy) {
+                for (int ej : grid[cellKey(cx, cy)]) {
+                    if (ej > ei) {
+                        candidates.insert(ej);
+                    }
+                }
+            }
+        }
+        for (int ej : candidates) {
+            // adjacent boundary edges share a vertex, skip them
+            if (edges[ei].first == edges[ej].first ||
+                edges[ei].first == edges[ej].second ||
+                edges[ei].second == edges[ej].first ||
+                edges[ei].second == edges[ej].second) {
+                continue;
+            }
+            const Eigen::RowVector2d c = UV.row(edges[ej].first).head<2>();
+            const Eigen::RowVector2d d = UV.row(edges[ej].second).head<2>();
+            if (Test2DSegmentSegment(a, b, c, d)) {
+                return true;
+            }
+        }
+    }
     return false;
 }
 ////////////////////////////////////////////////////////////
