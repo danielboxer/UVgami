@@ -26,6 +26,8 @@ CHECKPOINT_URL = "https://github.com/DanielBoxer/UVgami/releases/download/checkp
 # the ai extra pins torch 2.3.0 (cu121); torch-scatter has no matching pypi
 # wheel, so pip must be pointed at the pyg wheel index to avoid a source build
 TORCH_SCATTER_FIND_LINKS = "https://data.pyg.org/whl/torch-2.3.0+cu121.html"
+# partuv is a cuda wheel (nvidia-only), so no macos build exists
+PARTUV_PLATFORMS = ("Windows", "Linux")
 # partuv runs in a managed 3.11 venv, decoupled from blender's python version
 VENV_PYTHON = "3.11"
 PARTUV_PY_TAG = "cp311"
@@ -180,7 +182,7 @@ class UVGAMI_OT_install_partuv(bpy.types.Operator):
         if install_state["running"]:
             self.report({"WARNING"}, "PartUV install is already running")
             return {"CANCELLED"}
-        if platform.system() not in ("Windows", "Linux"):
+        if platform.system() not in PARTUV_PLATFORMS:
             self.report({"ERROR"}, "PartUV is only available on Windows and Linux")
             return {"CANCELLED"}
 

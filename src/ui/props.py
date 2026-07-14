@@ -58,7 +58,11 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     engine: bpy.props.EnumProperty(
         name="Engine",
         description="The unwrapping engine to use",
-        items=tuple((e.id, e.label, e.description) for e in ENGINES.values()),
+        items=tuple(
+            (e.id, e.label, e.description)
+            for e in ENGINES.values()
+            if e.is_available()
+        ),
         default="OPTCUTS",
         update=update_engine,
     )
