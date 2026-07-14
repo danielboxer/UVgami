@@ -155,6 +155,8 @@ class OptcutsEngine(Engine):
             102: ("Non Manifold Vertices", True),
             105: ("Invalid Geometry", True),
             107: ("Invalid UV Input", True),
+            108: ("Unsupported Mesh Topology", True),
+            109: ("Initial Cut Failed", True),
         }.get(code) or super().describe_failure(code)
 
     def request_early_stop(self, process):
