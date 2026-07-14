@@ -19,11 +19,11 @@ partuv-lite = ["partuv; sys_platform == 'linux' or sys_platform == 'win32'"]
 dev = ["pytest>=8", "ruff>=0.12", "numpy"]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.11.14,<0.12"]
+build-backend = "uv_build"
 
-[tool.hatch.build.targets.wheel]
-packages = ["uvgami_cli"]
+[tool.uv.build-backend]
+module-root = ""
 
 [tool.uv]
 environments = ["sys_platform == 'win32'", "sys_platform == 'linux'"]
