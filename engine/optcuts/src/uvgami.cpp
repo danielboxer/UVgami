@@ -26,6 +26,7 @@
 #include <igl/edge_lengths.h>
 #include <igl/is_vertex_manifold.h>
 #include <igl/is_edge_manifold.h>
+#include <igl/facet_components.h>
 #include <igl/readOBJ.h>
 #include <igl/writeOBJ.h>
 
@@ -976,213 +977,192 @@ int main(int argc, char *argv[]) {
             return UVGAMI_RC_NON_MANIFOLD_EDGES;
         }
 
-        std::vector<std::vector<int>> bnd_all;
-        igl::boundary_loop(F, bnd_all);
-        Eigen::VectorXi bnd;
-        if (bnd_all.size()) {
-            // ASSUME: no disconnected closed surface present
-            if (bnd_all.size() == 1) {
-                // disk-topology
-                bnd.resize(bnd_all[0].size());
-                std::memcpy(bnd.data(), bnd_all[0].data(),
-                            sizeof(int) * bnd.size());
+        // no UV provided, compute initial UV
+        Eigen::VectorXi C;
+        igl::facet_components(F, C);
+        int n_components = C.maxCoeff() + 1;
 
-                // Map the boundary to a circle, preserving edge proportions
-                Eigen::MatrixXd bnd_uv;
-                uvgami::IglUtils::map_vertices_to_circle(V, bnd, bnd_uv);
+        // in each pass, make one cut on each component if needed, until all
+        // becoming disk-topology
+        uvgami::TriMesh temp(V, F, Eigen::MatrixXd(), Eigen::MatrixXi(), false);
+        std::vector<Eigen::MatrixXi> F_component(n_components);
+        std::vector<std::set<int>> V_ind_component(n_components);
+        for (int triI = 0; triI < temp.F.rows(); ++triI) {
+            F_component[C[triI]].conservativeResize(
+                F_component[C[triI]].rows() + 1, 3);
+            F_component[C[triI]].bottomRows(1) = temp.F.row(triI);
+            for (int i = 0; i < 3; ++i) {
+                V_ind_component[C[triI]].insert(temp.F(triI, i));
+            }
+        }
+        while (true) {
+            std::vector<int> components_to_cut;
+            for (int componentI = 0; componentI < n_components; ++componentI) {
+                int EC = igl::euler_characteristic(temp.V,
+                                                   F_component[componentI]) -
+                         temp.V.rows() + V_ind_component[componentI].size();
+                if (EC < 1) {
+                    // treat as higher-genus surfaces using cut_to_disk()
+                    components_to_cut.emplace_back(-componentI - 1);
+                } else if (EC == 2) {
+                    // closed genus-0 surface
+                    components_to_cut.emplace_back(componentI);
+                } else if (EC != 1) {
+                    std::cerr << "unsupported single-connected component"
+                              << std::endl;
+                    return UVGAMI_RC_UNSUPPORTED_TOPOLOGY;
+                }
+            }
 
-                Eigen::MatrixXd UV_Tutte;
+            if (components_to_cut.empty()) {
+                break;
+            }
 
-                // Harmonic map with uniform weights
-                if (bnd.size() == V.rows()) {
-                    UV_Tutte.resize(V.rows(), 2);
-                    for (int bndVI = 0; bndVI < bnd_uv.rows(); ++bndVI) {
-                        UV_Tutte.row(bnd[bndVI]) = bnd_uv.row(bndVI);
+            for (auto componentI : components_to_cut) {
+                if (componentI < 0) {
+                    // cut high genus
+                    componentI = -componentI - 1;
+
+                    // meshes with boundary are supported; boundary edges
+                    // will be included as cuts
+                    std::vector<std::vector<int>> cuts;
+                    igl::cut_to_disk(F_component[componentI], cuts);
+
+                    // only cut one seam each time to avoid seam vertex id
+                    // inconsistency
+                    int cuts_made = 0;
+                    for (auto &seamI : cuts) {
+                        if (seamI.front() == seamI.back()) {
+                            // cutPath() does not support closed-loop cuts,
+                            // split it into two cuts
+                            cuts_made += temp.cutPath(
+                                std::vector<int>({seamI[seamI.size() - 3],
+                                                  seamI[seamI.size() - 2],
+                                                  seamI[seamI.size() - 1]}),
+                                true);
+                            temp.initSeams = temp.cohE;
+                            seamI.resize(seamI.size() - 2);
+                        }
+                        cuts_made += temp.cutPath(seamI, true);
+                        temp.initSeams = temp.cohE;
+                        if (cuts_made) {
+                            break;
+                        }
+                    }
+
+                    if (!cuts_made) {
+                        std::cerr << "no cuts made when cutting input "
+                                     "geometry to disk-topology"
+                                  << std::endl;
+                        return UVGAMI_RC_CUT_FAILED;
                     }
                 } else {
-                    Eigen::SparseMatrix<double> A, M;
-                    uvgami::IglUtils::computeUniformLaplacian(F, A);
-                    igl::harmonic(A, M, bnd, bnd_uv, 1, UV_Tutte);
-                    //            uvgami::IglUtils::computeMVCMtr(V, F, A);
-                    //            uvgami::IglUtils::fixedBoundaryParam_MVC(A,
-                    //            bnd, bnd_uv, UV_Tutte);
-                }
-
-                triSoup.emplace_back(new uvgami::TriMesh(
-                    V, F, UV_Tutte, Eigen::MatrixXi(), false));
-            }
-
-            else {
-                // multiple disk topology surfaces
-                int UVGridDim = std::ceil(std::sqrt(bnd_all.size()));
-                Eigen::VectorXi bnd_stacked;
-                Eigen::MatrixXd bnd_uv_stacked;
-                int curBndVAmt = 0;
-                for (int bndI = 0; bndI < bnd_all.size(); bndI++) {
-                    // map boundary to unit circle
-                    bnd_stacked.conservativeResize(curBndVAmt +
-                                                   bnd_all[bndI].size());
-                    bnd_stacked.tail(bnd_all[bndI].size()) =
-                        Eigen::VectorXi::Map(bnd_all[bndI].data(),
-                                             bnd_all[bndI].size());
-
-                    Eigen::MatrixXd bnd_uv;
-                    igl::map_vertices_to_circle(
-                        V, bnd_stacked.tail(bnd_all[bndI].size()), bnd_uv);
-                    double xOffset = bndI % UVGridDim * 2.1,
-                           yOffset = bndI / UVGridDim * 2.1;
-                    for (int bnd_uvI = 0; bnd_uvI < bnd_uv.rows(); bnd_uvI++) {
-                        bnd_uv(bnd_uvI, 0) += xOffset;
-                        bnd_uv(bnd_uvI, 1) += yOffset;
-                    }
-                    bnd_uv_stacked.conservativeResize(
-                        curBndVAmt + bnd_uv.rows(), 2);
-                    bnd_uv_stacked.bottomRows(bnd_uv.rows()) = bnd_uv;
-
-                    curBndVAmt = bnd_stacked.size();
-                }
-                // Harmonic map with uniform weights
-                Eigen::MatrixXd UV_Tutte;
-                Eigen::SparseMatrix<double> A, M;
-                uvgami::IglUtils::computeUniformLaplacian(F, A);
-                igl::harmonic(A, M, bnd_stacked, bnd_uv_stacked, 1, UV_Tutte);
-
-                triSoup.emplace_back(new uvgami::TriMesh(
-                    V, F, UV_Tutte, Eigen::MatrixXi(), false));
-            }
-        } else {
-            // closed surface
-            int genus = 1 - igl::euler_characteristic(V, F) / 2;
-            if (genus != 0) {
-                // DISABLE std::cout << "Input surface genus = " +
-                // std::to_string(genus) + " or has multiple connected
-                // components!" << std::endl;
-                std::vector<std::vector<int>> cuts;
-                igl::cut_to_disk(F, cuts);
-
-                // record cohesive edge information,
-                // transfer information format for cut_mesh
-                uvgami::TriMesh temp(V, F, Eigen::MatrixXd(), Eigen::MatrixXi(),
-                                     false);
-                Eigen::MatrixXi cutFlags(F.rows(), 3);
-                Eigen::MatrixXi cohEdgeRecord;
-                cutFlags.setZero();
-                for (const auto &seamI : cuts) {
-                    for (int segI = 0; segI + 1 < seamI.size(); segI++) {
-                        std::pair<int, int> edge(seamI[segI], seamI[segI + 1]);
-                        auto finder = temp.edge2Tri.find(edge);
-                        assert(finder != temp.edge2Tri.end());
-                        int i = 0;
-                        for (; i < 3; i++) {
-                            if (temp.F(finder->second, i) == edge.first) {
-                                cutFlags(finder->second, i) = 1;
-                                break;
-                            }
-                        }
-                        int cohERI = cohEdgeRecord.rows();
-                        cohEdgeRecord.conservativeResize(cohERI + 1, 4);
-                        cohEdgeRecord(cohERI, 0) = finder->second;
-                        cohEdgeRecord(cohERI, 1) = i;
-
-                        edge.second = seamI[segI];
-                        edge.first = seamI[segI + 1];
-                        finder = temp.edge2Tri.find(edge);
-                        assert(finder != temp.edge2Tri.end());
-                        for (i = 0; i < 3; i++) {
-                            if (temp.F(finder->second, i) == edge.first) {
-                                cutFlags(finder->second, i) = 1;
-                                break;
-                            }
-                        }
-                        cohEdgeRecord(cohERI, 2) = finder->second;
-                        cohEdgeRecord(cohERI, 3) = i;
+                    // cut the topological sphere into a topological disk
+                    switch (initCutOption) {
+                    case 0:
+                        temp.onePointCut(F_component[componentI](0, 0));
+                        rand1PInitCut = (n_components == 1);
+                        break;
+                    case 1:
+                        temp.farthestPointCut(F_component[componentI](0, 0));
+                        break;
+                    default:
+                        assert(0);
+                        break;
                     }
                 }
-                Eigen::MatrixXd Vcut;
-                Eigen::MatrixXi Fcut;
-                igl::cut_mesh(temp.V_rest, temp.F, cutFlags, Vcut, Fcut);
-                igl::writeOBJ(outputFolderPath + meshName + "_disk.obj", Vcut,
-                              Fcut);
-                V = Vcut;
-                F = Fcut;
+            }
 
-                igl::boundary_loop(F, bnd); // Find the open boundary
-                assert(bnd.size());
-
-                Eigen::MatrixXd bnd_uv;
-                uvgami::IglUtils::map_vertices_to_circle(V, bnd, bnd_uv);
-
-                Eigen::MatrixXd UV_Tutte;
-
-                // Harmonic map with uniform weights
-                Eigen::SparseMatrix<double> A, M;
-                uvgami::IglUtils::computeUniformLaplacian(F, A);
-                igl::harmonic(A, M, bnd, bnd_uv, 1, UV_Tutte);
-                //            uvgami::IglUtils::computeMVCMtr(V, F, A);
-                //            uvgami::IglUtils::fixedBoundaryParam_MVC(A, bnd,
-                //            bnd_uv, UV_Tutte);
-
-                uvgami::TriMesh *ptr = new uvgami::TriMesh(
-                    V, F, UV_Tutte, Eigen::MatrixXi(), false);
-                ptr->buildCohEfromRecord(cohEdgeRecord);
-                triSoup.emplace_back(ptr);
-            } else {
-                uvgami::TriMesh *temp = new uvgami::TriMesh(
-                    V, F, Eigen::MatrixXd(), Eigen::MatrixXi(), false);
-                switch (initCutOption) {
-                case 0:
-                    temp->onePointCut();
-                    rand1PInitCut = true;
-                    break;
-                case 1:
-                    temp->farthestPointCut();
-                    break;
-                default:
-                    assert(0);
-                    break;
+            // data update on each component for identifying a new cut
+            F_component.resize(0);
+            F_component.resize(n_components);
+            V_ind_component.resize(0);
+            V_ind_component.resize(n_components);
+            for (int triI = 0; triI < temp.F.rows(); ++triI) {
+                F_component[C[triI]].conservativeResize(
+                    F_component[C[triI]].rows() + 1, 3);
+                F_component[C[triI]].bottomRows(1) = temp.F.row(triI);
+                for (int i = 0; i < 3; ++i) {
+                    V_ind_component[C[triI]].insert(temp.F(triI, i));
                 }
-                igl::boundary_loop(temp->F, bnd);
-                assert(bnd.size());
+            }
+        }
 
+        int UVGridDim = 0;
+        do {
+            ++UVGridDim;
+        } while (UVGridDim * UVGridDim < n_components);
+
+        // compute boundary UV coordinates, using a grid layout for multiComp
+        Eigen::VectorXi bnd_stacked;
+        Eigen::MatrixXd bnd_uv_stacked;
+        for (int componentI = 0; componentI < n_components; ++componentI) {
+            std::vector<std::vector<int>> bnd_all;
+            igl::boundary_loop(F_component[componentI], bnd_all);
+
+            int longest_bnd_id = 0;
+            for (int bnd_id = 1; bnd_id < bnd_all.size(); ++bnd_id) {
+                if (bnd_all[longest_bnd_id].size() < bnd_all[bnd_id].size()) {
+                    longest_bnd_id = bnd_id;
+                }
+            }
+
+            bnd_stacked.conservativeResize(bnd_stacked.size() +
+                                           bnd_all[longest_bnd_id].size());
+            bnd_stacked.tail(bnd_all[longest_bnd_id].size()) =
+                Eigen::VectorXi::Map(bnd_all[longest_bnd_id].data(),
+                                     bnd_all[longest_bnd_id].size());
+
+            Eigen::MatrixXd bnd_uv;
+            igl::map_vertices_to_circle(
+                temp.V_rest, bnd_stacked.tail(bnd_all[longest_bnd_id].size()),
+                bnd_uv);
+            double xOffset = componentI % UVGridDim * 2.1,
+                   yOffset = componentI / UVGridDim * 2.1;
+            for (int bnd_uvI = 0; bnd_uvI < bnd_uv.rows(); bnd_uvI++) {
+                bnd_uv(bnd_uvI, 0) += xOffset;
+                bnd_uv(bnd_uvI, 1) += yOffset;
+            }
+            bnd_uv_stacked.conservativeResize(
+                bnd_uv_stacked.rows() + bnd_uv.rows(), 2);
+            bnd_uv_stacked.bottomRows(bnd_uv.rows()) = bnd_uv;
+        }
+
+        // Harmonic map with uniform weights
+        Eigen::MatrixXd UV_Tutte;
+        Eigen::SparseMatrix<double> A, M;
+        uvgami::IglUtils::computeUniformLaplacian(temp.F, A);
+        igl::harmonic(A, M, bnd_stacked, bnd_uv_stacked, 1, UV_Tutte);
+
+        triSoup.emplace_back(
+            new uvgami::TriMesh(V, F, UV_Tutte, temp.F, false));
+
+        // a genus-0 one-point cut can invert under rounding on large or curvy
+        // meshes; retry from successive split vertices until the map is valid.
+        // upstream dropped this in 2218d87; kept here so such meshes still pass
+        if (rand1PInitCut) {
+            int splitVI = 0;
+            while (!triSoup.back()->checkInversion(true) &&
+                   splitVI + 1 < V.rows()) {
+                std::cerr << "element inversion during UV init, trying another "
+                             "vertex"
+                          << std::endl;
+                uvgami::TriMesh cutMesh(V, F, Eigen::MatrixXd(),
+                                        Eigen::MatrixXi(), false);
+                cutMesh.onePointCut(++splitVI);
+                Eigen::VectorXi bnd;
+                igl::boundary_loop(cutMesh.F, bnd);
+                assert(bnd.size());
                 Eigen::MatrixXd bnd_uv;
-                uvgami::IglUtils::map_vertices_to_circle(temp->V_rest, bnd,
+                uvgami::IglUtils::map_vertices_to_circle(cutMesh.V_rest, bnd,
                                                          bnd_uv);
-
-                Eigen::SparseMatrix<double> A, M;
-                uvgami::IglUtils::computeUniformLaplacian(temp->F, A);
-
-                Eigen::MatrixXd UV_Tutte;
-                igl::harmonic(A, M, bnd, bnd_uv, 1, UV_Tutte);
-
-                triSoup.emplace_back(new uvgami::TriMesh(
-                    V, F, UV_Tutte, temp->F, false, temp->initSeamLen));
-
-                // try initialize one-point cut with different vertices
-                // until no inversion is detected
-                int splitVI = 0;
-                while (!triSoup.back()->checkInversion(true)) {
-                    std::cout
-                        << "element inversion detected during UV "
-                           "initialization "
-                        << "due to rounding errors, trying another vertex..."
-                        << std::endl;
-
-                    delete temp;
-                    temp = new uvgami::TriMesh(V, F, Eigen::MatrixXd(),
-                                               Eigen::MatrixXi(), false);
-                    temp->onePointCut(++splitVI);
-
-                    igl::boundary_loop(temp->F, bnd);
-                    assert(bnd.size());
-                    uvgami::IglUtils::map_vertices_to_circle(temp->V_rest, bnd,
-                                                             bnd_uv);
-                    uvgami::IglUtils::computeUniformLaplacian(temp->F, A);
-                    igl::harmonic(A, M, bnd, bnd_uv, 1, UV_Tutte);
-                    delete triSoup.back();
-                    triSoup.back() = new uvgami::TriMesh(
-                        V, F, UV_Tutte, temp->F, false, temp->initSeamLen);
-                }
-                delete temp;
+                Eigen::SparseMatrix<double> A_retry, M_retry;
+                uvgami::IglUtils::computeUniformLaplacian(cutMesh.F, A_retry);
+                Eigen::MatrixXd UV_retry;
+                igl::harmonic(A_retry, M_retry, bnd, bnd_uv, 1, UV_retry);
+                delete triSoup.back();
+                triSoup.back() =
+                    new uvgami::TriMesh(V, F, UV_retry, cutMesh.F, false);
             }
         }
     }
