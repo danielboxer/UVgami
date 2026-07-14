@@ -918,8 +918,13 @@ int main(int argc, char *argv[]) {
         //	std::cout << "Multi-chart bijective UV map needs to be
         // validated." << std::endl;
 
-        if (!temp->checkInversion() /*|| (UVGridDim > 1)*/) {
-            std::cout << "local injectivity violated in input UV map, " <<
+        bool hasInversion = !temp->checkInversion();
+        bool hasOverlap = uvgami::IglUtils::checkUVBoundaryOverlap(temp->V,
+                                                                   bnd_all);
+        if (hasInversion || hasOverlap /*|| (UVGridDim > 1)*/) {
+            std::cout << (hasInversion ? "local injectivity violated"
+                                       : "self-intersecting UV islands")
+                      << " in input UV map, " <<
                 //"or multi-chart bijective UV map needs to be ensured, " <<
                 "obtaining new initial UV map by applying Tutte's embedding..."
                       << std::endl;
