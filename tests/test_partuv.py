@@ -336,4 +336,4 @@ def test_windows_reinstall_hint_when_native_fails(triangle, tmp_path, monkeypatc
 def test_preprocess_module_imports():
     from importlib import import_module
 
-    assert callable(import_module('partuv.preprocess').preprocess)
+    assert callable(import_module("partuv.preprocess").preprocess)

@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-from .ops.install import install_state
+from .ops.install import PARTUV_PLATFORMS, install_state
 from .utils.io import print_stdin
 from .utils.paths import (
     get_bundled_engine_path,
@@ -31,6 +31,10 @@ class Engine:
     supports_import_uvs = False
     # whether pack-after-unwrap starts enabled when this engine is selected
     pack_by_default = False
+
+    def is_available(self):
+        """Whether this engine can run on the current platform."""
+        return True
 
     def validate(self, prefs):
         """Return (ctx, None) if usable, else (None, error_message). ctx is an
@@ -194,6 +198,9 @@ class PartuvEngine(Engine):
     description = "Part-based unwrapping engine, requires an NVIDIA GPU"
     pack_by_default = True
 
+    def is_available(self):
+        return platform.system() in PARTUV_PLATFORMS
+
     def allows_concurrent(self, props):
         # ai loads torch and the partfield model per process, more than
         # one job oversubscribes vram and thrashes
@@ -221,6 +228,11 @@ class PartuvEngine(Engine):
         row.prop(props.partuv, "threshold")
 
     def draw_prefs(self, layout, prefs):
+        if not self.is_available():
+            layout.row().label(
+                text="PartUV needs Windows or Linux with an NVIDIA GPU", icon="ERROR"
+            )
+            return
         if find_partuv_dev_repo() is not None:
             layout.row().label(
                 text="PartUV: dev mode (running from repo)", icon="CHECKMARK"
