@@ -1,6 +1,3 @@
-# Copyright (C) 2022 Daniel Boxer
-# See __init__.py and LICENSE for more information
-
 from collections import namedtuple
 
 import bmesh
