@@ -1,6 +1,3 @@
-# Copyright (C) 2022 Daniel Boxer
-# See __init__.py and LICENSE for more information
-
 import math
 import numpy
 from .pyqtree import Index
