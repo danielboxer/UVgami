@@ -1,4 +1,5 @@
-# Copyright (C) 2022 Daniel Boxer
+# Copyright (C) 2026 Daniel Boxer
+# See LICENSE for more information
 #
 # UVgami is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
