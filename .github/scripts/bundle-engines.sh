@@ -23,8 +23,8 @@ for zip_file in "${engine_zips[@]}"; do
   tmp_dir=$(mktemp -d)
   unzip -o "$zip_file" -d "$tmp_dir"
 
-  # find the engine binary (named uvgami or uvgami.exe)
-  engine_bin=$(find "$tmp_dir" -name "uvgami" -o -name "uvgami.exe" | head -1)
+  # find the engine binary (named optcuts or optcuts.exe)
+  engine_bin=$(find "$tmp_dir" -name "optcuts" -o -name "optcuts.exe" | head -1)
   if [ -n "$engine_bin" ]; then
     mkdir -p "${ADDON_DIR}/engines/${platform}"
     cp "$engine_bin" "${ADDON_DIR}/engines/${platform}/"
@@ -50,7 +50,7 @@ cp .github/licenses/oneTBB-LICENSE-Apache2.txt "$license_dir/"
 cp .github/licenses/mimalloc-LICENSE-MIT.txt "$license_dir/"
 
 cat > "$license_dir/README.txt" <<'EOF'
-The UVgami OptCuts engine binary (engines/<platform>/uvgami[.exe]) statically
+The UVgami OptCuts engine binary (engines/<platform>/optcuts[.exe]) statically
 links these components. Their license texts are in this folder.
 
   OptCuts    MIT         OptCuts-LICENSE-MIT.txt

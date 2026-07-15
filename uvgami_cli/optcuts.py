@@ -28,13 +28,13 @@ def find_engine(explicit_path):
 
     system = platform.system()
     if system == "Windows":
-        subdir, name = "windows", "uvgami.exe"
+        subdir, name = "windows", "optcuts.exe"
     elif system == "Linux":
-        subdir, name = "linux", "uvgami"
+        subdir, name = "linux", "optcuts"
     elif system == "Darwin":
         machine = platform.machine().lower()
         subdir = "macos-arm64" if machine == "arm64" else "macos-x64"
-        name = "uvgami"
+        name = "optcuts"
     else:
         raise UnwrapError(EXIT_MISSING_RUNTIME, f"unsupported platform: {system}")
 

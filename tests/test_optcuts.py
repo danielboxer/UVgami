@@ -6,7 +6,7 @@ import pytest
 from uvgami_cli import optcuts
 from uvgami_cli.common import UnwrapError
 
-BUNDLED = optcuts.REPO_ROOT / "engines" / "windows" / "uvgami.exe"
+BUNDLED = optcuts.REPO_ROOT / "engines" / "windows" / "optcuts.exe"
 
 
 class FakeProcess:
@@ -34,7 +34,7 @@ class FakeProcess:
 
 @pytest.fixture
 def fake_engine(tmp_path):
-    path = tmp_path / "uvgami.exe"
+    path = tmp_path / "optcuts.exe"
     path.write_text("fake")
     return path
 
