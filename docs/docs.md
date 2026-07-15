@@ -90,7 +90,7 @@ Download the add-on [here](https://github.com/DanielBoxer/UVgami/releases/latest
 2. Setup Engine
     - Download `optcuts-engine-X.X.X-operating-system.zip` for your operating system from the [OptCuts engine releases](https://github.com/DanielBoxer/UVgami/releases?q=optcuts%20engine)
     - Unzip the folder and move it somewhere you keep applications, anywhere on your filesystem
-    - In Blender, open UVgami preferences and select the engine path using the button on the right of the input field. The `uvgami` app inside the engine folder is what should be selected
+    - In Blender, open UVgami preferences and select the engine path using the button on the right of the input field. The `optcuts` app inside the engine folder is what should be selected
 
 ![Engine Path](img/engine_path.jpg)
 

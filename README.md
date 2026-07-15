@@ -7,34 +7,36 @@
 > [!NOTE]
 > Check the [user guide](/docs/docs.md) for more detailed documentation.
 
-[Find the latest release here](https://github.com/DanielBoxer/UVgami/releases/latest) and pick one install option below:
+[Find the latest release here](https://github.com/danielboxer/UVgami/releases/latest) and pick one install option below:
 
-### Option 1: Download the Optcuts engine bundled with the add-on
+There are [two](#engines) supported engines.
+
+### Option 1: Download the add-on bundled with the default engine
 
 1. Get the bundle: `UVgami-bundled-with-engines.zip`
 2. The add-on will auto detect the engine since it's bundled
 
-### Option 2: Download the Optcuts engine separately
+### Option 2: Download the default engine separately
 
 1. Get the add-on: `UVgami.zip`
 2. Get the engine for your operating system (`optcuts-engine-X.X.X-operating-system.zip`) from the [OptCuts engine releases](https://github.com/danielboxer/UVgami/releases?q=optcuts-v1)
 3. Set the engine path in the add-on preferences after installing
 
-### Option 3: PartUV engine
+### Option 3: Download PartUV engine after install
 
-Requires an NVIDIA GPU. Install the add-on, then click `Install PartUV Engine` in the preferences.
+This is a different engine that requires an NVIDIA GPU. Install the add-on, then click `Install PartUV Engine` in the preferences.
 
 Once installed, you can switch between engines in the n-panel.
 
-![Elephant](https://github.com/DanielBoxer/UVgami/assets/65575771/07dd8351-5acb-493d-b35e-422d8da35a7f)
+![Elephant](https://github.com/danielboxer/UVgami/assets/65575771/07dd8351-5acb-493d-b35e-422d8da35a7f)
 
-![Elephant 2](https://github.com/DanielBoxer/UVgami/assets/65575771/bc33389b-b902-4334-85ec-fa637dce0fbb)
+![Elephant 2](https://github.com/danielboxer/UVgami/assets/65575771/bc33389b-b902-4334-85ec-fa637dce0fbb)
 
-![Seam Restrictions](https://github.com/DanielBoxer/UVgami/assets/65575771/632fb52f-b9fc-4b98-a3ed-c8b679fe3102)
+![Seam Restrictions](https://github.com/danielboxer/UVgami/assets/65575771/632fb52f-b9fc-4b98-a3ed-c8b679fe3102)
 
-![Ostrich](https://github.com/DanielBoxer/UVgami/assets/65575771/44f181df-7d06-4b35-aa32-3ef380a5c986)
+![Ostrich](https://github.com/danielboxer/UVgami/assets/65575771/44f181df-7d06-4b35-aa32-3ef380a5c986)
 
-![Rhino](https://github.com/DanielBoxer/UVgami/assets/65575771/12b691fc-4ff6-4462-9dbc-b615a85bf7fc)
+![Rhino](https://github.com/danielboxer/UVgami/assets/65575771/12b691fc-4ff6-4462-9dbc-b615a85bf7fc)
 
 ## Engines
 

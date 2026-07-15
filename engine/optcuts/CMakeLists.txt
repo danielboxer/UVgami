@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(uvgami)
+project(optcuts)
 
 option(UVGAMI_USE_MIMALLOC "Use mimalloc on Windows" ON)
 option(UVGAMI_ENABLE_AVX2 "Compile with the AVX2 floor on x86-64" ON)

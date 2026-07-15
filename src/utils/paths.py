@@ -71,16 +71,16 @@ def get_bundled_engine_path():
 
     if system == "Windows":
         platform_dir = "windows"
-        binary_name = "uvgami.exe"
+        binary_name = "optcuts.exe"
     elif system == "Linux":
         platform_dir = "linux"
-        binary_name = "uvgami"
+        binary_name = "optcuts"
     elif system == "Darwin":
         if machine == "arm64":
             platform_dir = "macos-arm64"
         else:
             platform_dir = "macos-x64"
-        binary_name = "uvgami"
+        binary_name = "optcuts"
     else:
         return None
 
