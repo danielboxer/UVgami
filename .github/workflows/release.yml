@@ -12,7 +12,6 @@ on:
 env:
   ADDON_NAME: "UVgami"
   INCLUDED_FILES: "src LICENSE __init__.py blender_manifest.toml"
-  ENGINE_PREFIX: optcuts-engine
 
 jobs:
   check-version:
@@ -47,6 +46,17 @@ jobs:
     secrets: inherit
     permissions:
       contents: write
+    with:
+      engine: optcuts
+
+  xatlas:
+    needs: prepare
+    uses: ./.github/workflows/engine-build.yml
+    secrets: inherit
+    permissions:
+      contents: write
+    with:
+      engine: xatlas
 
   partuv:
     needs: prepare
@@ -56,7 +66,7 @@ jobs:
       contents: write
 
   package:
-    needs: [prepare, optcuts, partuv]
+    needs: [prepare, optcuts, xatlas, partuv]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -66,20 +76,35 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Download built engines
+      - name: Download built optcuts
         if: needs.optcuts.outputs.built == 'true'
         uses: actions/download-artifact@v4
         with:
-          pattern: engine-*
+          pattern: optcuts-*
           merge-multiple: true
 
-      - name: Download released engines
+      - name: Download built xatlas
+        if: needs.xatlas.outputs.built == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: xatlas-*
+          merge-multiple: true
+
+      - name: Download released optcuts
         if: needs.optcuts.outputs.built != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ENGINE_VERSION=$(cat engine/optcuts/VERSION | tr -d '[:space:]')
-          gh release download "optcuts-v$ENGINE_VERSION" -p "${ENGINE_PREFIX}-*.zip"
+          gh release download "optcuts-v$ENGINE_VERSION" -p "optcuts-engine-*.zip"
+
+      - name: Download released xatlas
+        if: needs.xatlas.outputs.built != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ENGINE_VERSION=$(cat engine/xatlas/VERSION | tr -d '[:space:]')
+          gh release download "xatlas-v$ENGINE_VERSION" -p "xatlas-engine-*.zip"
 
       - name: Move to nested folder
         run: |
@@ -88,7 +113,8 @@ jobs:
 
       - name: Bundle engines and zip
         run: |
-          bash .github/scripts/bundle-engines.sh $ADDON_NAME $ENGINE_PREFIX
+          bash .github/scripts/bundle-engines.sh $ADDON_NAME optcuts-engine
+          bash .github/scripts/bundle-engines.sh $ADDON_NAME xatlas-engine
           zip -r ${ADDON_NAME}.zip $ADDON_NAME
 
       - name: Build extension zips

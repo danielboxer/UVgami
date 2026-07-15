@@ -8,6 +8,9 @@ set -euo pipefail
 ADDON_DIR="$1"
 ENGINE_ZIP_PREFIX="$2"
 
+# the binary name is the prefix without the -engine suffix (optcuts, xatlas)
+engine_bin_name="${ENGINE_ZIP_PREFIX%-engine}"
+
 engine_zips=( ${ENGINE_ZIP_PREFIX}-*.zip )
 if [ ! -f "${engine_zips[0]}" ]; then
   echo "No engine zips found matching ${ENGINE_ZIP_PREFIX}-*.zip"
@@ -23,8 +26,8 @@ for zip_file in "${engine_zips[@]}"; do
   tmp_dir=$(mktemp -d)
   unzip -o "$zip_file" -d "$tmp_dir"
 
-  # find the engine binary (named optcuts or optcuts.exe)
-  engine_bin=$(find "$tmp_dir" -name "optcuts" -o -name "optcuts.exe" | head -1)
+  # find the engine binary (named e.g. optcuts or optcuts.exe)
+  engine_bin=$(find "$tmp_dir" -name "$engine_bin_name" -o -name "${engine_bin_name}.exe" | head -1)
   if [ -n "$engine_bin" ]; then
     mkdir -p "${ADDON_DIR}/engines/${platform}"
     cp "$engine_bin" "${ADDON_DIR}/engines/${platform}/"
@@ -36,9 +39,10 @@ for zip_file in "${engine_zips[@]}"; do
   rm -rf "$tmp_dir"
 done
 
-# ship the license notices for the optcuts binary and everything statically
-# linked into it, next to the binaries. mit and apache-2.0 require the notice
+# ship the license notices for both engine binaries and everything statically
+# linked into them, next to the binaries. mit and apache-2.0 require the notice
 # travel with the binary; mpl-2.0 requires the notice plus source availability.
+# runs on every invocation and covers both engines, so it stays idempotent.
 license_dir="${ADDON_DIR}/engines/licenses"
 mkdir -p "$license_dir"
 cp engine/optcuts/LICENSE.txt "$license_dir/OptCuts-LICENSE-MIT.txt"
@@ -48,6 +52,8 @@ cp engine/optcuts/ext/libigl/LICENSE.MPL2 "$license_dir/libigl-LICENSE-MPL2.txt"
 # engine build treats any diff there as needing a version bump.
 cp .github/licenses/oneTBB-LICENSE-Apache2.txt "$license_dir/"
 cp .github/licenses/mimalloc-LICENSE-MIT.txt "$license_dir/"
+# xatlas is dependency-free and links nothing extra
+cp engine/xatlas/LICENSE "$license_dir/xatlas-LICENSE-MIT.txt"
 
 cat > "$license_dir/README.txt" <<'EOF'
 The UVgami OptCuts engine binary (engines/<platform>/optcuts[.exe]) statically
@@ -58,6 +64,11 @@ links these components. Their license texts are in this folder.
   Eigen      MPL-2.0     https://www.mozilla.org/MPL/2.0/ (headers, fetched at build)
   oneTBB     Apache-2.0  oneTBB-LICENSE-Apache2.txt
   mimalloc   MIT         mimalloc-LICENSE-MIT.txt
+
+The UVgami xatlas engine binary (engines/<platform>/xatlas[.exe]) is
+dependency-free and links no other components.
+
+  xatlas     MIT         xatlas-LICENSE-MIT.txt
 
 The UVgami add-on itself is GPL-3.0-or-later (see the add-on's LICENSE).
 EOF

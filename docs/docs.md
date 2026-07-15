@@ -15,6 +15,7 @@ Blender 2.9+
 
 - [Installation](#installation)
   - [Add-on](#add-on)
+  - [xatlas Engine](#xatlas-engine)
   - [PartUV Engine](#partuv-engine)
 - [Instructions](#instructions)
   - [Unwrap a Mesh](#unwrap-a-mesh)
@@ -83,6 +84,10 @@ Download the add-on [here](https://github.com/DanielBoxer/UVgami/releases/latest
 To use a different OptCuts build instead of the bundled one, select it with the button on the right of the `Engine Path` field. The `optcuts` app inside the engine folder is what should be selected. Builds are on the [OptCuts engine releases](https://github.com/DanielBoxer/UVgami/releases?q=optcuts%20engine) as `optcuts-engine-X.X.X-operating-system.zip`.
 
 ![Engine Path](img/engine_path.jpg)
+
+### xatlas Engine
+
+xatlas is bundled and auto detected like OptCuts, so there's nothing to install. It's a fast unwrapper with no settings to tune.
 
 ### PartUV Engine
 
