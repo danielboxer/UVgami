@@ -1062,14 +1062,17 @@ int main(int argc, char *argv[]) {
                         return UVGAMI_RC_CUT_FAILED;
                     }
                 } else {
-                    // cut the topological sphere into a topological disk
+                    // cut the topological sphere into a topological disk;
+                    // seed at the component's smallest vertex index so a
+                    // single-component mesh cuts at vertex 0
+                    int seedVI = *V_ind_component[componentI].begin();
                     switch (initCutOption) {
                     case 0:
-                        temp.onePointCut(F_component[componentI](0, 0));
+                        temp.onePointCut(seedVI);
                         rand1PInitCut = (n_components == 1);
                         break;
                     case 1:
-                        temp.farthestPointCut(F_component[componentI](0, 0));
+                        temp.farthestPointCut(seedVI);
                         break;
                     default:
                         assert(0);
@@ -1119,9 +1122,16 @@ int main(int argc, char *argv[]) {
                                      bnd_all[longest_bnd_id].size());
 
             Eigen::MatrixXd bnd_uv;
-            igl::map_vertices_to_circle(
-                temp.V_rest, bnd_stacked.tail(bnd_all[longest_bnd_id].size()),
-                bnd_uv);
+            if (n_components == 1) {
+                // multiComp keeps unit circles so the 2.1 grid offsets hold
+                uvgami::IglUtils::map_vertices_to_circle(
+                    temp.V_rest,
+                    bnd_stacked.tail(bnd_all[longest_bnd_id].size()), bnd_uv);
+            } else {
+                igl::map_vertices_to_circle(
+                    temp.V_rest,
+                    bnd_stacked.tail(bnd_all[longest_bnd_id].size()), bnd_uv);
+            }
             double xOffset = componentI % UVGridDim * 2.1,
                    yOffset = componentI / UVGridDim * 2.1;
             for (int bnd_uvI = 0; bnd_uvI < bnd_uv.rows(); bnd_uvI++) {
