@@ -14,9 +14,8 @@ Blender 2.9+
 ## Table of Contents <!-- omit in toc -->
 
 - [Installation](#installation)
-  - [Option 1: Bundled Version](#option-1-bundled-version)
-  - [Option 2: Add-on and OptCuts Engine Separately](#option-2-add-on-and-optcuts-engine-separately)
-  - [Option 3: PartUV Engine](#option-3-partuv-engine)
+  - [Add-on](#add-on)
+  - [PartUV Engine](#partuv-engine)
 - [Instructions](#instructions)
   - [Unwrap a Mesh](#unwrap-a-mesh)
   - [Unwrap Buttons](#unwrap-buttons)
@@ -75,28 +74,19 @@ Blender 2.9+
 
 Download the add-on [here](https://github.com/DanielBoxer/UVgami/releases/latest)
 
-### Option 1: Bundled Version
+### Add-on
 
-- Download `UVgami-bundled-with-engines.zip` (don't extract it)
+- Download `UVgami.zip` (don't extract it)
 - Drag and drop the zip file into Blender
 - The add-on auto detects the OptCuts engine since it's bundled. Preferences shows `Using bundled engine` under the `Engine Path` field
 
-### Option 2: Add-on and OptCuts Engine Separately
-
-1. Install Add-on
-    - Download `UVgami.zip` (don't extract it)
-    - Drag and drop `UVgami.zip` into Blender
-
-2. Setup Engine
-    - Download `optcuts-engine-X.X.X-operating-system.zip` for your operating system from the [OptCuts engine releases](https://github.com/DanielBoxer/UVgami/releases?q=optcuts%20engine)
-    - Unzip the folder and move it somewhere you keep applications, anywhere on your filesystem
-    - In Blender, open UVgami preferences and select the engine path using the button on the right of the input field. The `optcuts` app inside the engine folder is what should be selected
+To use a different OptCuts build instead of the bundled one, select it with the button on the right of the `Engine Path` field. The `optcuts` app inside the engine folder is what should be selected. Builds are on the [OptCuts engine releases](https://github.com/DanielBoxer/UVgami/releases?q=optcuts%20engine) as `optcuts-engine-X.X.X-operating-system.zip`.
 
 ![Engine Path](img/engine_path.jpg)
 
-### Option 3: PartUV Engine
+### PartUV Engine
 
-PartUV needs CUDA and runs on Windows or Linux. Install the add-on first (Option 1 or 2), then in UVgami preferences click `Install PartUV Engine`. It downloads the engine and installs it into a managed Python venv.
+PartUV needs CUDA and runs on Windows or Linux. Install the add-on first, then in UVgami preferences click `Install PartUV Engine`. It downloads the engine and installs it into a managed Python venv.
 
 
 ## Instructions

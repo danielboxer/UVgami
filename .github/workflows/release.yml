@@ -13,7 +13,6 @@ env:
   ADDON_NAME: "UVgami"
   INCLUDED_FILES: "src LICENSE __init__.py blender_manifest.toml"
   ENGINE_PREFIX: optcuts-engine
-  BUNDLED_NAME: "UVgami-bundled-with-engines"
 
 jobs:
   check-version:
@@ -87,13 +86,10 @@ jobs:
           mkdir $ADDON_NAME
           mv $INCLUDED_FILES $ADDON_NAME
 
-      - name: Zip folder
-        run: zip -r ${ADDON_NAME}.zip $ADDON_NAME
-
-      - name: Create bundled addon with engines
+      - name: Bundle engines and zip
         run: |
           bash .github/scripts/bundle-engines.sh $ADDON_NAME $ENGINE_PREFIX
-          zip -r ${BUNDLED_NAME}.zip $ADDON_NAME
+          zip -r ${ADDON_NAME}.zip $ADDON_NAME
 
       - name: Determine TAG
         run: echo "TAG=${{ needs.prepare.outputs.tag }}" >> $GITHUB_ENV
@@ -103,9 +99,3 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ env.TAG }}
         run: gh release create "$TAG" "${ADDON_NAME}.zip" --title "$TAG"
-
-      - name: Upload bundled addon
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ env.TAG }}
-        run: gh release upload "$TAG" "${BUNDLED_NAME}.zip"

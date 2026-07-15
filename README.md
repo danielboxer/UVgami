@@ -7,22 +7,16 @@
 > [!NOTE]
 > Check the [user guide](/docs/docs.md) for more detailed documentation.
 
-[Find the latest release here](https://github.com/danielboxer/UVgami/releases/latest) and pick one install option below:
+[Find the latest release here](https://github.com/danielboxer/UVgami/releases/latest).
 
 There are [two](#engines) supported engines.
 
-### Option 1: Download the add-on bundled with the default engine
-
-1. Get the bundle: `UVgami-bundled-with-engines.zip`
-2. The add-on will auto detect the engine since it's bundled
-
-### Option 2: Download the default engine separately
+### Install the add-on
 
 1. Get the add-on: `UVgami.zip`
-2. Get the engine for your operating system (`optcuts-engine-X.X.X-operating-system.zip`) from the [OptCuts engine releases](https://github.com/danielboxer/UVgami/releases?q=optcuts-v1)
-3. Set the engine path in the add-on preferences after installing
+2. The add-on will auto detect the engine since it's bundled
 
-### Option 3: Download PartUV engine after install
+### Download PartUV engine after install
 
 This is a different engine that requires an NVIDIA GPU. Install the add-on, then click `Install PartUV Engine` in the preferences.
 
