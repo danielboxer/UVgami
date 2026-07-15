@@ -31,7 +31,7 @@ jobs:
         shell: bash
         run: |
           VERSION=$(grep -m1 '^version' engine/partuv/pyproject.toml | sed -E 's/version *= *"(.*)"/\1/')
-          INSTALL_VERSION=$(grep -m1 '^PARTUV_VERSION' src/ops/install.py | sed -E 's/PARTUV_VERSION *= *"(.*)"/\1/')
+          INSTALL_VERSION=$(grep -m1 '^PARTUV_VERSION' src/engines/partuv/install.py | sed -E 's/PARTUV_VERSION *= *"(.*)"/\1/')
           if [ "$VERSION" != "$INSTALL_VERSION" ]; then
             echo "::error::PartUV version $VERSION does not match install.py version $INSTALL_VERSION."
             exit 1

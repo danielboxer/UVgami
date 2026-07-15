@@ -166,7 +166,7 @@ def test_exhausts_attempts_and_raises(server, tmp_path):
 def test_partuv_version_matches_pyproject():
     pyproject = REPO_ROOT / "engine" / "partuv" / "pyproject.toml"
     version = tomllib.loads(pyproject.read_text())["project"]["version"]
-    install_src = (REPO_ROOT / "src" / "ops" / "install.py").read_text()
+    install_src = (REPO_ROOT / "src" / "engines" / "partuv" / "install.py").read_text()
     match = re.search(r'PARTUV_VERSION = "([^"]+)"', install_src)
     assert match, "PARTUV_VERSION constant not found in install.py"
     assert match.group(1) == version

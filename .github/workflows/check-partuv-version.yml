@@ -6,13 +6,13 @@ on:
   pull_request:
     paths:
       - engine/partuv/pyproject.toml
-      - src/ops/install.py
+      - src/engines/partuv/install.py
   push:
     branches:
       - master
     paths:
       - engine/partuv/pyproject.toml
-      - src/ops/install.py
+      - src/engines/partuv/install.py
 
 jobs:
   check:
@@ -23,10 +23,10 @@ jobs:
         shell: bash
         run: |
           pyproject=$(grep -m1 '^version' engine/partuv/pyproject.toml | sed -E 's/version *= *"(.*)"/\1/')
-          install=$(grep -m1 '^PARTUV_VERSION' src/ops/install.py | sed -E 's/PARTUV_VERSION *= *"(.*)"/\1/')
+          install=$(grep -m1 '^PARTUV_VERSION' src/engines/partuv/install.py | sed -E 's/PARTUV_VERSION *= *"(.*)"/\1/')
           echo "pyproject.toml: $pyproject"
           echo "install.py:     $install"
           if [ "$pyproject" != "$install" ]; then
-            echo "::error::PARTUV_VERSION ($install) != pyproject version ($pyproject). Update src/ops/install.py to match."
+            echo "::error::PARTUV_VERSION ($install) != pyproject version ($pyproject). Update src/engines/partuv/install.py to match."
             exit 1
           fi

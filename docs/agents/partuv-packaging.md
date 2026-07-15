@@ -8,9 +8,9 @@ PartUV runs in a managed Python 3.11 venv, as a subprocess, decoupled from Blend
 
 ## Implemented (verified by inspection, not yet run end to end)
 
-- `src/ops/install.py`: downloads pinned `uv` 0.11.25, `uv venv --python 3.11`, `uv pip install "partuv[ai] @ <wheel-url>" -f https://data.pyg.org/whl/torch-2.3.0+cu121.html` (AI) or `"partuv @ <url>"` (geometric). Both tiers run in the venv.
+- `src/engines/partuv/install.py`: downloads pinned `uv` 0.11.25, `uv venv --python 3.11`, `uv pip install "partuv[ai] @ <wheel-url>" -f https://data.pyg.org/whl/torch-2.3.0+cu121.html` (AI) or `"partuv @ <url>"` (geometric). Both tiers run in the venv.
 - `find_wheel_url` targets `cp311` (the venv), not Blender's Python, and matches `x86_64.whl` so manylinux names pass.
-- Driver ships in the wheel as `python -m partuv` (`partuv/{cli,common,__main__}.py`), so it can't drift from the compiled core it calls. `uvgami_cli` stays in the repo as the dev-only optcuts CLI. The wheel also packages `config.yaml`, `output.py`, and `geometric.py` (the latter two were imported but missing from the install list). `src/engines.py` installed mode: `[venv_python, "-m", "partuv"]`; `build_env` sets only `UVGAMI_PARTUV_CHECKPOINT`.
+- Driver ships in the wheel as `python -m partuv` (`partuv/{cli,common,__main__}.py`), so it can't drift from the compiled core it calls. `uvgami_cli` stays in the repo as the dev-only optcuts CLI. The wheel also packages `config.yaml`, `output.py`, and `geometric.py` (the latter two were imported but missing from the install list). `src/engines/partuv/__init__.py` installed mode: `[venv_python, "-m", "partuv"]`; `build_env` sets only `UVGAMI_PARTUV_CHECKPOINT`.
 - Checkpoint mirrored to the fixed `checkpoint` release: `install.py` pulls from `releases/download/checkpoint/model_objaverse.ckpt`; `.github/workflows/mirror-checkpoint.yml` copies it from HF (run once, rerun if upstream changes).
 - Geometric falls back to CPU when no nvidia driver is present: `cli.py` probes `nvcuda.dll`/`libcuda.so.1` and, if absent, rewrites the effective config with `pamo: false` so the cuda mesh simplifier is skipped. AI still requires CUDA (torch check).
 - Checkpoint and uv downloads resume: `src/utils/download.py` retries with `Range` requests against a `.part` file and verifies the size, so a dropped connection doesn't restart the 1.24GB checkpoint.

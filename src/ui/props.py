@@ -11,49 +11,6 @@ def update_engine(self, context):
     self.pack_after_unwrap = get_engine(self.engine).pack_by_default
 
 
-class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
-    quality: bpy.props.EnumProperty(
-        name="Unwrap Quality",
-        description=(
-            "A higher quality unwrap will have less stretching, "
-            "but it will take longer to finish"
-        ),
-        items=(
-            ("HIGH", "High", ""),
-            ("MEDIUM", "Medium", ""),
-            ("LOW", "Low", ""),
-        ),
-        default="MEDIUM",
-    )
-
-
-class UVGAMI_PG_partuv(bpy.types.PropertyGroup):
-    segmentation: bpy.props.EnumProperty(
-        name="Segmentation",
-        description="How PartUV splits the mesh into parts",
-        items=(
-            (
-                "GEOMETRIC",
-                "Geometric",
-                "Geometric clustering. No AI model needed",
-            ),
-            (
-                "AI",
-                "AI",
-                "AI segmentation with the PartField model. Requires the AI install",
-            ),
-        ),
-        default="AI",
-    )
-    threshold: bpy.props.FloatProperty(
-        name="",
-        description="Distortion threshold. Lower values cut the mesh into more UV islands",
-        default=1.25,
-        min=1.0,
-        max=10.0,
-    )
-
-
 class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     engine: bpy.props.EnumProperty(
         name="Engine",
@@ -66,8 +23,6 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         default="OPTCUTS",
         update=update_engine,
     )
-    optcuts: bpy.props.PointerProperty(type=UVGAMI_PG_optcuts)
-    partuv: bpy.props.PointerProperty(type=UVGAMI_PG_partuv)
     import_uvs: bpy.props.BoolProperty(
         name="", description="Use the UV map on the mesh as input"
     )
@@ -257,6 +212,13 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         description=(
             "Preview: Only mark sharp edges as seams. Use this for high poly meshes"
         ),
+    )
+
+
+# each engine contributes a pointer to its own settings group, keyed by engine id
+for engine in ENGINES.values():
+    UVGAMI_PG_properties.__annotations__[engine.id.lower()] = bpy.props.PointerProperty(
+        type=engine.property_group
     )
 
 

@@ -42,7 +42,6 @@ from .src.ops.grid import (
     UVGAMI_OT_add_grid,
     UVGAMI_OT_remove_grid,
 )
-from .src.ops.install import UVGAMI_OT_install_partuv
 from .src.ops.viewer import (
     UVGAMI_OT_view_unwrap,
     UVGAMI_OT_view_uvs,
@@ -63,11 +62,10 @@ from .src.ui.panels import (
     UVGAMI_PT_info,
 )
 from .src.ui.props import (
-    UVGAMI_PG_optcuts,
-    UVGAMI_PG_partuv,
     UVGAMI_PG_properties,
     UVGAMI_AP_preferences,
 )
+from .src.engines import ENGINES
 
 
 bl_info = {
@@ -81,6 +79,10 @@ bl_info = {
     "doc_url": "https://github.com/DanielBoxer/UVgami/blob/master/docs/docs.md",
     "tracker_url": "https://github.com/DanielBoxer/UVgami/issues",
 }
+
+
+# every bpy class each engine needs registered (property groups and operators)
+engine_classes = tuple(cls for engine in ENGINES.values() for cls in engine.classes)
 
 
 classes = (
@@ -103,7 +105,6 @@ classes = (
     UVGAMI_OT_mark_seams_sharp,
     UVGAMI_OT_clear_logs,
     UVGAMI_OT_copy_logs,
-    UVGAMI_OT_install_partuv,
     UVGAMI_OT_view_uvs,
     UVGAMI_PT_main,
     UVGAMI_PT_guides,
@@ -115,8 +116,7 @@ classes = (
     UVGAMI_PT_info,
     UVGAMI_PT_misc,
     # engine groups must register before the main group that points to them
-    UVGAMI_PG_optcuts,
-    UVGAMI_PG_partuv,
+    *engine_classes,
     UVGAMI_PG_properties,
     UVGAMI_AP_preferences,
 )
