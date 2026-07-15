@@ -4,7 +4,7 @@ Blender addon that auto unwraps UVs. Two engines: optcuts (bundled C++ binary) a
 
 ## Layout
 
-- `src/`: the addon. `manager.py` runs the unwrap queue, `engines.py` has per-engine logic.
+- `src/`: the addon. `manager.py` runs the unwrap queue, `src/engines/` is one module per engine (optcuts, partuv), discovered at import. Deleting `src/engines/partuv/` removes that engine cleanly.
 - `engine/partuv/`: the partuv wheel, C++ core plus python driver (`partuv/cli.py`).
 - `uvgami_cli/`: dev-only CLI driving both engines via `--engine`, not shipped.
 - `docs/docs.md`: user guide, with a development section at the end. `docs/agents/partuv-packaging.md`: packaging decisions and open questions.
@@ -23,5 +23,5 @@ Blender addon that auto unwraps UVs. Two engines: optcuts (bundled C++ binary) a
 - Never add a blocking stdin reader thread to the partuv CLI. On Windows a thread stuck reading stdin stalls native DLL imports.
 - Engine stdout is a parsed protocol (`start:`/`done:`/`failed:`/`progress:` lines). Don't print extra lines to stdout in the engine path, use stderr.
 - `src/` imports bpy, so only bpy-free modules (`src/batch.py`, the partuv package) are unit-testable.
-- When you change an engine's code, bump that engine's version: optcuts in `engine/optcuts/VERSION`, partuv in `engine/partuv/pyproject.toml` (mirror it in `src/ops/install.py` `PARTUV_VERSION`, `check-partuv-version.yml` fails the build if they drift). That rebuilds the engine only. It does not cut an addon release: a release triggers solely from bumping the version line in `blender_manifest.toml`.
+- When you change an engine's code, bump that engine's version: optcuts in `engine/optcuts/VERSION`, partuv in `engine/partuv/pyproject.toml` (mirror it in `src/engines/partuv/install.py` `PARTUV_VERSION`, `check-partuv-version.yml` fails the build if they drift). That rebuilds the engine only. It does not cut an addon release: a release triggers solely from bumping the version line in `blender_manifest.toml`.
 - After building optcuts, copy the binary to the dev engines folder or the addon runs the stale bundled one: `engine/optcuts/build-perf/optcuts.exe` -> `engines/windows/optcuts.exe` (per-platform under `engines/`, gitignored).
