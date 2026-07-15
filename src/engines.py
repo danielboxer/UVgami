@@ -117,7 +117,7 @@ class OptcutsEngine(Engine):
         else:
             if not raw.is_file():
                 return None, "Engine path doesn't exist"
-            if raw.stem != "uvgami":
+            if raw.stem != "optcuts":
                 return None, "Engine path is incorrect"
             path = raw
 
