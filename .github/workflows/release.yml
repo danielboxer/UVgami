@@ -91,6 +91,9 @@ jobs:
           bash .github/scripts/bundle-engines.sh $ADDON_NAME $ENGINE_PREFIX
           zip -r ${ADDON_NAME}.zip $ADDON_NAME
 
+      - name: Build extension zips
+        run: python scripts/build_extension.py $ADDON_NAME --out extension-zips
+
       - name: Determine TAG
         run: echo "TAG=${{ needs.prepare.outputs.tag }}" >> $GITHUB_ENV
 
@@ -98,4 +101,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ env.TAG }}
-        run: gh release create "$TAG" "${ADDON_NAME}.zip" --title "$TAG"
+        run: gh release create "$TAG" "${ADDON_NAME}.zip" extension-zips/*.zip --title "$TAG"

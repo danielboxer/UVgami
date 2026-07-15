@@ -9,8 +9,8 @@ import zipfile
 
 import bpy
 
-from ..utils.download import download_file
-from ..utils.paths import (
+from ...utils.download import download_file
+from .paths import (
     get_partuv_checkpoint_path,
     get_partuv_venv_path,
     get_partuv_venv_python,

@@ -11,7 +11,7 @@ output/
 .todo
 
 # bundled engine binaries
-engines/
+/engines/
 
 # benchmark artifacts
 bench/models/
