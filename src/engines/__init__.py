@@ -1,18 +1,10 @@
-import importlib
-import pkgutil
-
-
 class Engine:
     id = ""
     label = ""
     description = ""
-    # the engine's bpy PropertyGroup class, and every bpy class the engine needs
-    # registered (its property group plus any operators)
+    # every bpy class the engine needs (its property group plus any operators)
     property_group = None
     classes = ()
-    # feature flags drive UI gating and post-processing compatibility;
-    # engine-specific parameters live in the engine's property group and are
-    # drawn by draw_settings instead of being flagged here
     supports_guided = False
     supports_viewer = False
     supports_early_stop = False
@@ -82,21 +74,12 @@ class Engine:
         process.kill()
 
 
-def _load_engines():
-    # discover one engine per submodule; each defines a module-level ENGINE.
-    # alphabetical module order sets the enum/ui order (optcuts first).
-    # deleting an engine package from a shipped zip removes that engine with it.
-    engines = {}
-    for module_info in pkgutil.iter_modules(__path__):
-        module = importlib.import_module(f"{__name__}.{module_info.name}")
-        engines[module.ENGINE.id] = module.ENGINE
-    return engines
+# imported after Engine because each module subclasses it
+from . import optcuts, partuv, xatlas
 
-
-ENGINES = _load_engines()
+# order sets the enum/ui order
+ENGINES = {e.id: e for e in (optcuts.ENGINE, partuv.ENGINE, xatlas.ENGINE)}
 
 
 def get_engine(engine_id):
-    # default to optcuts so a stale or removed engine id in an old file still
-    # loads (files saved before the rename stored "UVGAMI" and land here too)
     return ENGINES.get(engine_id, ENGINES["OPTCUTS"])
