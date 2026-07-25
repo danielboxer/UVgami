@@ -96,12 +96,23 @@ def test_xatlas_smoke(cube, tmp_path):
     output = tmp_path / "cube_uv.obj"
     xatlas.run(cube, output, None)
     lines = output.read_text().splitlines()
+    positions = [line for line in lines if line.startswith("v ")]
     faces = [line for line in lines if line.startswith("f ")]
     uvs = [line for line in lines if line.startswith("vt ")]
-    # xatlas splits vertices at seams but keeps the input triangle count
+    # the mesh stays welded, only the uvs are split, otherwise blender's
+    # seams-from-islands finds no seams on the imported result
+    assert len(positions) == 8
     assert len(faces) == 12
     assert uvs
     for line in uvs:
         u, v = (float(value) for value in line.split()[1:3])
         assert 0.0 <= u <= 1.0
         assert 0.0 <= v <= 1.0
+
+    # a welded vertex on a seam carries more than one uv
+    uv_indices = {}
+    for line in faces:
+        for token in line.split()[1:]:
+            position, uv = token.split("/")
+            uv_indices.setdefault(position, set()).add(uv)
+    assert any(len(indices) > 1 for indices in uv_indices.values())
