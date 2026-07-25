@@ -140,6 +140,9 @@ bool read_obj(const std::string &path, std::vector<Vec3> &positions,
     return true;
 }
 
+// one v per input position, one vt per atlas vertex. writing a v per atlas
+// vertex instead would split every chart into disconnected geometry, and then
+// blender's seams-from-islands finds no interior edge to mark.
 bool write_obj(const std::string &path, const std::vector<Vec3> &positions,
                const xatlas::Mesh &mesh, float width, float height) {
     std::filesystem::path out_path(path);
@@ -152,9 +155,7 @@ bool write_obj(const std::string &path, const std::vector<Vec3> &positions,
         return false;
     }
     file << std::setprecision(9);
-    for (uint32_t i = 0; i < mesh.vertexCount; ++i) {
-        const xatlas::Vertex &vertex = mesh.vertexArray[i];
-        const Vec3 &p = positions[vertex.xref];
+    for (const Vec3 &p : positions) {
         file << "v " << p.x << ' ' << p.y << ' ' << p.z << '\n';
     }
     for (uint32_t i = 0; i < mesh.vertexCount; ++i) {
@@ -163,11 +164,12 @@ bool write_obj(const std::string &path, const std::vector<Vec3> &positions,
              << '\n';
     }
     for (uint32_t i = 0; i + 2 < mesh.indexCount; i += 3) {
-        uint32_t a = mesh.indexArray[i] + 1;
-        uint32_t b = mesh.indexArray[i + 1] + 1;
-        uint32_t c = mesh.indexArray[i + 2] + 1;
-        file << "f " << a << '/' << a << ' ' << b << '/' << b << ' ' << c << '/'
-             << c << '\n';
+        file << 'f';
+        for (uint32_t k = 0; k < 3; ++k) {
+            uint32_t t = mesh.indexArray[i + k];
+            file << ' ' << mesh.vertexArray[t].xref + 1 << '/' << t + 1;
+        }
+        file << '\n';
     }
     return static_cast<bool>(file);
 }
