@@ -220,15 +220,20 @@ class ExportDrain:
                         ngon_dict[vert.index] = set()
                     ngon_dict[vert.index].add(face_idx)
 
+        # the panel hides the setting on engines without preserve, but the value
+        # persists, so check it here too: added edges are input vertex indices
+        # and engines that renumber vertices would dissolve the wrong ones
+        untriangulate = props.untriangulate and self.engine.supports_preserve
+
         edge_path = None
         if must_triangulate:
-            if props.untriangulate:
+            if untriangulate:
                 self.jobs[obj]["preserve"] = Preserve(1)
                 old_edges = set(bm.edges)
 
             bmesh.ops.triangulate(bm, faces=bm.faces, quad_method="BEAUTY")
 
-            if props.untriangulate:
+            if untriangulate:
                 # write added edges to file
                 edge_path = path.parent / f"{path.stem}_edges"
                 with edge_path.open("w") as f:

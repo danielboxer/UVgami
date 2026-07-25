@@ -27,6 +27,22 @@ def fake_optcuts(monkeypatch):
 
 
 @pytest.fixture
+def fake_xatlas(monkeypatch):
+    from uvgami_cli import xatlas
+
+    calls = []
+
+    def fake_run(*args):
+        calls.append(args)
+        output_path = args[1]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("v 0 0 0\nvt 0 0\nf 1/1 1/1 1/1\n")
+
+    monkeypatch.setattr(xatlas, "run", fake_run)
+    return calls
+
+
+@pytest.fixture
 def fake_partuv(monkeypatch):
     import partuv.cli
 
@@ -347,6 +363,44 @@ def test_partuv_resolves_repo_checkpoint(triangle, monkeypatch, fake_partuv):
     code = cli.main(["unwrap", str(triangle), "--engine", "partuv"])
     assert code == 0
     assert fake_partuv["checkpoint"] == str(repo_checkpoint)
+
+
+def test_xatlas_dispatch(triangle, tmp_path, fake_xatlas, capsys):
+    out = tmp_path / "out.obj"
+    code = cli.main(
+        ["unwrap", str(triangle), "--engine", "xatlas", "-o", str(out), "--json"]
+    )
+    assert code == 0
+    assert fake_xatlas[0][:2] == (triangle, out)
+    # no engine path given, so the bundled binary is resolved inside run
+    assert fake_xatlas[0][2] is None
+    assert json.loads(capsys.readouterr().out)["engine"] == "xatlas"
+
+
+def test_xatlas_path_flag_passed_through(triangle, tmp_path, fake_xatlas):
+    engine = tmp_path / "xatlas.exe"
+    engine.write_text("fake")
+    code = cli.main(
+        ["unwrap", str(triangle), "--engine", "xatlas", "--xatlas-path", str(engine)]
+    )
+    assert code == 0
+    assert fake_xatlas[0][2] == engine
+
+
+def test_optcuts_flag_rejected_for_xatlas(triangle, capsys):
+    code = cli.main(
+        ["unwrap", str(triangle), "--engine", "xatlas", "--quality", "high"]
+    )
+    assert code == 2
+    assert "--quality" in capsys.readouterr().err
+
+
+def test_xatlas_flag_rejected_for_optcuts(triangle, tmp_path, capsys):
+    engine = tmp_path / "xatlas.exe"
+    engine.write_text("fake")
+    code = cli.main(["unwrap", str(triangle), "--xatlas-path", str(engine)])
+    assert code == 2
+    assert "--xatlas-path" in capsys.readouterr().err
 
 
 def test_partuv_flag_rejected_for_optcuts(triangle, capsys):

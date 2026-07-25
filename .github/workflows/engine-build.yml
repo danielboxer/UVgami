@@ -2,7 +2,19 @@ name: Engine build
 
 on:
   workflow_dispatch:
+    inputs:
+      engine:
+        description: Engine to build
+        type: choice
+        options:
+          - optcuts
+          - xatlas
+        default: optcuts
   workflow_call:
+    inputs:
+      engine:
+        type: string
+        default: optcuts
     outputs:
       built:
         value: ${{ jobs.prepare.outputs.built }}
@@ -12,7 +24,8 @@ permissions:
 
 env:
   BUILD_TYPE: Release
-  PACKAGE_PREFIX: optcuts-engine
+  ENGINE: ${{ inputs.engine }}
+  PACKAGE_PREFIX: ${{ inputs.engine }}-engine
   ADDON_NAME: "UVgami"
 
 jobs:
@@ -29,11 +42,11 @@ jobs:
         id: release
         shell: bash
         run: |
-          VERSION=$(tr -d '[:space:]' < engine/optcuts/VERSION)
-          TAG="optcuts-v$VERSION"
+          VERSION=$(tr -d '[:space:]' < engine/$ENGINE/VERSION)
+          TAG="$ENGINE-v$VERSION"
           if git rev-parse --quiet --verify "refs/tags/$TAG" >/dev/null; then
-            if ! git diff --quiet "$TAG" HEAD -- engine/optcuts; then
-              echo "::error::OptCuts changed since $TAG. Bump engine/optcuts/VERSION."
+            if ! git diff --quiet "$TAG" HEAD -- engine/$ENGINE; then
+              echo "::error::$ENGINE changed since $TAG. Bump engine/$ENGINE/VERSION."
               exit 1
             fi
             echo "built=false" >> "$GITHUB_OUTPUT"
@@ -64,15 +77,16 @@ jobs:
         id: engine_version
         shell: bash
         run: |
-          VERSION=$(cat engine/optcuts/VERSION | tr -d '[:space:]')
+          VERSION=$(cat engine/$ENGINE/VERSION | tr -d '[:space:]')
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
           echo "major=$MAJOR" >> $GITHUB_OUTPUT
           echo "minor=$MINOR" >> $GITHUB_OUTPUT
           echo "patch=$PATCH" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      # optcuts links glfw/opengl; xatlas is dependency-free
       - name: Install Ubuntu dependencies
-        if: startsWith(matrix.os, 'ubuntu')
+        if: startsWith(matrix.os, 'ubuntu') && inputs.engine == 'optcuts'
         run: |
           sudo apt-get update -y
           sudo apt-get install -y xorg-dev libglu1-mesa-dev
@@ -91,7 +105,7 @@ jobs:
         working-directory: ${{ github.workspace }}/build
         shell: bash
         run: |
-          cmake $GITHUB_WORKSPACE/engine/optcuts -Wno-dev -DBUILD_SHARED_LIBS=OFF \
+          cmake $GITHUB_WORKSPACE/engine/$ENGINE -Wno-dev -DBUILD_SHARED_LIBS=OFF \
             -DCPACK_GENERATOR:STRING=ZIP \
             -DCPACK_PACKAGE_FILE_NAME:STRING=$PACKAGE_NAME
 
@@ -100,7 +114,7 @@ jobs:
       - name: Upload engine artifact
         uses: actions/upload-artifact@v4
         with:
-          name: engine-${{ matrix.pkg_name }}
+          name: ${{ inputs.engine }}-${{ matrix.pkg_name }}
           path: build/${{ env.PACKAGE_NAME }}.zip
 
   # publish the canonical engine release the addon and its bundled zip source from
@@ -117,19 +131,19 @@ jobs:
       - name: Read engine version
         id: engine_version
         shell: bash
-        run: echo "version=$(cat engine/optcuts/VERSION | tr -d '[:space:]')" >> $GITHUB_OUTPUT
+        run: echo "version=$(cat engine/$ENGINE/VERSION | tr -d '[:space:]')" >> $GITHUB_OUTPUT
 
       - name: Download all engine artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: engine-*
+          pattern: ${{ inputs.engine }}-*
           merge-multiple: true
 
       - name: Publish engine release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: optcuts-v${{ steps.engine_version.outputs.version }}
+          TAG: ${{ inputs.engine }}-v${{ steps.engine_version.outputs.version }}
         run: |
           gh release view "$TAG" >/dev/null 2>&1 \
-            || gh release create "$TAG" --latest=false --title "$TAG" --notes "OptCuts engine binaries"
+            || gh release create "$TAG" --latest=false --title "$TAG" --notes "$ENGINE engine binaries"
           gh release upload "$TAG" ${PACKAGE_PREFIX}-*.zip --clobber

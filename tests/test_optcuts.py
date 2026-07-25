@@ -4,9 +4,9 @@ from pathlib import Path
 import pytest
 
 from uvgami_cli import optcuts
-from uvgami_cli.common import UnwrapError
+from uvgami_cli.common import REPO_ROOT, UnwrapError, find_engine
 
-BUNDLED = optcuts.REPO_ROOT / "engines" / "windows" / "optcuts.exe"
+BUNDLED = REPO_ROOT / "engines" / "windows" / "optcuts.exe"
 
 
 class FakeProcess:
@@ -113,7 +113,7 @@ def test_run_output_missing_uvs(triangle, tmp_path, fake_engine, monkeypatch):
 
 def test_find_engine_explicit_path_missing(tmp_path):
     with pytest.raises(UnwrapError) as error:
-        optcuts.find_engine(tmp_path / "nope.exe")
+        find_engine("optcuts", "OptCuts", tmp_path / "nope.exe")
     assert error.value.exit_code == 3
 
 

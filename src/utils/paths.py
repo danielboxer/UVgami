@@ -37,7 +37,7 @@ def get_extension_dir_path():
     return extension_folder
 
 
-def get_bundled_engine_path():
+def get_bundled_engine_path(name="optcuts"):
     """Return the path to the bundled engine binary, or None if not found."""
     engines_dir = get_dir_path() / "engines"
     if not engines_dir.is_dir():
@@ -48,16 +48,16 @@ def get_bundled_engine_path():
 
     if system == "Windows":
         platform_dir = "windows"
-        binary_name = "optcuts.exe"
+        binary_name = f"{name}.exe"
     elif system == "Linux":
         platform_dir = "linux"
-        binary_name = "optcuts"
+        binary_name = name
     elif system == "Darwin":
         if machine == "arm64":
             platform_dir = "macos-arm64"
         else:
             platform_dir = "macos-x64"
-        binary_name = "optcuts"
+        binary_name = name
     else:
         return None
 
