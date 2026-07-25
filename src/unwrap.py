@@ -50,7 +50,7 @@ class Unwrap:
         self.jobs = [j for j in jobs if j is not None]
         self.preserve_job = jobs[0]
         self.join_job = jobs[1]
-        self.cleanup_job = jobs[2]
+        self.hide_job = jobs[2]
         self.symmetrize_job = jobs[3]
         self.transfer_uvs_job = jobs[4]
 

@@ -241,16 +241,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         description="The path to the unwrapper application stored on your computer",
         subtype="FILE_PATH",
     )
-    cleanup: bpy.props.EnumProperty(
-        name="Input Cleanup",
-        description="The action to perform on the original input mesh",
-        items=(
-            ("NONE", "None", "Leave the input mesh as it is"),
-            ("HIDE", "Hide", "Hide the original input mesh"),
-            ("DELETE", "Delete", "Delete the original input mesh"),
-        ),
-        default="HIDE",
-    )
     invalid_collection: bpy.props.BoolProperty(
         name="Not Unwrapped Collection",
         description="Add meshes that failed to unwrap, were cancelled, or were"
@@ -304,21 +294,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
             icon="OUTLINER_COLLECTION" if bpy.app.version >= (2, 92, 0) else "GROUP"
         )
         row.prop(self, "invalid_collection")
-
-        box.separator()
-
-        row = box.row()
-        row.label(icon="MOD_WIREFRAME")
-        row.prop(self, "cleanup")
-
-        if self.cleanup == "DELETE":
-            row = box.row()
-            row.label(
-                text=(
-                    "Warning: Use 'Input Cleanup: Delete' at your own risk, "
-                    "losing work is possible"
-                )
-            )
 
         box.separator()
 

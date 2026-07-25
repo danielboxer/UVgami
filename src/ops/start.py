@@ -7,7 +7,7 @@ import numpy
 
 from ..engines import get_engine
 from ..handler import handle_error
-from ..job import Cleanup, Join, Preserve, Symmetrise, TransferUVs
+from ..job import HideInput, Join, Preserve, Symmetrise, TransferUVs
 from ..logger import logger
 from ..manager import manager
 from ..progress_bar import progress_bar
@@ -149,7 +149,7 @@ class ExportDrain:
             jobs=(
                 self.jobs[obj]["preserve"],
                 self.jobs[obj]["join"],
-                self.jobs[obj]["cleanup"],
+                self.jobs[obj]["hide"],
                 self.jobs[obj]["symmetrize"],
                 self.jobs[obj]["transfer_uvs"],
             ),
@@ -573,7 +573,6 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
     def create_jobs(self, context):
         props = context.scene.uvgami
-        prefs = get_preferences()
 
         jobs = {}
         separated_objects = []
@@ -603,26 +602,26 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 # get input name
                 unwrap_name = self.names[obj.name][0]
                 join_job = Join(len(s))
-                cleanup_job = None
+                hide_job = None
                 transfer_uvs_job = None
 
                 if props.transfer_uvs:
                     transfer_uvs_job = TransferUVs(len(s))
                     manager.input[transfer_uvs_job] = self.input_objs[object_idx]
-                elif prefs.cleanup == "HIDE" or prefs.cleanup == "DELETE":
-                    # the delete job can come after join because it doesn't depend
+                else:
+                    # the hide job can come after join because it doesn't depend
                     # on the unwrapped objects
                     # the count is > 1 because all the separated objs need to
-                    # finish before deleting the original
-                    cleanup_job = Cleanup(len(s), prefs.cleanup)
-                    manager.input[cleanup_job] = self.input_objs[object_idx]
+                    # finish before hiding the original
+                    hide_job = HideInput(len(s))
+                    manager.input[hide_job] = self.input_objs[object_idx]
 
                 for obj_idx, o in enumerate(s):
                     # check for 0 polygons again
                     if len(o.data.polygons) == 0:
                         join_job.count -= 1
-                        if cleanup_job is not None:
-                            cleanup_job.count -= 1
+                        if hide_job is not None:
+                            hide_job.count -= 1
                         if transfer_uvs_job is not None:
                             transfer_uvs_job.count -= 1
                         collection = check_collection(
@@ -635,7 +634,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
                         jobs[o] = {
                             "join": join_job,
                             "preserve": None,
-                            "cleanup": cleanup_job,
+                            "hide": hide_job,
                             "symmetrize": symmetrize_job,
                             "transfer_uvs": transfer_uvs_job,
                         }
@@ -649,7 +648,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 jobs[obj] = {
                     "join": None,
                     "preserve": None,
-                    "cleanup": None,
+                    "hide": None,
                     "symmetrize": symmetrize_job,
                     "transfer_uvs": None,
                 }
@@ -657,10 +656,10 @@ class UVGAMI_OT_start(bpy.types.Operator):
                     transfer_uvs_job = TransferUVs(1)
                     jobs[obj]["transfer_uvs"] = transfer_uvs_job
                     manager.input[transfer_uvs_job] = self.input_objs[object_idx]
-                elif prefs.cleanup == "HIDE" or prefs.cleanup == "DELETE":
-                    cleanup_job = Cleanup(1, prefs.cleanup)
-                    jobs[obj]["cleanup"] = cleanup_job
-                    manager.input[cleanup_job] = self.input_objs[object_idx]
+                else:
+                    hide_job = HideInput(1)
+                    jobs[obj]["hide"] = hide_job
+                    manager.input[hide_job] = self.input_objs[object_idx]
                 separated_objects.append(obj)
 
         return jobs, separated_objects
