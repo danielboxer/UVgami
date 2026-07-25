@@ -112,9 +112,12 @@ class UVGAMI_PT_main(bpy.types.Panel):
 
             # group stop and cancel button
             if expand_layout:
-                # group stop shows whenever a member is running; without early
-                # stop the running mesh finishes and the rest are dropped
-                if is_active:
+                # pieces the exporter hasn't written yet have no input file, so
+                # stop couldn't put them in the not unwrapped collection
+                is_exporting = (
+                    group_id.count - len(group_id.unwrapped) - len(group) > 0
+                )
+                if is_active and not is_exporting:
                     stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
                     stop_op.start_idx = cancel_index
                     stop_op.end_idx = cancel_index + len(group)
@@ -181,7 +184,7 @@ class UVGAMI_PT_speed(bpy.types.Panel):
 
         # hidden instead of grayed out: ai mode batches all meshes into one
         # process, so concurrency doesn't apply
-        if get_engine(props.engine).allows_concurrent(props):
+        if not get_engine(props.engine).batches_queue(props):
             split = box.split(factor=0.7)
             split.label(icon="CON_ROTLIKE", text="Concurrent")
             split.prop(props, "concurrent")
@@ -346,7 +349,15 @@ class UVGAMI_PT_pack(bpy.types.Panel):
 
         box.prop(props, "combine_uvs")
         box.prop(props, "fix_scale")
-        box.prop(props, "pack_after_unwrap")
+
+        if get_engine(props.engine).requires_pack:
+            # drawn as a checked label, not the prop, so a stored False can't
+            # show an unchecked box next to packing that always runs
+            row = box.row()
+            row.enabled = False
+            row.label(text="Pack After Unwrap (required)", icon="CHECKBOX_HLT")
+        else:
+            box.prop(props, "pack_after_unwrap")
 
 
 class UVGAMI_PT_misc(bpy.types.Panel):

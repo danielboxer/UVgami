@@ -28,8 +28,9 @@ from .guides import SEAM_RESTRICTIONS_GROUP
 TICK_BUDGET = 0.033
 
 
-class ExportDrain:
-    """Exports separated objects across timer ticks so the UI stays responsive."""
+class InputExporter:
+    """Writes separated objects to engine input files across timer ticks so the
+    UI stays responsive."""
 
     def __init__(
         self,
@@ -61,7 +62,7 @@ class ExportDrain:
         if bpy.context.mode != "OBJECT":
             return 0.2
 
-        # the session we joined was cancelled mid-drain (Cancel All), so drop the
+        # the session we joined was cancelled mid-export (Cancel All), so drop the
         # remaining pieces instead of exporting into a dead session
         if self.added_any and not manager.is_active:
             # release the hold first so a failure below can't wedge the manager
@@ -101,16 +102,10 @@ class ExportDrain:
 
     def _export_object(self, obj, props):
         join = self.jobs[obj]["join"]
-        is_stopped = False
-        if join is not None and (join.cancel_requested or join.stop_requested):
-            if join.cancel_requested or not self.engine.supports_early_stop:
-                # whole-group cancel, or a stop on an engine that can't finish
-                # early with a result: drop the piece instead of exporting it
-                self._skip_piece(obj)
-                return
-            # stop on an engine that can finish early: export normally and let
-            # it stop gracefully once the process starts
-            is_stopped = True
+        if join is not None and join.cancel_requested:
+            # whole-group cancel: drop the piece instead of exporting it
+            self._skip_piece(obj)
+            return
 
         # consume upfront so a failure below can't double count this piece,
         # the error path only subtracts what's still in the queue
@@ -162,9 +157,8 @@ class ExportDrain:
             shade_smooth=shade_smooth,
             auto_smooth=auto_smooth,
             merge_cuts=props.use_cuts and not props.use_symmetry,
+            maintain_mode=props.maintain_mode,
         )
-        if is_stopped:
-            unwrap.is_stopped = True
         manager.add(unwrap)
         if not manager.is_active:
             manager.engine = self.engine
@@ -348,18 +342,27 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
     def execute(self, context):
         start_objects = set(bpy.data.objects)
-        drain_registered = False
+        exporter_registered = False
 
         try:
             logger.new_info()
             self.engine = get_engine(context.scene.uvgami.engine)
+
+            # the manager holds one engine for the whole session, so pieces added
+            # to a running session would export for this engine and run on the old
+            if manager.is_active and manager.engine is not self.engine:
+                self.report(
+                    {"ERROR"},
+                    "Finish or cancel the current unwrap before switching engine",
+                )
+                return {"CANCELLED"}
 
             if self.check_for_errors() is not None:
                 return {"CANCELLED"}
             if self._prepare_unwrap_session(context) is not None:
                 return {"CANCELLED"}
 
-            drain = ExportDrain(
+            exporter = InputExporter(
                 engine=self.engine,
                 engine_ctx=self.engine_ctx,
                 input_path=self.input_path,
@@ -371,9 +374,9 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 start_objects=start_objects,
                 temp_collection=self.temp_collection,
             )
-            bpy.app.timers.register(drain.tick)
-            drain_registered = True
-            # drain holds the session open until it finishes adding pieces
+            bpy.app.timers.register(exporter.tick)
+            exporter_registered = True
+            # the exporter holds the session open until it finishes adding pieces
             manager.hold_count += 1
             # count every piece in the bar total upfront so the finished
             # ratio doesn't shrink as pieces get added
@@ -397,8 +400,8 @@ class UVGAMI_OT_start(bpy.types.Operator):
         except Exception as e:
             handle_error(e, "START", objects=start_objects)
             # tick() owns the collection once registered; only remove it here
-            # if the drain never started ticking
-            if not drain_registered and self.temp_collection is not None:
+            # if the exporter never started ticking
+            if not exporter_registered and self.temp_collection is not None:
                 bpy.data.collections.remove(self.temp_collection)
 
         # these variables should only be used while operator is running

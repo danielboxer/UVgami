@@ -10,8 +10,9 @@ class Engine:
     supports_early_stop = False
     supports_preserve = False
     supports_import_uvs = False
-    # whether pack-after-unwrap starts enabled when this engine is selected
-    pack_by_default = False
+    # engines whose raw uvs overlap must be packed, so pack-after-unwrap is
+    # forced on rather than left to the user
+    requires_pack = False
 
     def is_available(self):
         """Whether this engine can run on the current platform."""
@@ -30,12 +31,9 @@ class Engine:
         """Draw this engine's section in the addon preferences."""
         pass
 
-    def allows_concurrent(self, props):
-        """Whether multiple unwrap processes can run at once."""
-        return True
-
-    def wants_batch(self, props):
-        """Whether queued meshes should share one engine process."""
+    def batches_queue(self, props):
+        """Whether queued meshes share one engine process. Batching and running
+        several processes at once are mutually exclusive."""
         return False
 
     def build_args(self, ctx, input_path, props):
@@ -44,7 +42,7 @@ class Engine:
 
     def build_batch_args(self, ctx, input_paths, props):
         """Return the argv unwrapping all input_paths in one process. Must be
-        implemented when wants_batch can return True."""
+        implemented when batches_queue can return True."""
         raise NotImplementedError
 
     def build_env(self, ctx):
@@ -61,13 +59,13 @@ class Engine:
 
     def request_early_stop(self, process):
         """Ask a running process to stop and finish with its current result.
-        Returns True if delivered; engines that cannot stop gracefully return False."""
-        return False
+        Returns True if delivered. Only called when supports_early_stop is set."""
+        raise NotImplementedError
 
     def request_snapshot(self, process):
-        """Ask a running process to emit a uv snapshot for the live viewer. No-op
-        for engines without a viewer."""
-        pass
+        """Ask a running process to emit a uv snapshot for the live viewer. Only
+        called when supports_viewer is set."""
+        raise NotImplementedError
 
     def stop(self, process, ctx):
         """Stop a running unwrap process."""

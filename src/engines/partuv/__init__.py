@@ -25,12 +25,12 @@ class UVGAMI_PG_partuv(bpy.types.PropertyGroup):
             (
                 "GEOMETRIC",
                 "Geometric",
-                "Geometric clustering. No AI model needed",
+                "Geometric clustering. Faster but more seams.",
             ),
             (
                 "AI",
                 "AI",
-                "AI segmentation with the PartField model. Requires the AI install",
+                "AI segmentation. Better results than geometric.",
             ),
         ),
         default="AI",
@@ -75,21 +75,18 @@ class PartuvRun:
 class PartuvEngine(Engine):
     id = "PARTUV"
     label = "PartUV"
-    description = "Part-based unwrapping engine, requires an NVIDIA GPU"
+    description = "GPU engine. Much faster than Optcuts on dense meshes"
     property_group = UVGAMI_PG_partuv
     classes = (UVGAMI_PG_partuv, UVGAMI_OT_install_partuv)
-    pack_by_default = True
+    # partuv writes every chart at the origin, so unpacked output overlaps
+    requires_pack = True
 
     def is_available(self):
         return platform.system() in PARTUV_PLATFORMS
 
-    def allows_concurrent(self, props):
-        # ai loads torch and the partfield model per process, more than
-        # one job oversubscribes vram and thrashes
-        return props.partuv.segmentation != "AI"
-
-    def wants_batch(self, props):
-        # one process loads the model once for every queued mesh
+    def batches_queue(self, props):
+        # one process loads the model once for every queued mesh; running more
+        # than one instead oversubscribes vram and thrashes
         return props.partuv.segmentation == "AI"
 
     def validate(self, prefs):
@@ -146,13 +143,13 @@ class PartuvEngine(Engine):
             row.scale_y = 1.5
             geometric = row.operator(
                 "uvgami.install_partuv",
-                text="Reinstall Geometric" if geometric_installed else "Geometric",
+                text="Reinstall Geometric" if geometric_installed else "Geometric (200 MB)",
                 icon="IMPORT",
             )
             geometric.tier = "GEOMETRIC"
             ai = row.operator(
                 "uvgami.install_partuv",
-                text="Reinstall AI" if ai_installed else "AI (~5 GB)",
+                text="Reinstall AI" if ai_installed else "AI (5 GB)",
                 icon="IMPORT",
             )
             ai.tier = "AI"

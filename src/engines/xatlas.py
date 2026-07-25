@@ -12,11 +12,10 @@ class UVGAMI_PG_xatlas(bpy.types.PropertyGroup):
 class XatlasEngine(Engine):
     id = "XATLAS"
     label = "xatlas"
-    description = "Fast bundled xatlas unwrapper"
+    description = "Fast CPU engine. Sometimes better than Smart UV Project"
     property_group = UVGAMI_PG_xatlas
     classes = (UVGAMI_PG_xatlas,)
-    # xatlas packs its own atlas, so pack-after-unwrap starts off
-    pack_by_default = False
+    # xatlas packs its own atlas, so it never needs forced packing
 
     def validate(self, prefs):
         # ignores prefs.engine_path, that setting is optcuts-only

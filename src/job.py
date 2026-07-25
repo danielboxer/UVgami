@@ -37,7 +37,7 @@ class Preserve(Job):
         if not added_edges:
             added_edges = unwrap.added_edges
 
-        if bpy.context.scene.uvgami.maintain_mode == "PARTIAL":
+        if unwrap.maintain_mode == "PARTIAL":
             # get seams so they can be avoided
             uvs = []
             uv_idcs = []
@@ -111,7 +111,7 @@ class Preserve(Job):
                 # skip removing edge
                 continue
 
-            if bpy.context.scene.uvgami.maintain_mode == "PARTIAL":
+            if unwrap.maintain_mode == "PARTIAL":
                 if bm_edge not in seams:
                     dissolve_edges.append(bm_edge)
             else:
@@ -124,10 +124,9 @@ class Preserve(Job):
 class Join(Job):
     def __init__(self, count):
         super().__init__(count)
-        # set when a whole-group stop/cancel is issued, so the drain can drop
-        # or flag the group's still-unexported pieces
+        # set when a whole-group cancel is issued, so the exporter can drop the
+        # group's still-unexported pieces
         self.cancel_requested = False
-        self.stop_requested = False
 
     def finish(self, unwrap):
         paths = [u.path.parents[1] / "output" / u.path.name for u in self.unwrapped]

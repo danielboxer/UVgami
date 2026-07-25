@@ -8,7 +8,7 @@ from ..utils.paths import get_preferences
 
 
 def _expand_whole_group(unwraps):
-    """The panel captures slice indices at draw time and the drain can add
+    """The panel captures slice indices at draw time and the exporter can add
     pieces between draw and click, so a stale slice can miss group members.
     Resolve membership from join jobs at execute time instead."""
     joins = {u.join_job for u in unwraps if u.join_job is not None}
@@ -48,10 +48,9 @@ class UVGAMI_OT_stop(bpy.types.Operator):
     def execute(self, context):
         unwraps = manager.active[self.start_idx : self.end_idx]
         if self.whole_group:
-            unwraps, joins = _expand_whole_group(unwraps)
-            # also stop pieces the drain hasn't exported into the session yet
-            for join in joins:
-                join.stop_requested = True
+            # the panel hides group stop while the exporter still has pieces, so
+            # every piece of the group already has an input file
+            unwraps, _ = _expand_whole_group(unwraps)
 
         stopped_pending = False
         # collect cancellations so group members can be merged into one import
@@ -65,24 +64,23 @@ class UVGAMI_OT_stop(bpy.types.Operator):
                     stopped_pending = True
             elif unwrap.process is not None:
                 if manager.engine.supports_early_stop:
-                    # send stop command
+                    # the flag re-sends the request each tick and arms the stop
+                    # timeout force kill
+                    unwrap.is_stopped = True
                     if not manager.engine.request_early_stop(unwrap.process):
                         self.report({"ERROR"}, "Could not stop unwrap")
                 # a running solo mesh on an engine without early stop just
                 # finishes normally, like an in-flight batch member
-            elif manager.engine.supports_early_stop:
-                # queued: this triggers a graceful early stop when it starts
-                unwrap.is_stopped = True
             else:
-                # queued but the engine can't finish early with a result, so
-                # cancel it now instead of letting it start and be force killed
+                # queued: starting a mesh just to stop it gives a map with no
+                # work in it, so drop it and let it show as not unwrapped
                 to_cancel.append(unwrap)
                 stopped_pending = True
 
         self._cancel_collected(context, to_cancel)
 
         if stopped_pending:
-            self.report({"INFO"}, "Stop: running meshes will finish")
+            self.report({"INFO"}, "Stop: queued meshes dropped")
         else:
             self.report({"INFO"}, "UV unwrap stop in progress")
         return {"FINISHED"}
@@ -138,7 +136,7 @@ class UVGAMI_OT_cancel(bpy.types.Operator):
         unwraps = manager.active[self.start_idx : self.end_idx]
         if self.whole_group:
             unwraps, joins = _expand_whole_group(unwraps)
-            # also cancel pieces the drain hasn't exported into the session yet
+            # also cancel pieces the exporter hasn't added to the session yet
             for join in joins:
                 join.cancel_requested = True
         cancel_count = len(unwraps)
