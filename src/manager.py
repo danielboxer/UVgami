@@ -74,7 +74,7 @@ class UnwrapManager:
         self.found_invalid_objects = False
         self.transfer_uv_failed = False
         self.transfer_uv_fail_detail = ""
-        self.transfer_uv_topology_differed = False
+        self.transfer_uv_split_count = 0
         self.finished_count = 0
         self.cancelled_count = 0
         self.error_code = 0
@@ -426,8 +426,7 @@ class UnwrapManager:
                         break
             outcome = unwrap.transfer_uvs_job.finish(input_mesh, output)
             if outcome.applied:
-                if not outcome.exact_topology:
-                    self.transfer_uv_topology_differed = True
+                self.transfer_uv_split_count += outcome.split_count
                 return
             else:
                 # transfer failed, restore pack list if we changed it
@@ -581,11 +580,9 @@ class UnwrapManager:
                         " This can happen with cuts or symmetry enabled."
                     )
 
-                if self.transfer_uv_topology_differed:
-                    msg.append(
-                        "UV transfer: input and output meshes have different topology."
-                        " Enable 'Preserve Mesh' for best results."
-                    )
+                if self.transfer_uv_split_count > 0:
+                    count = self.transfer_uv_split_count
+                    msg.append(f"UV transfer split {count} face(s) crossed by a seam.")
 
                 if self.error_code != 0:
                     err_msg = f"An unknown error occurred: {self.error_code}"

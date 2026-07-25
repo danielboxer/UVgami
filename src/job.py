@@ -8,9 +8,7 @@ from .objfile import merge_obj_files
 from .uv_transfer import plan_transfer
 from .utils.mesh import check_exists, new_bmesh, set_bmesh
 
-# applied: plan written to input. exact_topology: mirrored to manager's flag.
-# detail: human failure reason for logging, empty on success.
-TransferOutcome = namedtuple("TransferOutcome", ["applied", "exact_topology", "detail"])
+TransferOutcome = namedtuple("TransferOutcome", ["applied", "split_count", "detail"])
 
 
 class Job:
@@ -185,11 +183,11 @@ class TransferUVs(Job):
 
     def finish(self, input_mesh, output):
         if not check_exists(input_mesh) or not check_exists(output):
-            return TransferOutcome(False, False, "input or output object missing")
+            return TransferOutcome(False, 0, "input or output object missing")
 
         output_uv = output.data.uv_layers.active
         if output_uv is None:
-            return TransferOutcome(False, False, "output mesh has no uv layer")
+            return TransferOutcome(False, 0, "output mesh has no uv layer")
 
         # exit edit mode to read and write mesh data, restore it no matter what
         old_active = bpy.context.view_layer.objects.active
@@ -201,9 +199,7 @@ class TransferUVs(Job):
 
             result = plan_transfer(*self._extract(input_mesh, output, output_uv))
             if not result.ok:
-                return TransferOutcome(
-                    False, False, f"{result.reason}: {result.detail}"
-                )
+                return TransferOutcome(False, 0, f"{result.reason}: {result.detail}")
 
             self._apply(input_mesh, result)
         finally:
@@ -215,7 +211,7 @@ class TransferUVs(Job):
         # only tear down the output once the whole plan applied
         bpy.data.objects.remove(output, do_unlink=True)
         input_mesh.hide_set(False)
-        return TransferOutcome(True, result.exact_topology, "")
+        return TransferOutcome(True, len(result.split_faces), "")
 
     def _extract(self, input_mesh, output, output_uv):
         input_data = input_mesh.data
@@ -254,6 +250,10 @@ class TransferUVs(Job):
         )
 
     def _apply(self, input_mesh, plan):
+        if plan.split_faces:
+            self._apply_with_splits(input_mesh, plan)
+            return
+
         input_data = input_mesh.data
         if not input_data.uv_layers:
             input_data.uv_layers.new(name="UVMap")
@@ -270,6 +270,43 @@ class TransferUVs(Job):
             edge.use_seam = ((a, b) if a < b else (b, a)) in plan.seam_edges
 
         input_data.update()
+
+    def _apply_with_splits(self, input_mesh, plan):
+        """Same as _apply, but rebuilds the faces a uv cut runs through. Goes
+        through bmesh because changing topology needs it."""
+        bm = new_bmesh(input_mesh)
+        uv_layer = bm.loops.layers.uv.verify()
+
+        loop_idx = 0
+        to_split = []
+        for face_idx, face in enumerate(bm.faces):
+            parts = plan.split_faces.get(face_idx)
+            if parts is None:
+                for loop in face.loops:
+                    loop[uv_layer].uv = plan.loop_uvs[loop_idx]
+                    loop_idx += 1
+            else:
+                loop_idx += len(face.loops)
+                to_split.append((face, parts, face.material_index, face.smooth))
+
+        # delete first so a new piece can never collide with the face it replaces
+        bmesh.ops.delete(
+            bm, geom=[face for face, _, _, _ in to_split], context="FACES_ONLY"
+        )
+        bm.verts.ensure_lookup_table()
+        for _, parts, material_index, smooth in to_split:
+            for verts, uvs in parts:
+                new_face = bm.faces.new([bm.verts[v] for v in verts])
+                new_face.material_index = material_index
+                new_face.smooth = smooth
+                for loop, uv in zip(new_face.loops, uvs):
+                    loop[uv_layer].uv = uv
+
+        for edge in bm.edges:
+            a, b = edge.verts[0].index, edge.verts[1].index
+            edge.seam = ((a, b) if a < b else (b, a)) in plan.seam_edges
+
+        set_bmesh(bm, input_mesh)
 
 
 class Symmetrise(Job):

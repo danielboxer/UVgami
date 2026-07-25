@@ -10,9 +10,9 @@ import numpy as np
 
 @dataclass
 class TransferPlan:
-    loop_uvs: dict  # input loop index -> (u, v)
+    loop_uvs: dict  # input loop index -> (u, v), for faces kept whole
+    split_faces: dict  # input face index -> [(verts, uvs)] replacing that face
     seam_edges: set  # sorted (input v0, input v1) tuples
-    exact_topology: bool
     ok: bool = True
 
 
@@ -61,6 +61,12 @@ def _query_grid(grid, inv, positions, p, tol2):
     return found
 
 
+def _order_part(local, assign, uvs):
+    """Put a piece of a split face in the input face's own winding order."""
+    order = sorted(range(len(assign)), key=lambda c: local[assign[c]])
+    return [assign[c] for c in order], [uvs[c] for c in order]
+
+
 def plan_transfer(
     input_positions,
     input_polygons,
@@ -94,7 +100,6 @@ def plan_transfer(
             faces_by_vertex[v].append(fi)
             local[v] = corner
         input_vertex_local.append(local)
-    total_input_loops = loop_cursor
 
     candidate_cache = {}
 
@@ -105,8 +110,9 @@ def plan_transfer(
             candidate_cache[out_v] = cached
         return cached
 
-    loop_uvs = {}
-    any_subset = False
+    # output pieces landing on each input face, gathered before any uv is written
+    # so a face that can't hold one uv set can be split instead of failing
+    face_parts = [[] for _ in input_polygons]
 
     for fo, out_verts in enumerate(output_polygons):
         corner_candidates = []
@@ -156,30 +162,46 @@ def plan_transfer(
                 "ambiguous_geometry", f"output face {fo} matches multiple input faces"
             )
         f, assign = valid[0]
-
-        if len(out_verts) < len(input_polygons[f]):
-            any_subset = True
-
-        local = input_vertex_local[f]
-        base = input_loop_start[f]
         face_uvs = output_uvs[fo]
-        for corner, in_v in enumerate(assign):
-            in_loop = base + local[in_v]
-            uv = (float(face_uvs[corner][0]), float(face_uvs[corner][1]))
-            prev = loop_uvs.get(in_loop)
-            if prev is None:
-                loop_uvs[in_loop] = uv
-            elif abs(prev[0] - uv[0]) > 1e-6 or abs(prev[1] - uv[1]) > 1e-6:
-                return TransferFailure(
-                    "uv_conflict",
-                    f"input loop {in_loop} assigned conflicting uvs",
-                )
-
-    if len(loop_uvs) != total_input_loops:
-        missing = total_input_loops - len(loop_uvs)
-        return TransferFailure(
-            "incomplete_coverage", f"{missing} input loops received no uv"
+        face_parts[f].append(
+            (assign, [(float(uv[0]), float(uv[1])) for uv in face_uvs])
         )
+
+    loop_uvs = {}
+    split_faces = {}
+    for fi, poly in enumerate(input_polygons):
+        parts = face_parts[fi]
+        covered = {v for assign, _ in parts for v in assign}
+        if covered != set(poly):
+            return TransferFailure(
+                "incomplete_coverage", f"input face {fi} has corners with no uv"
+            )
+
+        corner_uvs = {}
+        conflict = False
+        for assign, uvs in parts:
+            for in_v, uv in zip(assign, uvs):
+                prev = corner_uvs.get(in_v)
+                if prev is None:
+                    corner_uvs[in_v] = uv
+                elif abs(prev[0] - uv[0]) > 1e-6 or abs(prev[1] - uv[1]) > 1e-6:
+                    conflict = True
+
+        local = input_vertex_local[fi]
+        if not conflict:
+            base = input_loop_start[fi]
+            for in_v, uv in corner_uvs.items():
+                loop_uvs[base + local[in_v]] = uv
+            continue
+
+        # a uv cut runs through this face, so one face can't hold its uvs.
+        # split only this one and keep every other face whole
+        if len({frozenset(assign) for assign, _ in parts}) != len(parts):
+            return TransferFailure(
+                "ambiguous_geometry",
+                f"input face {fi} maps to overlapping output faces",
+            )
+        split_faces[fi] = [_order_part(local, assign, uvs) for assign, uvs in parts]
 
     input_edges = set()
     for poly in input_polygons:
@@ -187,6 +209,13 @@ def plan_transfer(
         for i in range(n):
             a, b = poly[i], poly[(i + 1) % n]
             input_edges.add((a, b) if a < b else (b, a))
+    # edges a split introduces can carry a seam too
+    for parts in split_faces.values():
+        for verts, _ in parts:
+            n = len(verts)
+            for i in range(n):
+                a, b = verts[i], verts[(i + 1) % n]
+                input_edges.add((a, b) if a < b else (b, a))
 
     seam_edges = set()
     for oa, ob in output_seams:
@@ -196,5 +225,4 @@ def plan_transfer(
                 if key in input_edges:
                     seam_edges.add(key)
 
-    exact_topology = not any_subset and len(output_polygons) == len(input_polygons)
-    return TransferPlan(loop_uvs, seam_edges, exact_topology)
+    return TransferPlan(loop_uvs, split_faces, seam_edges)

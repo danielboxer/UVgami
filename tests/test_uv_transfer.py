@@ -26,7 +26,7 @@ def test_exact_reordered_faces_and_verts():
     plan = plan_transfer(SQUARE_POS, SQUARE_FACES, out_pos, out_faces, out_uvs, [])
 
     assert plan.ok
-    assert plan.exact_topology
+    assert plan.split_faces == {}
     # every input loop gets the uv of its own vertex position (planar uv)
     assert plan.loop_uvs == {
         0: (0.0, 0.0),
@@ -85,7 +85,7 @@ def test_triangulated_quad_assigns_all_corners():
     plan = plan_transfer(in_pos, in_faces, in_pos, out_faces, out_uvs, [])
 
     assert plan.ok
-    assert not plan.exact_topology
+    assert plan.split_faces == {}
     assert plan.loop_uvs == {
         0: (0.0, 0.0),
         1: (1.0, 0.0),
@@ -94,20 +94,81 @@ def test_triangulated_quad_assigns_all_corners():
     }
 
 
-def test_conflicting_ngon_corner_fails_atomically():
-    in_pos = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
-    in_faces = [[0, 1, 2, 3]]
-    out_faces = [[0, 1, 2], [0, 2, 3]]
-    # v0 gets a different uv in each triangle
+def test_seam_through_quad_splits_only_that_quad():
+    # two quads side by side, a uv cut runs across the first one's diagonal
+    in_pos = [
+        (0, 0, 0),
+        (1, 0, 0),
+        (1, 1, 0),
+        (0, 1, 0),
+        (2, 0, 0),
+        (2, 1, 0),
+    ]
+    in_faces = [[0, 1, 2, 3], [1, 4, 5, 2]]
+    out_faces = [[0, 1, 2], [0, 2, 3], [1, 4, 5], [1, 5, 2]]
     out_uvs = [
         [(0, 0), (1, 0), (1, 1)],
-        [(0.9, 0.9), (1, 1), (0, 1)],
+        # v0 and v2 land elsewhere in uv space: the quad straddles the cut
+        [(5, 5), (6, 6), (5, 6)],
+        [(1, 0), (2, 0), (2, 1)],
+        [(1, 0), (2, 1), (1, 1)],
+    ]
+
+    plan = plan_transfer(in_pos, in_faces, in_pos, out_faces, out_uvs, [(0, 2)])
+
+    assert plan.ok
+    # the untouched quad keeps its four loops, the split one has none
+    assert plan.loop_uvs == {
+        4: (1.0, 0.0),
+        5: (2.0, 0.0),
+        6: (2.0, 1.0),
+        7: (1.0, 1.0),
+    }
+    assert plan.split_faces == {
+        0: [
+            ([0, 1, 2], [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]),
+            ([0, 2, 3], [(5.0, 5.0), (6.0, 6.0), (5.0, 6.0)]),
+        ]
+    }
+    # the cut edge only exists once the quad is split
+    assert plan.seam_edges == {(0, 2)}
+
+
+def test_split_pieces_follow_the_input_winding():
+    in_pos = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+    in_faces = [[0, 1, 2, 3]]
+    # same two triangles, but listed with a rotated corner order
+    out_faces = [[2, 0, 1], [3, 0, 2]]
+    out_uvs = [
+        [(1, 1), (0, 0), (1, 0)],
+        [(5, 6), (5, 5), (6, 6)],
+    ]
+
+    plan = plan_transfer(in_pos, in_faces, in_pos, out_faces, out_uvs, [])
+
+    assert plan.ok
+    assert plan.split_faces == {
+        0: [
+            ([0, 1, 2], [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]),
+            ([0, 2, 3], [(5.0, 5.0), (6.0, 6.0), (5.0, 6.0)]),
+        ]
+    }
+
+
+def test_conflicting_triangle_cannot_be_split():
+    in_pos = [(0, 0, 0), (1, 0, 0), (1, 1, 0)]
+    in_faces = [[0, 1, 2]]
+    # the output holds the same triangle twice with different uvs
+    out_faces = [[0, 1, 2], [0, 1, 2]]
+    out_uvs = [
+        [(0, 0), (1, 0), (1, 1)],
+        [(5, 5), (6, 5), (6, 6)],
     ]
 
     result = plan_transfer(in_pos, in_faces, in_pos, out_faces, out_uvs, [])
 
     assert not result.ok
-    assert result.reason == "uv_conflict"
+    assert result.reason == "ambiguous_geometry"
 
 
 def test_coincident_input_faces_are_ambiguous():
