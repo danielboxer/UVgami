@@ -1,7 +1,5 @@
 import time
 
-from .utils.paths import get_preferences
-
 
 class Info:
     def __init__(self):
@@ -11,16 +9,15 @@ class Info:
         self.objects = []
 
     def get_info(self):
-        return (
-            [
-                f"Status: {self.status}",
-                f"Time: {self.time:.2f}s",
-                "Objects:",
-            ]
-            + self.objects
-            + ["Errors:"]
-            + self.errors
-        )
+        output = [
+            f"Status: {self.status}",
+            f"Time: {self.time:.2f}s",
+            f"Objects: {', '.join(self.objects)}",
+        ]
+        if self.errors:
+            output.append("Errors:")
+            output.extend(self.errors)
+        return output
 
 
 class Logger:
@@ -29,25 +26,20 @@ class Logger:
         self.start_time = 0
 
     def new_info(self):
-        if get_preferences().show_info:
-            self.unwrap_info.append(Info())
-            self.start_timer()
+        self.unwrap_info.append(Info())
+        self.start_timer()
 
     def add_data(self, target, data):
-        if get_preferences().show_info:
-            # the spaces are for an indentation in the output text
-            getattr(self.get_latest(), target).append("    " + data)
+        getattr(self.get_latest(), target).append(data)
 
     def change_status(self, status):
-        if get_preferences().show_info:
-            self.get_latest().status = status
+        self.get_latest().status = status
 
     def get_latest(self):
-        if get_preferences().show_info:
-            # if logs cleared during unwrap, add a new one
-            if not self.unwrap_info:
-                self.new_info()
-            return self.unwrap_info[-1]
+        # if logs cleared during unwrap, add a new one
+        if not self.unwrap_info:
+            self.new_info()
+        return self.unwrap_info[-1]
 
     def get_all(self):
         output = []
@@ -63,8 +55,7 @@ class Logger:
         self.start_time = time.perf_counter()
 
     def update_time(self):
-        if get_preferences().show_info:
-            self.get_latest().time = time.perf_counter() - self.start_time
+        self.get_latest().time = time.perf_counter() - self.start_time
 
 
 logger = Logger()

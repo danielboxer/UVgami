@@ -3,7 +3,6 @@ import bpy
 from ..engines import get_engine
 from ..logger import logger
 from ..manager import manager
-from ..utils.paths import get_preferences
 from ..utils.ui import newline_label
 
 
@@ -357,8 +356,8 @@ class UVGAMI_PT_pack(bpy.types.Panel):
         box.prop(props, "pack_after_unwrap")
 
 
-class UVGAMI_PT_uv(bpy.types.Panel):
-    bl_label = "UV Operations"
+class UVGAMI_PT_misc(bpy.types.Panel):
+    bl_label = "Misc"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "UVgami"
@@ -369,32 +368,11 @@ class UVGAMI_PT_uv(bpy.types.Panel):
         box = self.layout.box()
 
         row = box.row()
-        row.alignment = "CENTER"
-        row.label(text="UV Operations", icon="GROUP_UVS")
+        row.scale_y = 1.5
+        row.operator("uvgami.open_preferences", text="Preferences", icon="PREFERENCES")
 
-        split = box.split(factor=0.7)
-        split.operator("uvgami.unwrap_sharp", icon="EDGESEL")
+        box.separator()
 
-        row = split.row()
-        row.scale_x = 0.85
-        row.label(icon="VIEWZOOM")
-        row.prop(context.scene.uvgami, "preview_unwrap_sharp")
-
-        box.operator("uvgami.mark_seams_sharp", icon="SHARPCURVE")
-
-        box.operator("uvgami.view_uvs", icon="VIEWZOOM")
-
-
-class UVGAMI_PT_info(bpy.types.Panel):
-    bl_label = "Info"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "UVgami"
-    bl_parent_id = "UVGAMI_PT_main"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        box = self.layout.box()
         row = box.row()
         row.alignment = "CENTER"
         row.label(text="Info", icon="INFO")
@@ -408,31 +386,4 @@ class UVGAMI_PT_info(bpy.types.Panel):
         else:
             row = box.row()
             row.alignment = "CENTER"
-            row.label(
-                text=(
-                    "No previous unwraps"
-                    if get_preferences().show_info
-                    else "Info is off"
-                )
-            )
-
-
-class UVGAMI_PT_misc(bpy.types.Panel):
-    bl_label = "Misc"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "UVgami"
-    bl_parent_id = "UVGAMI_PT_main"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        box = self.layout.box()
-        row = box.row()
-        row.alignment = "CENTER"
-        row.label(text="Misc", icon="TOOL_SETTINGS")
-        box.operator(
-            "uvgami.reset_settings", text="Reset Settings", icon="FILE_REFRESH"
-        )
-        row = box.row()
-        row.scale_y = 1.5
-        row.operator("uvgami.open_preferences", text="Preferences", icon="PREFERENCES")
+            row.label(text="No previous unwraps")
