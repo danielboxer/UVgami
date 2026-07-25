@@ -81,6 +81,27 @@ def run_optcuts(args, pairs):
     return unwrap_all(pairs, unwrap_one)
 
 
+def _add_xatlas_args(group):
+    group.add_argument("--xatlas-path", type=Path, help="default: bundled binary")
+
+
+# xatlas has no tunables, so the binary path is its only flag
+XATLAS_FLAGS = {"--xatlas-path": "xatlas_path"}
+
+
+def _validate_xatlas(args):
+    pass
+
+
+def run_xatlas(args, pairs):
+    from . import xatlas
+
+    def unwrap_one(input_path, output_path):
+        xatlas.run(input_path, output_path, args.xatlas_path)
+
+    return unwrap_all(pairs, unwrap_one)
+
+
 def _add_partuv_args(group):
     group.add_argument(
         "--threshold", type=float, help="distortion threshold, default: 1.25"
@@ -160,6 +181,13 @@ ENGINE_SPECS = {
         validate=_validate_optcuts,
         run=run_optcuts,
     ),
+    "xatlas": EngineSpec(
+        name="xatlas",
+        add_args=_add_xatlas_args,
+        flags=XATLAS_FLAGS,
+        validate=_validate_xatlas,
+        run=run_xatlas,
+    ),
     "partuv": EngineSpec(
         name="partuv",
         add_args=_add_partuv_args,
@@ -173,7 +201,7 @@ ENGINE_SPECS = {
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="uvgami",
-        description="UV unwrap OBJ files with the OptCuts or PartUV engine",
+        description="UV unwrap OBJ files with the OptCuts, xatlas or PartUV engine",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     unwrap = subparsers.add_parser("unwrap", help="unwrap OBJ files")

@@ -39,7 +39,7 @@ class OptcutsEngine(Engine):
         raw = pathlib.Path(prefs.engine_path)
         if str(raw) == ".":
             # try bundled engine as fallback
-            bundled = get_bundled_engine_path()
+            bundled = get_bundled_engine_path("optcuts")
             if bundled is None:
                 return (
                     None,
@@ -69,7 +69,7 @@ class OptcutsEngine(Engine):
         split.prop(prefs, "engine_path")
 
         engine_path = pathlib.Path(prefs.engine_path)
-        if str(engine_path) == "." and get_bundled_engine_path() is not None:
+        if str(engine_path) == "." and get_bundled_engine_path("optcuts") is not None:
             row = layout.row()
             row.label(text="Using bundled optcuts engine", icon="CHECKMARK")
 

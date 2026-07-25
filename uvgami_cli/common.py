@@ -108,6 +108,35 @@ def unwrap_all(pairs, unwrap_one):
     return BatchResult(first_code, ok, failed)
 
 
+def find_engine(name, label, explicit_path):
+    """Locate an engine binary: the explicit path if given, else the bundled one."""
+    if explicit_path is not None:
+        path = Path(explicit_path)
+        if not path.is_file():
+            raise UnwrapError(EXIT_MISSING_RUNTIME, f"{label} binary not found: {path}")
+        return path
+
+    system = platform.system()
+    if system == "Windows":
+        subdir, binary = "windows", f"{name}.exe"
+    elif system == "Linux":
+        subdir, binary = "linux", name
+    elif system == "Darwin":
+        machine = platform.machine().lower()
+        subdir = "macos-arm64" if machine == "arm64" else "macos-x64"
+        binary = name
+    else:
+        raise UnwrapError(EXIT_MISSING_RUNTIME, f"unsupported platform: {system}")
+
+    path = REPO_ROOT / "engines" / subdir / binary
+    if not path.is_file():
+        raise UnwrapError(
+            EXIT_MISSING_RUNTIME,
+            f"bundled {label} binary not found: {path} (pass --{name}-path)",
+        )
+    return path
+
+
 def validate_uv_obj(path):
     if not path.is_file():
         raise UnwrapError(EXIT_BAD_OUTPUT, f"engine produced no output: {path}")
