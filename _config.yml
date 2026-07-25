@@ -1,0 +1,18 @@
+title: UVgami
+description: Automatic UV unwrapping for Blender
+theme: jekyll-theme-cayman
+
+# jekyll publishes everything it isn't told to skip, so keep source and agent docs out
+exclude:
+  - src
+  - engine
+  - bench
+  - tests
+  - uvgami_cli
+  - docs/agents
+  - __init__.py
+  - pyproject.toml
+  - uv.lock
+  - blender_manifest.toml
+  - AGENTS.md
+  - CLAUDE.md

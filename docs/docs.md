@@ -2,7 +2,13 @@
 
 UVgami is a Blender add-on that allows you to automatically unwrap your meshes with a single button click.
 
-Supported Versions:
+There are three supported UV unwrapping engines. More info [here](#engines).
+
+- OptCuts (CPU): [OptCuts](https://github.com/liminchen/OptCuts) by Minchen Li (MIT License), modified to work in Blender
+- PartUV (GPU): [PartUV](https://github.com/EricWang12/PartUV) by Zhaoning Wang (Apache 2.0)
+- xatlas (CPU): [xatlas](https://github.com/jpcy/xatlas) by Jonathan Young (MIT License)
+
+Supported Operating Systems:
 
 - Windows
 - Linux
@@ -14,31 +20,19 @@ Blender 2.9+
 ## Table of Contents <!-- omit in toc -->
 
 - [Installation](#installation)
-  - [Add-on](#add-on)
-  - [xatlas Engine](#xatlas-engine)
-  - [PartUV Engine](#partuv-engine)
 - [Instructions](#instructions)
   - [Unwrap a Mesh](#unwrap-a-mesh)
   - [Unwrap Buttons](#unwrap-buttons)
-    - [Visual Mode](#visual-mode)
     - [Stop](#stop)
     - [Cancel](#cancel)
     - [Cancel All](#cancel-all)
   - [Batch Unwrap](#batch-unwrap)
   - [Joined Objects](#joined-objects)
   - [Progress Bar](#progress-bar)
-  - [Main Panel](#main-panel)
-    - [Quality](#quality)
-    - [Import UVs](#import-uvs)
-    - [Preserve Mesh](#preserve-mesh)
-      - [Preserve Mesh: Full](#preserve-mesh-full)
-      - [Preserve Mesh: Partial](#preserve-mesh-partial)
-  - [Seam Restrictions](#seam-restrictions)
-    - [Weight](#weight)
+- [Settings](#settings)
   - [Symmetry](#symmetry)
   - [Speed](#speed)
     - [Concurrent mode](#concurrent-mode)
-    - [Finish percentage](#finish-percentage)
     - [Timeout](#timeout)
     - [Cuts](#cuts)
       - [Even](#even)
@@ -52,38 +46,35 @@ Blender 2.9+
     - [Progress Bar Option](#progress-bar-option)
     - [Not Unwrapped Collection](#not-unwrapped-collection)
     - [Reset Settings](#reset-settings)
+- [Engines](#engines)
+- [OptCuts](#optcuts)
+  - [Engine Path](#engine-path)
+  - [Quality](#quality)
+  - [Import UVs](#import-uvs)
+  - [Preserve Mesh](#preserve-mesh)
+    - [Preserve Mesh: Full](#preserve-mesh-full)
+    - [Preserve Mesh: Partial](#preserve-mesh-partial)
+  - [Seam Restrictions](#seam-restrictions)
+    - [Weight](#weight)
+  - [Visual Mode](#visual-mode)
+  - [Finish percentage](#finish-percentage)
+  - [OptCuts Limitations](#optcuts-limitations)
+    - [High Poly Meshes](#high-poly-meshes)
+    - [Non Manifold Meshes](#non-manifold-meshes)
+- [PartUV](#partuv)
+  - [Segmentation mode](#segmentation-mode)
+  - [Threshold](#threshold)
+- [xatlas](#xatlas)
 - [Limitations](#limitations)
-  - [High Poly Meshes](#high-poly-meshes)
   - [Triangulation](#triangulation)
   - [Invalid Objects](#invalid-objects)
-- [Development](#development)
-  - [Developer CLI](#developer-cli)
-  - [PartUV](#partuv)
-    - [Build Setup (Windows)](#build-setup-windows)
-    - [Build Setup (Linux/WSL)](#build-setup-linuxwsl)
-    - [Advanced Options](#advanced-options)
-  - [Tests](#tests)
 
 ## Installation
 
-### Add-on
-
 - Download `UVgami.zip` (don't extract it)
 - Drag and drop the zip file into Blender
-- The add-on auto detects the OptCuts engine since it's bundled. Preferences shows `Using bundled engine` under the `Engine Path` field
-
-To use a different OptCuts build instead of the bundled one, select it with the button on the right of the `Engine Path` field. The `optcuts` app inside the engine folder is what should be selected. Builds are on the [OptCuts engine releases](https://github.com/DanielBoxer/UVgami/releases?q=optcuts%20engine) as `optcuts-engine-X.X.X-operating-system.zip`.
-
-![Engine Path](img/engine_path.jpg)
-
-### xatlas Engine
-
-xatlas is bundled and auto detected like OptCuts, so there's nothing to install. It's a fast unwrapper with no settings to tune.
-
-### PartUV Engine
-
-PartUV needs CUDA and runs on Windows or Linux. Install the add-on first, then in UVgami preferences click `Install PartUV Engine`. It downloads the engine and installs it into a managed Python venv.
-
+- The add-on will auto detect the OptCuts and xatlas engines since they are bundled.
+- For the PartUV engine, you need to install it from the add-on [settings](#partuv)
 
 ## Instructions
 
@@ -101,21 +92,11 @@ PartUV needs CUDA and runs on Windows or Linux. Install the add-on first, then i
 
 ![Unwrap Buttons](img/unwrap_buttons.jpg)
 
-#### Visual Mode
-
-![Visual Button](img/visual_button.jpg)
-
-(optcuts only)
-
-Press to enter visual mode. This will show a real time view of the unwrap as it progresses. All keyboard and mouse input will be blocked. Press `ESC` to exit visual mode.
-
 #### Stop
 
 ![Stop Button](img/stop_button.jpg)
 
-Stop the unwrap and get the partly finished UV map.
-
-Stopping PartUV lets the running meshes finish and moves the rest to "UVgami Not Unwrapped".
+Keep what's finished and stop the rest. If the mesh is made up of multiple pieces, the finished ones will be kept and the rest will be moved to a collection so you can see what wasn't unwrapped yet.
 
 #### Cancel
 
@@ -146,77 +127,14 @@ Cancel all active unwraps at once. This button appears when there are multiple u
 ![Progress Bar](img/progress_bar.jpg)
 
 - The progress bar will appear in the bottom left corner of the 3D viewport
-- The colours correspond to the UV stretching in the current unwrap
+- For Optcuts, the colours correspond to the UV stretching in the current unwrap
   - Blue: Low stretching
   - Green: Medium stretching
   - Red: High stretching
 - A progress bar with almost all blue doesn't necessarily mean that the unwrap will finish soon. Sometimes there is not much stretching, but the seams need adjustment to get the best result.
+- For the other engines, the bar just represents the amount of meshes unwrapped
 
-### Main Panel
-
-#### Quality
-
-![Quality](img/quality.jpg)
-
-Increasing the unwrap quality will produce a UV map with less stretching. This also will make the unwrap take longer, so it's recommended to keep it at medium.
-
-#### Import UVs
-
-![Import Uvs](img/import_uvs.jpg)
-
-Use the existing UV map on the input mesh as the starting point.
-
-Some use cases:
-
-- Deciding where you want some seams
-- Finishing a manual unwrap
-- Speeding up the unwrap time
-
-#### Preserve Mesh
-
-![Preserve Mesh](img/preserve_mesh.jpg)
-
-- Turn this on to keep the final mesh the same as the original mesh. This is useful when you are working with quads and don't want the final mesh to be triangulated.
-
-##### Preserve Mesh: Full
-
-- The final mesh will be fully untriangulated and the seams will be rerouted.
-- This might cause some overlap in the UV map, but this can be easily fixed manually
-
-##### Preserve Mesh: Partial
-
-- All areas of the mesh except for the seams will be untriangulated
-
-### Seam Restrictions
-
-![Seam Restrictions](img/seam_restrictions.jpg)
-
-#### Draw on areas of the mesh you don't want seams added <!-- omit in toc -->
-
-- Press `Draw` to start drawing on the mesh
-- Red areas will be avoided and will have no seams
-
-![Seam Restrictions](img/seam_restrictions_bear.jpg)
-
-##### Attribution for 3D models: <!-- omit in toc -->
-
-###### "25 Animals Pack" (<https://skfb.ly/orQpx>) by MadTrollStudio is licensed under Creative Commons Attribution (<http://creativecommons.org/licenses/by/4.0/>) <!-- omit in toc -->
-
-Before seam restrictions:
-
-![Seams Before Restrictions](img/bear_before.jpg)
-
-![UVs Before Restrictions](img/bear_uvs_before.jpg)
-
-After seam restrictions:
-
-![Seams After Restrictions](img/bear_after.jpg)
-
-![UVs After Restrictions](img/bear_uvs_after.jpg)
-
-#### Weight
-
-Use the `Weight` slider to control how strictly the seam restrictions are followed. A higher weight will avoid the restricted areas more, but will take longer to finish the unwrap.
+## Settings
 
 ### Symmetry
 
@@ -242,12 +160,6 @@ Use symmetry when you have a symmetrical mesh. The more axes selected, the faste
 Unwrap multiple meshes simultaneously, making the unwrap much faster. This also has an effect on meshes that need to be separated. The amount of meshes able to be unwrapped at the same time depends on your computer.
 
 You can choose the amount of cores to use below. For example, with 8 cores you can unwrap 8 meshes simultaneously.
-
-#### Finish percentage
-
-![Finish percent](img/finish_percent.jpg)
-
-Stop the unwrap early based on the amount of stretching.
 
 #### Timeout
 
@@ -329,30 +241,119 @@ Add meshes that failed to unwrap, were cancelled, or were stopped to a collectio
 
 Reset all UVgami properties to their default values.
 
-## Limitations
+## Engines
 
-### High Poly Meshes
+Pick the engine at the top of the main panel.
+
+| Engine              | Hardware   | Install                          | Notes                                                      |
+| ------------------- | ---------- | -------------------------------- | ---------------------------------------------------------- |
+| [OptCuts](#optcuts) | CPU        | bundled                          | Default CPU engine. Least stretching and islands, but slow |
+| [PartUV](#partuv)   | GPU (CUDA) | settings, Windows and Linux only | GPU engine. Much faster than OptCuts on dense meshes       |
+| [xatlas](#xatlas)   | CPU        | bundled                          | Fast CPU engine. Sometimes better than Smart UV Project      |
+
+## OptCuts
+
+### Engine Path
+
+To use a different OptCuts build instead of the bundled one, select it with the button on the right of the `Engine Path` field. The `optcuts` app inside the engine folder is what should be selected. Builds are on the [OptCuts engine releases](https://github.com/DanielBoxer/UVgami/releases?q=optcuts%20engine) as `optcuts-engine-X.X.X-operating-system.zip`.
+
+![Engine Path](img/engine_path.jpg)
+
+### Quality
+
+![Quality](img/quality.jpg)
+
+Increasing the unwrap quality will produce a UV map with less stretching. This also will make the unwrap take longer, so it's recommended to keep it at medium.
+
+### Import UVs
+
+![Import Uvs](img/import_uvs.jpg)
+
+Use the existing UV map on the input mesh as the starting point.
+
+Some use cases:
+
+- Deciding where you want some seams
+- Finishing a manual unwrap
+- Speeding up the unwrap time
+
+### Preserve Mesh
+
+![Preserve Mesh](img/preserve_mesh.jpg)
+
+- Turn this on to keep the final mesh the same as the original mesh. This is useful when you are working with quads and don't want the final mesh to be triangulated.
+- If the mesh had any n-gons, the final result might still have some triangles. There might also be a small amount of extra stretching and overlap. The overlap is easily fixed by hand and can be found by using the Blender `Select Overlap` UV operator.
+
+#### Preserve Mesh: Full
+
+- The final mesh will be fully untriangulated and the seams will be rerouted.
+- This might cause some overlap in the UV map, but this can be easily fixed manually
+
+#### Preserve Mesh: Partial
+
+- All areas of the mesh except for the seams will be untriangulated
+
+### Seam Restrictions
+
+![Seam Restrictions](img/seam_restrictions.jpg)
+
+#### Draw on areas of the mesh you don't want seams added <!-- omit in toc -->
+
+- Press `Draw` to start drawing on the mesh
+- Red areas will be avoided and will have no seams
+
+![Seam Restrictions](img/seam_restrictions_bear.jpg)
+
+##### Attribution for 3D models: <!-- omit in toc -->
+
+###### "25 Animals Pack" (<https://skfb.ly/orQpx>) by MadTrollStudio is licensed under Creative Commons Attribution (<http://creativecommons.org/licenses/by/4.0/>) <!-- omit in toc -->
+
+Before seam restrictions:
+
+![Seams Before Restrictions](img/bear_before.jpg)
+
+![UVs Before Restrictions](img/bear_uvs_before.jpg)
+
+After seam restrictions:
+
+![Seams After Restrictions](img/bear_after.jpg)
+
+![UVs After Restrictions](img/bear_uvs_after.jpg)
+
+#### Weight
+
+Use the `Weight` slider to control how strictly the seam restrictions are followed. A higher weight will avoid the restricted areas more, but will take longer to finish the unwrap.
+
+### Visual Mode
+
+![Visual Button](img/visual_button.jpg)
+
+Press to enter visual mode. This will show a real time view of the unwrap as it progresses. All keyboard and mouse input will be blocked. Press `ESC` to exit visual mode.
+
+### Finish percentage
+
+![Finish percent](img/finish_percent.jpg)
+
+Stop the unwrap early based on the amount of stretching.
+
+### OptCuts Limitations
+
+#### High Poly Meshes
 
 Unwrapping high/medium poly meshes is very slow
 
 Current ways to speed up the unwrap:
 
+- Use the PartUV or xatlas engine instead
 - Turn `Concurrent` mode on and increase the max cores
 - Turn `Symmetry` on if the mesh is symmetrical
 - Don't add too many seam restrictions
 - Use the cuts option
 - Consider lowering the quality or setting the finish percent lower. Though this isn't recommended as the final unwrap will probably have too much stretching.
 
-### Triangulation
+#### Non Manifold Meshes
 
-- The mesh currently needs to be triangulated in order to unwrap it (the add-on will do this automatically)
-- There is an option to convert the mesh back to how it was originally after the unwrap, but if the mesh had any n-gons, the final result might still have some triangles. There might also be a small amount of extra stretching and overlap. The overlap is easily fixed by hand and can be found by using the Blender `Select Overlap` UV operator.
-
-### Invalid Objects
-
-- The unwrapper can't unwrap some objects for various reasons
-- If it can't unwrap an object, you will be notified, or if the object is part of a separated object, it will be moved to a "UVgami Not Unwrapped" collection
-- For example, the Suzanne monkey head is invalid because it's non manifold. Unwrapping it will have this result, where the eyes are unwrapped succesfully, and the head was not:
+OptCuts can't unwrap some non manifold meshes. For example, the Suzanne monkey head is invalid because it's non manifold. Unwrapping it will have this result, where the eyes are unwrapped succesfully, and the head was not:
 
 ![Invalid Objects](img/invalid_objects.jpg)
 
@@ -361,76 +362,31 @@ In this case, the problem is this area, which when fixed, will unwrap properly:
 ![Suzanne](img/suzanne_non_manifold.jpg)
 ![Suzanne](img/suzanne_non_manifold_2.jpg)
 
-## Development
+## PartUV
 
-### Developer CLI
+PartUV needs CUDA and runs on Windows or Linux. Install the add-on first, then in UVgami preferences click install. See below for the two segmentation install options:
 
-Blender-independent CLI for testing the engines with OBJ files. Needs [uv](https://docs.astral.sh/uv/).
+### Segmentation mode
 
-```powershell
-uv sync
-uv run uvgami unwrap model.obj
-```
+- AI (5 gb): Uses PartField which is an AI model to do the segmentation which has the best results. This results in less seams.
+- Geometric (200 mb): Finds seams from the mesh surface shape. Fast and decent results.
 
-- `--engine optcuts` (default) or `--engine partuv`; each engine rejects the other's options
-- Output defaults to `<input stem>_uv.obj` next to the input, use `-o` and `--overwrite` to control it
-- `--json` prints one machine-readable result on stdout, all logs go to stderr
-- OptCuts options: `--quality`, `--seam-weight`, `--seam-weights`, `--import-uvs`, `--optcuts-path` (defaults to the bundled `engines/` binary)
-- PartUV options: `--threshold`, `--segmentation`, `--checkpoint`, `--config` (see the PartUV section below; `--visual` is only on `python -m partuv`)
-- Exit codes: 0 ok, 2 invalid input, 3 missing runtime files, 4 engine failure, 5 bad output
 
-### PartUV
+### Threshold
 
-PartUV needs CUDA. It builds natively on Windows and Linux.
+A lower threshold produces more UV islands.
 
-In the add-on, PartUV runs `python -m partuv` from the wheel: from a repo checkout it uses `uv run`, otherwise the install button in the add-on preferences downloads the wheel from the pinned `partuv-v*` release and installs it into a managed venv.
+## xatlas
 
-Two segmentation modes drive the part tree:
+xatlas is bundled and auto detected like OptCuts. It's very fast but will result in more islands/seams than Optcuts and PartUV. Though it can still have better results than Blender smart UV project.
 
-- `--segmentation ai` (default): PartField inference, best quality; needs the torch stack (`--extra partuv`) and the [PartField checkpoint](https://huggingface.co/mikaelaangel/partfield-ckpt) (untracked)
-- `--segmentation geometric`: scikit-learn agglomerative clustering on face normals and centroids; no torch, no checkpoint, installs with `--extra partuv-lite`
+## Limitations
 
-#### Build Setup (Windows)
+### Triangulation
 
-1. Visual Studio 2026 with the C++ workload (includes vcpkg, cmake, ninja)
-2. CUDA Toolkit 13.2+ (`winget install Nvidia.CUDA`), older versions don't support VS 2026
-3. From a VS dev shell (`Launch-VsDevShell.ps1 -Arch amd64`): `uv sync --extra partuv` (or `--extra partuv-lite`)
+- The mesh currently needs to be triangulated in order to unwrap it (the add-on will do this automatically)
 
-The vcpkg deps (cgal, yaml-cpp, tbb) build from source on the first run, about 50 minutes, and are binary-cached after. The wheel bundles the runtime DLLs; running it only needs the VC++ redistributable.
+### Invalid Objects
 
-#### Build Setup (Linux/WSL)
-
-One-time WSL setup (Ubuntu 24.04):
-
-```bash
-sudo apt install build-essential libcgal-dev libyaml-cpp-dev libtbb-dev
-# cuda toolkit from the nvidia wsl-ubuntu repo, then nvcc is at /usr/local/cuda-12.6/bin
-sudo apt install cuda-toolkit-12-6
-wget -P engine/partuv https://huggingface.co/mikaelaangel/partfield-ckpt/resolve/main/model_objaverse.ckpt
-```
-
-Build and run in WSL (from the repo):
-
-```bash
-export PATH=/usr/local/cuda-12.6/bin:$PATH
-# venv on ext4: keeps the Windows .venv untouched and torch imports fast
-export UV_PROJECT_ENVIRONMENT=~/uvgami-venv
-uv sync --extra partuv        # or --extra partuv-lite for geometric only
-uv run python -m partuv model.obj
-```
-
-#### Advanced Options
-
-- Checkpoint lookup order: `--checkpoint`, `$UVGAMI_PARTUV_CHECKPOINT`, `engine/partuv/model_objaverse.ckpt`
-- The extension compiles to `/var/tmp/partuv-build` in WSL (compiling on `/mnt/c` is hopelessly slow) and targets sm_86 (RTX 3060) by default, override with the `CUDAARCHS` env var; `-DPARTUV_NATIVE=ON` restores upstream's `-march=native`
-- Release wheels should widen the CUDA targets: `CUDAARCHS="75-real;80-real;86-real;89-real;90-real;120"` with CUDA 13 (Windows; sm_75 is its floor), drop `120` on CUDA 12.6 (WSL; sm_90 is its ceiling)
-- CI does this: the PartUV build workflow builds cp311 wheels for Windows and Linux when `engine/partuv/pyproject.toml` or `engine/partuv/vcpkg.json` changes on master (the pyproject version bump is the release trigger; bump vcpkg's `version-string` alongside it) and uploads them to the pinned `partuv-v*` release. The Linux wheel needs the apt libs above and the CUDA runtime at import time; only the Windows wheel bundles its DLLs
-- `--threshold` sets the distortion threshold (default 1.25), `--config` overrides `engine/partuv/config/config.yaml`
-
-### Tests
-
-```powershell
-uv run pytest              # unit tests + OptCuts smoke test
-uv run pytest -m "not smoke"
-uv run ruff check uvgami_cli tests
-```
+- The unwrapper can't unwrap some objects for various reasons
+- If it can't unwrap an object, you will be notified, or if the object is part of a separated object, it will be moved to a "UVgami Not Unwrapped" collection

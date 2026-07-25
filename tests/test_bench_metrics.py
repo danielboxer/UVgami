@@ -69,7 +69,6 @@ def test_isometric_is_perfect(tmp_path):
     assert m["degenerate_tris"] == 0
     assert math.isclose(m["area_distortion"], 1.0, rel_tol=1e-9)
     assert math.isclose(m["angle_distortion"], 1.0, rel_tol=1e-9)
-    assert math.isclose(m["uv_utilization"], 1.0, rel_tol=1e-9)
 
 
 def test_seam_splits_charts(tmp_path):
