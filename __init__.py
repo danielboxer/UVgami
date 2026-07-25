@@ -27,11 +27,7 @@ from .src.ops.guides import (
     UVGAMI_OT_exit_draw,
     UVGAMI_OT_clear_draw,
 )
-from .src.ops.uv import (
-    UVGAMI_OT_unwrap_sharp,
-    UVGAMI_OT_mark_seams_sharp,
-    UVGAMI_OT_pack,
-)
+from .src.ops.uv import UVGAMI_OT_pack
 from .src.ops.misc import (
     UVGAMI_OT_expand,
     UVGAMI_OT_reset_settings,
@@ -42,10 +38,7 @@ from .src.ops.grid import (
     UVGAMI_OT_add_grid,
     UVGAMI_OT_remove_grid,
 )
-from .src.ops.viewer import (
-    UVGAMI_OT_view_unwrap,
-    UVGAMI_OT_view_uvs,
-)
+from .src.ops.viewer import UVGAMI_OT_view_unwrap
 from .src.ops.info import (
     UVGAMI_OT_clear_logs,
     UVGAMI_OT_copy_logs,
@@ -57,9 +50,7 @@ from .src.ui.panels import (
     UVGAMI_PT_symmetry,
     UVGAMI_PT_grid,
     UVGAMI_PT_pack,
-    UVGAMI_PT_uv,
     UVGAMI_PT_misc,
-    UVGAMI_PT_info,
 )
 from .src.ui.props import (
     UVGAMI_PG_properties,
@@ -101,19 +92,14 @@ classes = (
     UVGAMI_OT_view_unwrap,
     UVGAMI_OT_reset_settings,
     UVGAMI_OT_preview_symmetry,
-    UVGAMI_OT_unwrap_sharp,
-    UVGAMI_OT_mark_seams_sharp,
     UVGAMI_OT_clear_logs,
     UVGAMI_OT_copy_logs,
-    UVGAMI_OT_view_uvs,
     UVGAMI_PT_main,
     UVGAMI_PT_guides,
     UVGAMI_PT_symmetry,
     UVGAMI_PT_speed,
     UVGAMI_PT_grid,
     UVGAMI_PT_pack,
-    UVGAMI_PT_uv,
-    UVGAMI_PT_info,
     UVGAMI_PT_misc,
     # engine groups must register before the main group that points to them
     *engine_classes,

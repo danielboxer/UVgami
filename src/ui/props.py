@@ -207,12 +207,6 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
             " since starting the unwrap"
         ),
     )
-    preview_unwrap_sharp: bpy.props.BoolProperty(
-        name="",
-        description=(
-            "Preview: Only mark sharp edges as seams. Use this for high poly meshes"
-        ),
-    )
 
 
 # each engine contributes a pointer to its own settings group, keyed by engine id
@@ -278,18 +272,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         max=60,
         default=10,
     )
-    show_info: bpy.props.BoolProperty(
-        name="Info",
-        description="Show information about previous unwraps in the info panel",
-        default=True,
-    )
-    viewer_workspace: bpy.props.StringProperty(
-        name="Viewer Workspace",
-        description=(
-            "The name of the workspace that will be opened when viewing an unwrap."
-            " If this is empty, the UV editor will be opened instead"
-        ),
-    )
 
     def draw(self, context):
         layout = self.layout
@@ -318,10 +300,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         row.prop(self, "stop_timeout")
 
         row = cf.row()
-        row.label(icon="INFO")
-        row.prop(self, "show_info")
-
-        row = cf.row()
         row.label(
             icon="OUTLINER_COLLECTION" if bpy.app.version >= (2, 92, 0) else "GROUP"
         )
@@ -342,6 +320,8 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
                 )
             )
 
-        row = box.row()
-        row.label(icon="WORKSPACE")
-        row.prop(self, "viewer_workspace")
+        box.separator()
+
+        box.operator(
+            "uvgami.reset_settings", text="Reset Settings", icon="FILE_REFRESH"
+        )

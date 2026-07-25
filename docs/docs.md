@@ -45,20 +45,14 @@ Blender 2.9+
       - [Seams](#seams)
   - [Grid](#grid)
   - [Pack](#pack)
-  - [UV Operations](#uv-operations)
-    - [Unwrap Sharp](#unwrap-sharp)
-    - [Mark Seams Sharp](#mark-seams-sharp)
-    - [View UVs](#view-uvs)
-  - [Info](#info)
   - [Misc](#misc)
   - [Preferences](#preferences)
     - [Autosave (recommended)](#autosave-recommended)
     - [Show Popup](#show-popup)
     - [Progress Bar Option](#progress-bar-option)
-    - [Info Option](#info-option)
     - [Not Unwrapped Collection](#not-unwrapped-collection)
     - [Input Cleanup](#input-cleanup)
-    - [Viewer Workspace](#viewer-workspace)
+    - [Reset Settings](#reset-settings)
 - [Limitations](#limitations)
   - [High Poly Meshes](#high-poly-meshes)
   - [Triangulation](#triangulation)
@@ -301,44 +295,16 @@ Packing uses the Blender packing engine. This is just to make packing a bit easi
 - Turn `Average Islands Scale` on to scale all islands based on their actual space in 3D.
 - Turn `Pack After Unwrap` on to automatically pack UVs after each unwrap finishes.
 
-### UV Operations
-
-![UV Operations](img/uv_operations.jpg)
-
-
-#### Unwrap Sharp
-
-![Unwrap Sharp](img/unwrap_sharp.jpg)
-
-This is an interactive operator for hard surface models. It combines some Blender features to unwrap an object by sharp edges. You can use the `Sharpness` slider to change the angle, and the unwrap will be updated.
-
-If the object is very high poly, the slider will get too slow to use. You can either click it to input a value or turn preview mode on.
-
-![Unwrap Sharp Preview](img/unwrap_sharp_preview.jpg)
-
-Preview mode only marks seams and doesn't unwrap the mesh. Once you have good seams in preview mode, turn preview mode off and click `Unwrap Sharp` again.
-
-#### Mark Seams Sharp
-
-Mark all seams as sharp
-
-#### View UVs
-
-Open the UV viewer for the selected object. Click to exit the viewer.
-
-### Info
+### Misc
 
 ![Info](img/info.jpg)
 
-The info panel shows information about past unwraps. Any errors will also be shown here. If you don't need this, it can be turned off in the preferences.
+- Press `Preferences` to open the UVgami preferences dialog.
+
+The info section below shows information about past unwraps. Any errors will also be shown here.
 
 - Press `Copy` to copy all info to the clipboard
 - Press `Clear` to clear all info
-
-### Misc
-
-- Press `Reset Settings` to reset all UVgami properties to their default values.
-- Press `Preferences` to open the UVgami preferences dialog.
 
 ### Preferences
 
@@ -356,10 +322,6 @@ Show a popup when all meshes are finished unwrapping. This might contain other i
 
 Show a [progress bar](#progress-bar) in the 3D view while unwrapping.
 
-#### Info Option
-
-Show information about previous unwraps in the info panel.
-
 #### Not Unwrapped Collection
 
 Add meshes that failed to unwrap, were cancelled, or were stopped to a collection.
@@ -372,11 +334,9 @@ The action to perform on the original input mesh.
 - Hide: Hide the original input mesh
 - Delete: Delete the original input mesh
 
-#### Viewer Workspace
+#### Reset Settings
 
-(optcuts only)
-
-The name of the workspace that will be opened when viewing an unwrap. If this is empty, the UV editor will be opened instead.
+Reset all UVgami properties to their default values.
 
 ## Limitations
 
