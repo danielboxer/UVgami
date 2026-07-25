@@ -51,7 +51,6 @@ Blender 2.9+
     - [Show Popup](#show-popup)
     - [Progress Bar Option](#progress-bar-option)
     - [Not Unwrapped Collection](#not-unwrapped-collection)
-    - [Input Cleanup](#input-cleanup)
     - [Reset Settings](#reset-settings)
 - [Limitations](#limitations)
   - [High Poly Meshes](#high-poly-meshes)
@@ -325,14 +324,6 @@ Show a [progress bar](#progress-bar) in the 3D view while unwrapping.
 #### Not Unwrapped Collection
 
 Add meshes that failed to unwrap, were cancelled, or were stopped to a collection.
-
-#### Input Cleanup
-
-The action to perform on the original input mesh.
-
-- None: Leave the input mesh as it is
-- Hide: Hide the original input mesh
-- Delete: Delete the original input mesh
 
 #### Reset Settings
 

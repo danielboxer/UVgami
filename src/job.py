@@ -163,18 +163,13 @@ class Join(Job):
         return (path, edge_path, added_edges)
 
 
-class Cleanup(Job):
-    def __init__(self, count, action):
+class HideInput(Job):
+    def __init__(self, count):
         super().__init__(count)
-        self.action = action
 
     def finish(self, input_mesh):
         if check_exists(input_mesh):
-            if self.action == "HIDE":
-                input_mesh.hide_set(True)
-            # deleting the object while editing it will crash blender
-            elif self.action == "DELETE" and input_mesh.mode != "EDIT":
-                bpy.data.objects.remove(input_mesh, do_unlink=True)
+            input_mesh.hide_set(True)
 
 
 class TransferUVs(Job):

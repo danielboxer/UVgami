@@ -375,8 +375,8 @@ class UnwrapManager:
         if unwrap.preserve_job is not None:
             unwrap.preserve_job.finish(unwrap, output, added_edges)
 
-        if unwrap.cleanup_job is not None:
-            unwrap.cleanup_job.finish(self.input[unwrap.cleanup_job])
+        if unwrap.hide_job is not None:
+            unwrap.hide_job.finish(self.input[unwrap.hide_job])
 
         if unwrap.symmetrize_job is not None:
             unwrap.symmetrize_job.finish(output)
@@ -526,7 +526,7 @@ class UnwrapManager:
         for job in unwrap.jobs:
             if job.count > 1:
                 job.count = job.count - 1
-                # found_job can't be a Cleanup job because the unwrapped list
+                # found_job can't be a HideInput job because the unwrapped list
                 # will be empty
                 if isinstance(job, Join):
                     found_job = job
