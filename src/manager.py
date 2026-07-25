@@ -11,7 +11,7 @@ from .batch import BatchProcess, last_meaningful_line
 from .job import Join
 from .logger import logger
 from .ops.grid import add_grid, make_grid_img, make_grid_mat
-from .ops.uv import pack, show_seams
+from .ops.uv import pack, should_pack, show_seams
 from .progress_bar import progress_bar
 from .reroute_seams import reroute_seams
 from .utils.geometry import set_origin
@@ -41,8 +41,8 @@ class UnwrapManager:
         self.is_active = False
         self.is_viewer_active = False
         self._dispatch_handle = None
-        # pieces still being exported by drains that add unwraps incrementally;
-        # blocks finalizing the session until every drain has drained
+        # pieces still being written by exporters that add unwraps incrementally;
+        # blocks finalizing the session until every exporter is done
         self.hold_count = 0
         # unexported pieces already counted in starting_count, shown as
         # remaining so the finished ratio doesn't shrink as pieces get added
@@ -92,9 +92,9 @@ class UnwrapManager:
         """Start queued unwraps up to the concurrency limit."""
         props = bpy.context.scene.uvgami
         engine = self.engine
-        if engine.wants_batch(props):
+        if engine.batches_queue(props):
             if self.hold_count > 0:
-                # batch needs the whole queue at once; wait for every drain to
+                # batch needs the whole queue at once; wait for every exporter to
                 # finish exporting (the dispatch timer retries each tick)
                 return
             if any(u.batch_process is not None for u in self._running):
@@ -104,7 +104,7 @@ class UnwrapManager:
                 self._start_batch_process(engine, props)
                 return
             # a single queued mesh runs the normal solo path
-        if props.concurrent and engine.allows_concurrent(props):
+        if props.concurrent and not engine.batches_queue(props):
             max_concurrent = props.max_cores
         else:
             max_concurrent = 1
@@ -254,7 +254,7 @@ class UnwrapManager:
             # fill empty slots from queue
             self._fill_slots()
 
-            # check if everything is done; a drain still adding pieces holds the
+            # check if everything is done; an exporter still adding pieces holds the
             # session open even when nothing is running or queued yet
             if not self._running and not self._queue and self.hold_count == 0:
                 self._finish_batch()
@@ -338,7 +338,7 @@ class UnwrapManager:
         props = bpy.context.scene.uvgami
 
         # reroute seams before importing
-        if unwrap.preserve_job is not None and props.maintain_mode == "FULL":
+        if unwrap.preserve_job is not None and unwrap.maintain_mode == "FULL":
             reroute_seams(path, edge_path)
 
         old_active = bpy.context.view_layer.objects.active
@@ -391,7 +391,7 @@ class UnwrapManager:
             grid_img = make_grid_img()
             add_grid(output, make_grid_mat(grid_img))
 
-        if props.pack_after_unwrap:
+        if should_pack(props):
             self._pack_output_objects.append(output)
 
         # show seams
@@ -418,7 +418,7 @@ class UnwrapManager:
             input_mesh = self.input[unwrap.transfer_uvs_job]
             # replace output with input in pack list before finish deletes output
             pack_replaced = False
-            if props.pack_after_unwrap:
+            if should_pack(props):
                 for i, obj in enumerate(self._pack_output_objects):
                     if obj == output:
                         self._pack_output_objects[i] = input_mesh
@@ -546,7 +546,7 @@ class UnwrapManager:
     def _finish_batch(self):
         """Called when all unwraps are done (completed, failed, or cancelled)."""
         props = bpy.context.scene.uvgami
-        if props.pack_after_unwrap and self._pack_output_objects:
+        if should_pack(props) and self._pack_output_objects:
             valid_objects = [o for o in self._pack_output_objects if check_exists(o)]
             if valid_objects:
                 if props.combine_uvs:
@@ -630,7 +630,7 @@ class UnwrapManager:
     def release_jobs(self, jobs):
         """Decrement each job's count for a piece that won't be unwrapped and
         apply the Join cancelled/finished adjustment when its group empties.
-        Shared by cancel_with_bookkeeping and the drain's group-stop skip."""
+        Shared by cancel_with_bookkeeping and the exporter's group-cancel skip."""
         for job in jobs:
             job.count = job.count - 1
             # if it was the last one

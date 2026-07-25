@@ -33,6 +33,7 @@ class Unwrap:
         shade_smooth: bool,
         auto_smooth: int,
         merge_cuts: bool,
+        maintain_mode: str,
     ):
         # unwrap name
         self.name = name
@@ -66,6 +67,9 @@ class Unwrap:
 
         # other
         self.merge_cuts = merge_cuts
+        # snapshot: the edge file was written for this mode, so a later change
+        # must not reach the untriangulate pass
+        self.maintain_mode = maintain_mode
 
         # unwrap state
         self.is_active = False

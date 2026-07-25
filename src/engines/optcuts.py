@@ -26,7 +26,7 @@ class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
 class OptcutsEngine(Engine):
     id = "OPTCUTS"
     label = "Optcuts"
-    description = "The default Optcuts unwrapping engine"
+    description = "Default CPU engine. Least stretching and islands, but slow"
     property_group = UVGAMI_PG_optcuts
     classes = (UVGAMI_PG_optcuts,)
     supports_guided = True

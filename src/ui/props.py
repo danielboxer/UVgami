@@ -2,13 +2,8 @@ import multiprocessing
 
 import bpy
 
-from ..engines import ENGINES, get_engine
+from ..engines import ENGINES
 from ..utils.paths import get_addon_id
-
-
-def update_engine(self, context):
-    # reset pack-after-unwrap to the new engine's default when switching
-    self.pack_after_unwrap = get_engine(self.engine).pack_by_default
 
 
 class UVGAMI_PG_properties(bpy.types.PropertyGroup):
@@ -21,7 +16,6 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
             if e.is_available()
         ),
         default="OPTCUTS",
-        update=update_engine,
     )
     import_uvs: bpy.props.BoolProperty(
         name="", description="Use the UV map on the mesh as input"
