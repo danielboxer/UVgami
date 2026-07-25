@@ -73,8 +73,6 @@ Blender 2.9+
 
 ## Installation
 
-Download the add-on [here](https://github.com/DanielBoxer/UVgami/releases/latest)
-
 ### Add-on
 
 - Download `UVgami.zip` (don't extract it)
