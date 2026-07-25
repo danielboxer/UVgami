@@ -9,18 +9,16 @@
 
 [Find the latest release here](https://github.com/danielboxer/UVgami/releases/latest).
 
-There are [two](#engines) supported engines.
+There are [three](#engines) supported engines.
 
 ### Install the add-on
 
 1. Get the add-on: `UVgami.zip`
-2. The add-on will auto detect the engine since it's bundled
+2. This comes with Optcuts and xatlas as bundled engines that will be auto detected
 
 ### Download PartUV engine after install
 
 This is a different engine that requires an NVIDIA GPU. Install the add-on, then click `Install PartUV Engine` in the preferences.
-
-Once installed, you can switch between engines in the n-panel.
 
 ![Elephant](docs/img/readme/1.jpg)
 
@@ -34,7 +32,8 @@ Once installed, you can switch between engines in the n-panel.
 
 ## Engines
 
-UVgami has two unwrapping engines, see the [docs](/docs/docs.md) for more info:
+UVgami has three unwrapping engines, see the [docs](/docs/docs.md) for more info:
 
 - OptCuts (CPU): [OptCuts](https://github.com/liminchen/OptCuts) by Minchen Li (MIT License), modified to work in Blender
-- PartUV (AI, needs an NVIDIA GPU): [PartUV](https://github.com/EricWang12/PartUV) by Zhaoning Wang (Apache 2.0)
+- PartUV (GPU): [PartUV](https://github.com/EricWang12/PartUV) by Zhaoning Wang (Apache 2.0)
+- xatlas (CPU): [xatlas](https://github.com/jpcy/xatlas) by Jonathan Young (MIT License)
