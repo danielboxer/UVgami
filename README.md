@@ -5,7 +5,7 @@
 ## Quickstart
 
 > [!NOTE]
-> Check the [user guide](/docs/docs.md) for more detailed documentation.
+> Check the [user guide](docs/docs.md) for more detailed documentation.
 
 [Find the latest release here](https://github.com/danielboxer/UVgami/releases/latest).
 
@@ -32,7 +32,7 @@ This is a different engine that requires an NVIDIA GPU. Install the add-on, then
 
 ## Engines
 
-UVgami has three unwrapping engines, see the [docs](/docs/docs.md) for more info:
+UVgami has three unwrapping engines, see the [docs](docs/docs.md) for more info:
 
 - OptCuts (CPU): [OptCuts](https://github.com/liminchen/OptCuts) by Minchen Li (MIT License), modified to work in Blender
 - PartUV (GPU): [PartUV](https://github.com/EricWang12/PartUV) by Zhaoning Wang (Apache 2.0)
