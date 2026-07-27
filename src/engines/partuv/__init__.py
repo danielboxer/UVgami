@@ -9,7 +9,12 @@ import bpy
 
 from .. import Engine
 from ...utils.paths import get_dir_path, get_extension_dir_path
-from .install import PARTUV_PLATFORMS, UVGAMI_OT_install_partuv, install_state
+from .install import (
+    PARTUV_PLATFORMS,
+    UVGAMI_OT_install_partuv,
+    UVGAMI_OT_uninstall_partuv,
+    task_state,
+)
 from .paths import (
     get_partuv_checkpoint_path,
     get_partuv_venv_path,
@@ -76,8 +81,9 @@ class PartuvEngine(Engine):
     id = "PARTUV"
     label = "PartUV"
     description = "GPU engine. Much faster than Optcuts on dense meshes"
+    icon = "MOD_EXPLODE"
     property_group = UVGAMI_PG_partuv
-    classes = (UVGAMI_PG_partuv, UVGAMI_OT_install_partuv)
+    classes = (UVGAMI_PG_partuv, UVGAMI_OT_install_partuv, UVGAMI_OT_uninstall_partuv)
     # partuv writes every chart at the origin, so unpacked output overlaps
     requires_pack = True
 
@@ -113,49 +119,51 @@ class PartuvEngine(Engine):
             )
             return
         if find_partuv_dev_repo() is not None:
-            layout.row().label(
-                text="PartUV: dev mode (running from repo)", icon="CHECKMARK"
-            )
-        elif install_state["running"]:
+            layout.row().label(text="Dev mode, running from the repo", icon="CHECKMARK")
+            return
+
+        if task_state["running"]:
             row = layout.row()
-            phase = install_state["phase"] or "Installing PartUV"
-            total = install_state["bytes_total"]
+            phase = task_state["phase"] or "Installing PartUV"
+            total = task_state["bytes_total"]
             if total:
-                factor = install_state["bytes_done"] / total
+                factor = task_state["bytes_done"] / total
                 row.progress(
                     factor=factor, type="BAR", text=f"{phase}  {factor * 100:.0f}%"
                 )
             else:
                 row.label(text=phase, icon="SORTTIME")
-        else:
-            geometric_installed = is_partuv_installed()
-            ai_installed = is_partuv_ai_installed()
-            if geometric_installed:
-                layout.row().label(
-                    text="PartUV installed (Geometric)", icon="CHECKMARK"
-                )
-                if ai_installed:
-                    layout.row().label(text="PartUV installed (AI)", icon="CHECKMARK")
-            else:
-                layout.row().label(text="PartUV not installed")
+            return
 
-            row = layout.row()
-            row.scale_y = 1.5
-            geometric = row.operator(
-                "uvgami.install_partuv",
-                text="Reinstall Geometric" if geometric_installed else "Geometric (200 MB)",
-                icon="IMPORT",
+        installed = is_partuv_installed()
+        ai_installed = is_partuv_ai_installed()
+        row = layout.row()
+        if ai_installed:
+            row.label(text="Installed with AI segmentation", icon="CHECKMARK")
+        elif installed:
+            row.label(
+                text="Installed with geometric segmentation only", icon="CHECKMARK"
             )
-            geometric.tier = "GEOMETRIC"
-            ai = row.operator(
+        else:
+            row.label(text="Not installed", icon="X")
+
+        row = layout.row()
+        row.scale_y = 1.5
+        if not installed:
+            row.operator(
                 "uvgami.install_partuv",
-                text="Reinstall AI" if ai_installed else "AI (5 GB)",
+                text="Install Geometric (200 MB)",
                 icon="IMPORT",
-            )
-            ai.tier = "AI"
-            if install_state["error"] is not None:
-                row = layout.row()
-                row.label(text=install_state["error"], icon="ERROR")
+            ).tier = "GEOMETRIC"
+        if not ai_installed:
+            row.operator(
+                "uvgami.install_partuv", text="Install AI (5 GB)", icon="IMPORT"
+            ).tier = "AI"
+        if installed:
+            row.operator("uvgami.uninstall_partuv", text="Delete", icon="TRASH")
+
+        if task_state["error"] is not None:
+            layout.row().label(text=task_state["error"], icon="ERROR")
 
     def build_args(self, ctx, input_path, props):
         return self.build_batch_args(ctx, [input_path], props)

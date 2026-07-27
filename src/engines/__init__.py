@@ -2,6 +2,7 @@ class Engine:
     id = ""
     label = ""
     description = ""
+    icon = "TOOL_SETTINGS"
     # every bpy class the engine needs (its property group plus any operators)
     property_group = None
     classes = ()

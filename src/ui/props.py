@@ -260,10 +260,21 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
     def draw(self, context):
         layout = self.layout
 
+        row = layout.row()
+        row.label(text="Engines", icon="TOOL_SETTINGS")
+
         for engine in ENGINES.values():
-            engine.draw_prefs(layout.box(), self)
+            box = layout.box()
+            row = box.row()
+            row.label(text=engine.label, icon=engine.icon)
+            row = box.row()
+            row.active = False
+            row.label(text=engine.description)
+            engine.draw_prefs(box, self)
 
         box = layout.box()
+        row = box.row()
+        row.label(text="General", icon="PREFERENCES")
 
         cf = box.column_flow(columns=3)
 
