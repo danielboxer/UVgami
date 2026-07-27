@@ -19,7 +19,8 @@ Blender addon that does automatic UV unwrapping. Three engines: optcuts and xatl
 ## Gotchas
 
 - The dev venv is hand-built: the partuv CUDA stack was installed with `--extra partuv`, which is outside the default sync set. Bare `uv sync` uninstalls all of it, so sync with `uv sync --inexact`. Plain `uv run` is safe (inexact by default).
-- The dev venv's editable partuv install holds copies of the python files, not links. After editing `engine/partuv/partuv/*.py`, copy the file over `.venv/Lib/site-packages/partuv/` or pytest and `python -m partuv` run stale code.
+- The dev venv's editable partuv install holds copies of the python files, not links. After editing `engine/partuv/partuv/*.py` or `engine/partuv/preprocess_utils/*`, copy the file over `.venv/Lib/site-packages/partuv/` or pytest and `python -m partuv` run stale code (`CMakeLists.txt` installs preprocess_utils nested under `partuv/`).
+- `preprocess_utils` resolves two ways and only one is the source. The engine imports it relatively as `partuv.preprocess_utils`, which is the venv copy; the top-level name `preprocess_utils` maps to the real source tree. A check script importing the top-level name can pass while the engine runs stale code, so verify through `partuv.preprocess` or copy first. Same trap when stashing for a before/after comparison: re-copy after both the stash and the pop.
 - Rebuilding the compiled core needs a VS dev shell with CUDA and ninja on PATH. Steps in `docs/agents/development.md`.
 - Never add a blocking stdin reader thread to the partuv CLI. On Windows a thread stuck reading stdin stalls native DLL imports.
 - Engine stdout is a parsed protocol (`start:`/`done:`/`failed:`/`progress:` lines). Don't print extra lines to stdout in the engine path, use stderr.
