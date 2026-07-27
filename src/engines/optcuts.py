@@ -27,6 +27,7 @@ class OptcutsEngine(Engine):
     id = "OPTCUTS"
     label = "Optcuts"
     description = "Default CPU engine. Least stretching and islands, but slow"
+    icon = "UV"
     property_group = UVGAMI_PG_optcuts
     classes = (UVGAMI_PG_optcuts,)
     supports_guided = True
@@ -62,16 +63,20 @@ class OptcutsEngine(Engine):
 
     def draw_prefs(self, layout, prefs):
         row = layout.row()
+        _, error = self.validate(prefs)
+        if error is not None:
+            row.label(text=error, icon="ERROR")
+        elif str(pathlib.Path(prefs.engine_path)) == ".":
+            row.label(text="Using the bundled engine", icon="CHECKMARK")
+        else:
+            row.label(text="Using the engine path below", icon="CHECKMARK")
+
+        row = layout.row()
         row.scale_y = 1.5
         split = row.split(factor=0.2)
         split.scale_x = 1.5
         split.label(text="Engine Path")
         split.prop(prefs, "engine_path")
-
-        engine_path = pathlib.Path(prefs.engine_path)
-        if str(engine_path) == "." and get_bundled_engine_path("optcuts") is not None:
-            row = layout.row()
-            row.label(text="Using bundled optcuts engine", icon="CHECKMARK")
 
     def build_args(self, ctx, input_path, props):
         u = {"HIGH": "4.05", "MEDIUM": "4.1"}.get(props.optcuts.quality, "4.2")
