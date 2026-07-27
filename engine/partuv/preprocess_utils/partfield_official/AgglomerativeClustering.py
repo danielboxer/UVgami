@@ -2,11 +2,9 @@ from sklearn.cluster import AgglomerativeClustering
 from scipy.sparse.csgraph import connected_components
 import numpy as np
 import trimesh
-import matplotlib.pyplot as plt
 import numpy as np
 from scipy.sparse import coo_matrix
 import os
-import joblib
 import itertools
 import time
 from collections import defaultdict
@@ -25,6 +23,22 @@ import numpy as np
 from tqdm import tqdm
 #   import line_profiler
 import torch
+
+# matplotlib's tab20, inlined so the segmentation colours don't pull matplotlib in
+TAB20 = np.array([
+    [31, 119, 180], [174, 199, 232], [255, 127, 14], [255, 187, 120],
+    [44, 160, 44], [152, 223, 138], [214, 39, 40], [255, 152, 150],
+    [148, 103, 189], [197, 176, 213], [140, 86, 75], [196, 156, 148],
+    [227, 119, 194], [247, 182, 210], [127, 127, 127], [199, 199, 199],
+    [188, 189, 34], [219, 219, 141], [23, 190, 207], [158, 218, 229],
+]) / 255
+
+
+def tab20_colors(n):
+    # matches ListedColormap indexing: x*N truncated, with x==1 clamped to N-1
+    idx = np.clip((np.linspace(0, 1, n) * len(TAB20)).astype(int), 0, len(TAB20) - 1)
+    return TAB20[idx]
+
 
 def pca_gpu(X, num_components=2, device=torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')):
     # Move data to GPU if available
@@ -724,8 +738,7 @@ def solve_clustering_mesh(    mesh,    point_feat,    clustering_path,    num_br
         hierarchical_labels = hierarchical_clustering_labels(clustering.children_, point_feat.shape[0], max_cluster=max_cluster)
         unique_labels = np.unique(hierarchical_labels[0])
         num_colors = len(unique_labels)
-        cmap = plt.get_cmap('tab20') 
-        colors = cmap(np.linspace(0, 1, num_colors))
+        colors = tab20_colors(num_colors)
 
         for n_cluster in range(max_cluster):
 

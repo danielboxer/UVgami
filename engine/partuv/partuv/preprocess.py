@@ -1,4 +1,14 @@
 import os, time
+
+# cublas reductions under cuda >= 10.2 vary between runs, and the fp16 noise that
+# leaks out flips near-tie merges in clustering, changing the whole chart layout.
+# must be set before cublas initializes
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
+import torch
+
+torch.use_deterministic_algorithms(True, warn_only=True)
+
 from .preprocess_utils.partfield_official.run_PF import PFInferenceModel
 from .preprocess_utils.PartField_pipeline import PF_pipeline
 from .preprocess_utils.manifold import fix_mesh_trimesh

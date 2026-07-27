@@ -30,7 +30,6 @@ import tempfile
 import urllib
 import urllib.request
 import uuid
-import boto3
 import threading
 from contextlib import ContextDecorator
 from contextlib import contextmanager, nullcontext
@@ -38,10 +37,8 @@ from contextlib import contextmanager, nullcontext
 from distutils.util import strtobool
 from typing import Any, List, Tuple, Union
 import importlib
-from loguru import logger
 # import wandb
 import torch
-import psutil
 import subprocess
 
 import random
@@ -508,17 +505,6 @@ def open_url(url: str, cache_dir: str = None, num_attempts: int = 10, verbose: b
     assert not return_filename
     return io.BytesIO(url_data)
 
-# ------------------------------------------------------------------------------------------
-# util function modified from https://github.com/nv-tlabs/LION/blob/0467d2199076e95a7e88bafd99dcd7d48a04b4a7/utils/model_helper.py
-def import_class(model_str):
-    from torch_utils.dist_utils import is_rank0
-    if is_rank0():
-        logger.info('import: {}', model_str)
-    p, m = model_str.rsplit('.', 1)
-    mod = importlib.import_module(p)
-    Model = getattr(mod, m)
-    return Model
-
 class ScopedTorchProfiler(ContextDecorator):
     """
     Marks ranges for both nvtx profiling (with nsys) and torch autograd profiler
@@ -667,114 +653,6 @@ class TimingsMonitor():
                 # Convert to seconds
                 time_elapsed = events.start.elapsed_time(events.end)/1000.
                 self.all_timings_dict[k] = time_elapsed
-
-def init_s3(config_file):
-    config = json.load(open(config_file, 'r'))
-    s3_client = boto3.client("s3", **config)
-    return s3_client
-
-def download_from_s3(file_path, target_path, cfg):
-    tic = time.time()
-    s3_client = init_s3(cfg.checkpoint.write_s3_config)  # use to test the s3_client can be init
-    bucket_name = file_path.split('/')[2]
-    file_key = file_path.split(bucket_name+'/')[-1]
-    print(bucket_name, file_key)
-    s3_client.download_file(bucket_name, file_key, target_path)
-    logger.info(f'finish download from ! s3://{bucket_name}/{file_key} to {target_path} %.1f sec'%(
-        time.time() - tic))
-
-def upload_to_s3(buffer, bucket_name, key, config_dict):
-    logger.info(f'start upload_to_s3! bucket_name={bucket_name}, key={key}')
-    tic = time.time()
-    s3 = boto3.client('s3', **config_dict)
-    s3.put_object(Bucket=bucket_name, Key=key, Body=buffer.getvalue())
-    logger.info(f'finish upload_to_s3! s3://{bucket_name}/{key} %.1f sec'%(time.time() - tic))
-
-def write_ckpt_to_s3(cfg, all_model_dict, ckpt_name):
-    buffer = io.BytesIO()
-    tic = time.time()
-    torch.save(all_model_dict, buffer)  # take ~0.25 sec
-    # logger.info('write ckpt to buffer: %.2f sec'%(time.time() - tic))
-    group, name = cfg.outdir.rstrip("/").split("/")[-2:]
-    key = f"checkpoints/{group}/{name}/ckpt/{ckpt_name}"
-    bucket_name = cfg.checkpoint.write_s3_bucket
-     
-    s3_client = init_s3(cfg.checkpoint.write_s3_config)  # use to test the s3_client can be init
-
-    config_dict = json.load(open(cfg.checkpoint.write_s3_config, 'r'))
-    upload_thread = threading.Thread(target=upload_to_s3, args=(buffer, bucket_name, key, config_dict))
-    upload_thread.start()
-    path = f"s3://{bucket_name}/{key}" 
-    return path
-
-def upload_file_to_s3(cfg, file_path, key_name=None):
-    # file_path is the local file path, can be a yaml file
-    # this function is used to upload the ckecpoint only
-    tic = time.time()
-    group, name = cfg.outdir.rstrip("/").split("/")[-2:]
-    if key_name is None:
-        key = os.path.basename(file_path)
-    key = f"checkpoints/{group}/{name}/{key}"
-    bucket_name = cfg.checkpoint.write_s3_bucket
-    s3_client = init_s3(cfg.checkpoint.write_s3_config)
-    # Upload the file
-    with open(file_path, 'rb') as f:
-        s3_client.upload_fileobj(f, bucket_name, key)
-    full_s3_path = f"s3://{bucket_name}/{key}"
-    logger.info(f'upload_to_s3: {file_path} {full_s3_path} | use time: {time.time()-tic}')
-
-    return full_s3_path
-
-
-def load_from_s3(file_path, cfg, load_fn):
-    """
-        ckpt_path example:
-            s3://xzeng/checkpoints/2023_0413/vae_kl_5e-1/ckpt/snapshot_epo000163_iter164000.pt
-    """
-    s3_client = init_s3(cfg.checkpoint.write_s3_config)  # use to test the s3_client can be init
-    bucket_name = file_path.split("s3://")[-1].split('/')[0]
-    key = file_path.split(f'{bucket_name}/')[-1]
-    # logger.info(f"-> try to load s3://{bucket_name}/{key} ")
-    tic = time.time()
-    for attemp in range(10):
-        try:
-            # Download the state dict from S3 into memory (as a binary stream)
-            with io.BytesIO() as buffer:
-                s3_client.download_fileobj(bucket_name, key, buffer)
-                buffer.seek(0)
-
-                # Load the state dict into a PyTorch model
-                # out = torch.load(buffer, map_location=torch.device("cpu"))
-                out = load_fn(buffer)
-            break
-        except:
-            logger.info(f"fail to load s3://{bucket_name}/{key} attemp: {attemp}")
-    from torch_utils.dist_utils import is_rank0
-    if is_rank0():
-        logger.info(f'loaded {file_path} | use time: {time.time()-tic:.1f} sec')
-    return out
-
-def load_torch_dict_from_s3(ckpt_path, cfg):
-    """
-        ckpt_path example:
-            s3://xzeng/checkpoints/2023_0413/vae_kl_5e-1/ckpt/snapshot_epo000163_iter164000.pt
-    """
-    s3_client = init_s3(cfg.checkpoint.write_s3_config)  # use to test the s3_client can be init
-    bucket_name = ckpt_path.split("s3://")[-1].split('/')[0]
-    key = ckpt_path.split(f'{bucket_name}/')[-1]
-    for attemp in range(10):
-        try:
-            # Download the state dict from S3 into memory (as a binary stream)
-            with io.BytesIO() as buffer:
-                s3_client.download_fileobj(bucket_name, key, buffer)
-                buffer.seek(0)
-
-                # Load the state dict into a PyTorch model
-                out = torch.load(buffer, map_location=torch.device("cpu"))
-            break
-        except:
-            logger.info(f"fail to load s3://{bucket_name}/{key} attemp: {attemp}")
-    return out
 
 def count_parameters_in_M(model):
     return np.sum(np.prod(v.size()) for name, v in model.named_parameters() if "auxiliary" not in name) / 1e6
@@ -945,21 +823,6 @@ def debug_print_all_tensor_sizes(min_tot_size = 0):
                     print(type(obj), obj.size())
         except:
             pass
-def print_cpu_usage():
-    
-    # Get current CPU usage as a percentage
-    cpu_usage = psutil.cpu_percent()
-    
-    # Get current memory usage
-    memory_usage = psutil.virtual_memory().used
-    
-    # Convert memory usage to a human-readable format
-    memory_usage_str = psutil._common.bytes2human(memory_usage)
-    
-    # Print CPU and memory usage
-    msg = f"Current CPU usage: {cpu_usage}% | "
-    msg += f"Current memory usage: {memory_usage_str}"
-    return msg
 
 def calmsize(num_bytes):
     if math.isnan(num_bytes):
@@ -1042,33 +905,3 @@ class ForkedPdb(pdb.Pdb):
             pdb.Pdb.interaction(self, *args, **kwargs)
         finally:
             sys.stdin = _stdin
-
-def check_exist_in_s3(file_path, s3_config):
-    s3 = init_s3(s3_config)
-    bucket_name, object_name = s3path_to_bucket_key(file_path)
-
-    try:
-        s3.head_object(Bucket=bucket_name, Key=object_name)
-        return 1
-    except:
-        logger.info(f'file not found: s3://{bucket_name}/{object_name}')
-        return 0
-
-def s3path_to_bucket_key(file_path):
-    bucket_name = file_path.split('/')[2]
-    object_name = file_path.split(bucket_name + '/')[-1]
-    return bucket_name, object_name
-
-def copy_file_to_s3(cfg, file_path_local, file_path_s3):
-    # work similar as upload_file_to_s3, but not trying to parse the file path
-    # file_path_s3: s3://{bucket}/{key}
-    bucket_name, key = s3path_to_bucket_key(file_path_s3)
-    tic = time.time()
-    s3_client = init_s3(cfg.checkpoint.write_s3_config)
-
-    # Upload the file
-    with open(file_path_local, 'rb') as f:
-        s3_client.upload_fileobj(f, bucket_name, key)
-    full_s3_path = f"s3://{bucket_name}/{key}"
-    logger.info(f'copy file: {file_path_local} {full_s3_path} | use time: {time.time()-tic}')
-    return full_s3_path

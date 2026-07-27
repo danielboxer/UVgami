@@ -1,7 +1,6 @@
 import argparse
 import os.path as osp
 from datetime import datetime
-import pytz
 
 def default_argument_parser(add_help=True, default_config_file=""):
     parser = argparse.ArgumentParser(add_help=add_help)
@@ -19,7 +18,7 @@ def setup(args, freeze=True):
     cfg = cfg.clone()
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
-    dt = datetime.now(pytz.timezone('America/Los_Angeles')).strftime('%y%m%d-%H%M%S')
+    dt = datetime.now().strftime('%y%m%d-%H%M%S')
     cfg.output_dir = osp.join(cfg.output_dir, cfg.name, dt)
     if freeze:
         cfg.freeze()
