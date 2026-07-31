@@ -1,8 +1,5 @@
 name: Mirror PartField checkpoint
 
-# one-off: copy the 1.24GB checkpoint from Hugging Face onto the fixed
-# `checkpoint` release so the addon install doesn't depend on the HF repo or its
-# main branch. rerun only when the upstream checkpoint changes.
 on:
   workflow_dispatch:
 

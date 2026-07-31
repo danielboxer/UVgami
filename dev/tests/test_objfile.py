@@ -3,7 +3,7 @@ from pathlib import Path
 
 # loaded from file so importing doesn't touch the blender addon package
 spec = importlib.util.spec_from_file_location(
-    "addon_objfile", Path(__file__).parents[1] / "src" / "objfile.py"
+    "addon_objfile", Path(__file__).parents[2] / "src" / "objfile.py"
 )
 objfile = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(objfile)
@@ -46,6 +46,22 @@ def test_merge_without_vt(tmp_path):
 
     assert lines[3] == "f 1 2 3"
     assert lines[-1] == "f 4 5 6"
+
+
+def test_remap_weights_to_vt(tmp_path):
+    # a seam splits vertex 2 (0-based v index 1) into vts 2 and 4: both vts
+    # must inherit its weight, and the unweighted vertex 3 stays absent
+    path = write_obj(
+        tmp_path,
+        "seamed.obj",
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\nv 1 1 0\n"
+        "vt 0 0\nvt 1 0\nvt 0 1\nvt 0.5 0\nvt 0.5 1\n"
+        "f 1/1 2/2 3/3\nf 2/4 4/5 3/3\n",
+    )
+    weights = {0: 1.0, 1: 0.25, 3: 0.5}
+
+    remapped = objfile.remap_weights_to_vt(path, weights)
+    assert remapped == {0: 1.0, 1: 0.25, 3: 0.25, 4: 0.5}
 
 
 def test_merge_drops_o_lines(tmp_path):

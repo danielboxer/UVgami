@@ -53,7 +53,7 @@ def find_partuv_dev_repo():
     """Return the repo path if the developer CLI is usable, else None."""
     repo = get_dir_path()
     if (
-        (repo / "uvgami_cli").is_dir()
+        (repo / "dev" / "uvgami_cli").is_dir()
         and (repo / ".venv").is_dir()
         and shutil.which("uv") is not None
     ):

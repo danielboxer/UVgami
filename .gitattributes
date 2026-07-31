@@ -1,1 +1,3 @@
 engine/** linguist-vendored
+engine/optcuts/src/** -linguist-vendored
+engine/optcuts/src/include/tclap/** linguist-vendored

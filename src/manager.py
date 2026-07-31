@@ -26,7 +26,10 @@ from .utils.mesh import (
     set_bmesh,
 )
 from .utils.paths import get_extension_dir_path, get_preferences
-from .utils.ui import popup, switch_shading
+from .utils.ui import popup, set_status, switch_shading, tag_redraw
+
+# how long a clean run's status bar message stays up
+STATUS_SECONDS = 5
 
 
 class UnwrapManager:
@@ -40,6 +43,8 @@ class UnwrapManager:
         self.engine_ctx = None
         self.is_active = False
         self.is_viewer_active = False
+        # the session was started from the uv editor, so its queue ui goes there
+        self.in_uv_editor = False
         self._dispatch_handle = None
         # pieces still being written by exporters that add unwraps incrementally;
         # blocks finalizing the session until every exporter is done
@@ -47,6 +52,11 @@ class UnwrapManager:
         # unexported pieces already counted in starting_count, shown as
         # remaining so the finished ratio doesn't shrink as pieces get added
         self.pending_count = 0
+        # session progress as (done, running, remaining) fractions
+        self.progress = numpy.zeros(3)
+        # last session's summary, shown as a banner until dismissed
+        self.result = []
+        self.result_failed = False
 
     @property
     def active(self):
@@ -64,12 +74,13 @@ class UnwrapManager:
         elif unwrap in self._queue:
             self._queue.remove(unwrap)
 
-    def start(self):
+    def start(self, uv_editor=False):
         self.starting_count = len(self._queue) + len(self._running)
         # fill initial slots from queue
         self._fill_slots()
         if get_preferences().show_progress_bar:
-            progress_bar.start()
+            progress_bar.start(uv_editor)
+        self.in_uv_editor = uv_editor
         self.is_active = True
         self.found_invalid_objects = False
         self.transfer_uv_failed = False
@@ -80,6 +91,7 @@ class UnwrapManager:
         self.error_code = 0
         self.error_stderr = ""
         self.error_messages = []
+        self.clear_result()
         self.current_viewer = None
         self.is_viewer_active = False
         self.exit_viewer = False
@@ -271,9 +283,6 @@ class UnwrapManager:
 
     def _update_progress_bar(self):
         """Update the overall progress bar."""
-        if not get_preferences().show_progress_bar:
-            return
-
         all_unwraps = self.active
         progress = [numpy.array(unwrap.progress) for unwrap in all_unwraps]
         # pieces still exporting count as remaining, not finished
@@ -283,12 +292,10 @@ class UnwrapManager:
         for _ in range(self.starting_count - len(progress)):
             progress.append(numpy.array((1, 0, 0)))
         if self.starting_count > 0:
-            new_progress = sum(progress) / self.starting_count
-            progress_bar.update(new_progress)
-            # force redraw of view3D
-            bpy.context.view_layer.objects.active = (
-                bpy.context.view_layer.objects.active
-            )
+            self.progress = sum(progress) / self.starting_count
+            if get_preferences().show_progress_bar:
+                progress_bar.update(self.progress)
+            tag_redraw()
 
     def _process_completion(self, unwrap, invalid_pass=False):
         """Process a successfully completed unwrap."""
@@ -309,6 +316,11 @@ class UnwrapManager:
             if unwrap in self._running:
                 self._running.remove(unwrap)
             unwrap.cleanup()
+
+        # checkpoint each applied result while the session keeps running, so a
+        # mid-session ctrl z can't discard it. the last one is finish()'s push
+        if is_import_ready and (self._running or self._queue or self.hold_count):
+            bpy.ops.ed.undo_push(message="UVgami Unwrap")
 
     def _resolve_join(self, unwrap, invalid_pass):
         """Resolve join job state and return final import paths."""
@@ -418,7 +430,7 @@ class UnwrapManager:
             input_mesh = self.input[unwrap.transfer_uvs_job]
             # replace output with input in pack list before finish deletes output
             pack_replaced = False
-            if should_pack(props):
+            if should_pack(props) and unwrap.transfer_uvs_job.repack_input:
                 for i, obj in enumerate(self._pack_output_objects):
                     if obj == output:
                         self._pack_output_objects[i] = input_mesh
@@ -509,7 +521,12 @@ class UnwrapManager:
         if move_to_invalid:
             if prefs.invalid_collection:
                 # move to collection for invalid meshes
+                old_active = bpy.context.view_layer.objects.active
                 invalid_obj = import_obj(unwrap.path)
+                # the importer makes its object active, which would pull the uv
+                # editor off whatever the user is editing
+                if old_active is not None and check_exists(old_active):
+                    bpy.context.view_layer.objects.active = old_active
                 collection = check_collection(
                     "UVgami Not Unwrapped", bpy.context.scene.collection
                 )
@@ -530,6 +547,12 @@ class UnwrapManager:
                 # will be empty
                 if isinstance(job, Join):
                     found_job = job
+
+        # a failed area fix may have pre-repaired the patch before the engine
+        # ran, put the old uvs back
+        job = unwrap.transfer_uvs_job
+        if hasattr(job, "restore"):
+            job.restore(self.input[job])
 
         # remove from running
         if unwrap in self._running:
@@ -557,47 +580,73 @@ class UnwrapManager:
 
         self.finish()
 
-        # don't show popup if all unwraps were cancelled
         if self.cancelled_count != self.starting_count:
             logger.change_status("Complete")
+            msg = []
+
+            if self.finished_count > 0:
+                msg.append("UV unwrap complete!")
+
+            if self.found_invalid_objects:
+                msg.append("Some meshes were not unwrapped.")
+                msg.append("Check 'UVgami Not Unwrapped'.")
+                logger.add_data("errors", "Some meshes were not able to be unwrapped")
+
+            if self.transfer_uv_failed:
+                detail = self.transfer_uv_fail_detail or "unknown reason"
+                msg.append(
+                    f"UV transfer failed: {detail}."
+                    " This can happen with cuts or symmetry enabled."
+                )
+
+            if self.transfer_uv_split_count > 0:
+                count = self.transfer_uv_split_count
+                msg.append(f"UV transfer split {count} face(s) crossed by a seam.")
+
+            if self.error_code != 0:
+                err_msg = f"An unknown error occurred: {self.error_code}"
+                if self.error_stderr:
+                    err_msg += f" ({self.error_stderr})"
+                msg.append(err_msg)
+                logger.add_data("errors", err_msg)
+
+            for err in self.error_messages:
+                msg.append(err)
+                logger.add_data("errors", err)
+
+            self.result = msg
+            self.result_failed = bool(
+                self.found_invalid_objects
+                or self.transfer_uv_failed
+                or self.error_code
+                or self.error_messages
+            )
+            self._show_status()
+
             if get_preferences().show_popup:
-                msg = []
-
-                if self.finished_count > 0:
-                    msg.append("UV unwrap complete!")
-
-                if self.found_invalid_objects:
-                    msg.append("Some meshes were not unwrapped.")
-                    msg.append("Check 'UVgami Not Unwrapped'.")
-                    logger.add_data(
-                        "errors", "Some meshes were not able to be unwrapped"
-                    )
-
-                if self.transfer_uv_failed:
-                    detail = self.transfer_uv_fail_detail or "unknown reason"
-                    msg.append(
-                        f"UV transfer failed: {detail}."
-                        " This can happen with cuts or symmetry enabled."
-                    )
-
-                if self.transfer_uv_split_count > 0:
-                    count = self.transfer_uv_split_count
-                    msg.append(f"UV transfer split {count} face(s) crossed by a seam.")
-
-                if self.error_code != 0:
-                    err_msg = f"An unknown error occurred: {self.error_code}"
-                    if self.error_stderr:
-                        err_msg += f" ({self.error_stderr})"
-                    msg.append(err_msg)
-                    logger.add_data("errors", err_msg)
-
-                for err in self.error_messages:
-                    msg.append(err)
-                    logger.add_data("errors", err)
-
                 popup(msg, "UVgami", "INFO")
         else:
             logger.change_status("Cancelled")
+            self.clear_result()
+
+    def _show_status(self):
+        """Put the summary in the status bar. A clean run clears itself, a run
+        with problems stays until the next one so it can't be missed."""
+        count = self.finished_count
+        text = f"UVgami: {count} mesh{'es' if count != 1 else ''} unwrapped"
+        if self.result_failed:
+            set_status(f"{text}, see the UVgami panel", "ERROR")
+        else:
+            set_status(text)
+            bpy.app.timers.register(
+                functools.partial(set_status, None), first_interval=STATUS_SECONDS
+            )
+
+    def clear_result(self):
+        """Drop the banner and the status bar message."""
+        self.result = []
+        self.result_failed = False
+        set_status(None)
 
     def _unregister_dispatch(self):
         """Unregister the dispatch timer if active."""
@@ -608,6 +657,8 @@ class UnwrapManager:
 
     def finish(self):
         """Clean up everything."""
+        # one undo step for the whole session, so a single ctrl z reverts it
+        bpy.ops.ed.undo_push(message="UVgami Unwrap")
         self._unregister_dispatch()
         progress_bar.remove()
         self.is_active = False
@@ -645,12 +696,19 @@ class UnwrapManager:
         unwrap.release_engine()
         self.remove_unwrap(unwrap)
         unwrap.cleanup()
+        # a cancelled area fix keeps its old uvs, not the flipped pre-repair
+        job = unwrap.transfer_uvs_job
+        if hasattr(job, "restore"):
+            job.restore(self.input[job])
         self.exit_viewer = True
         # update 3d view to remove progress bar
         bpy.context.view_layer.objects.active = bpy.context.view_layer.objects.active
 
     def stop_all(self):
         """Stop all running processes and clean up."""
+        # late import: ops.viewer imports the manager
+        from .ops.viewer import stop_viewer_draw
+
         for unwrap in list(self._running):
             unwrap.stop_process()
             unwrap.cleanup()
@@ -660,7 +718,18 @@ class UnwrapManager:
         self._queue.clear()
         self._unregister_dispatch()
         progress_bar.remove()
+        # the viewer modal dies with a file load, so remove its handler here
+        stop_viewer_draw()
+        self.exit_viewer = True
+        self.is_viewer_active = False
         self.is_active = False
+
+    def shutdown(self):
+        """Drop everything, for a file load or the addon unloading. The engine
+        processes and the draw handlers survive both, and a file load kills the
+        timer that would have cleaned them up."""
+        self.stop_all()
+        self.clear_result()
 
 
 manager = UnwrapManager()

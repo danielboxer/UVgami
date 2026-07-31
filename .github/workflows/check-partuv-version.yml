@@ -1,7 +1,6 @@
 name: Check partuv version sync
 
-# install.py ships to blender without engine/pyproject.toml, so it carries its
-# own copy of the version. this fails the build if the two ever disagree.
+# install.py has its own version number. this fails the build if the two ever disagree.
 on:
   pull_request:
     paths:

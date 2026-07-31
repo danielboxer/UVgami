@@ -11,9 +11,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         name="Engine",
         description="The unwrapping engine to use",
         items=tuple(
-            (e.id, e.label, e.description)
-            for e in ENGINES.values()
-            if e.is_available()
+            (e.id, e.label, e.description) for e in ENGINES.values() if e.is_available()
         ),
         default="OPTCUTS",
     )
@@ -80,6 +78,18 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         max=120,
         default=0,
     )
+    area_expand: bpy.props.IntProperty(
+        name="",
+        description=(
+            "Grow the selected area by this many face rings before fixing."
+            " The border of the grown area is what stays in place, so"
+            " expanding lets the selection itself reshape and gives cuts"
+            " room to land"
+        ),
+        min=0,
+        max=10,
+        default=1,
+    )
     use_cuts: bpy.props.BoolProperty(
         name="",
         description=("Cut the input mesh into pieces. This will speed up the unwrap"),
@@ -112,6 +122,22 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         ),
         options={"ENUM_FLAG"},
     )
+    use_proxy: bpy.props.BoolProperty(
+        name="",
+        description=(
+            "Unwrap a decimated copy of the mesh, then cut the original along"
+            " its seams and unwrap it in Blender. Much faster on dense meshes."
+            " The UV map lands on the original object, which must be unchanged"
+            " since starting the unwrap"
+        ),
+    )
+    proxy_faces: bpy.props.IntProperty(
+        name="",
+        description="How many triangles the decimated copy keeps",
+        min=100,
+        max=100000,
+        default=2000,
+    )
     # seam restrictions
     use_guided_mode: bpy.props.BoolProperty(
         name="", description="Avoid placing seams on parts of the mesh"
@@ -134,6 +160,11 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
             " This will result in a quicker unwrap with a symmetrical UV map"
         ),
     )
+    sym_preview: bpy.props.BoolProperty(
+        name="Preview",
+        description="Show the symmetry planes of the selected meshes in the viewport",
+        default=True,
+    )
     sym_axes: bpy.props.EnumProperty(
         name="Axes",
         description=(
@@ -145,6 +176,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
             ("Y", "Y", "Y axis"),
             ("Z", "Z", "Z axis"),
         ),
+        default={"X"},
         # allows for selection of multiple items
         options={"ENUM_FLAG"},
     )
@@ -224,11 +256,10 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
     show_popup: bpy.props.BoolProperty(
         name="Show Popup",
         description=(
-            "Show a popup when all meshes are finished unwrapping."
-            " This might contain other information like if any objects were invalid or "
-            "if there were any errors"
+            "Show a popup when all meshes are finished unwrapping. The same"
+            " summary is always shown in the panel and the status bar"
         ),
-        default=True,
+        default=False,
     )
     engine_path: bpy.props.StringProperty(
         name="",
@@ -243,7 +274,7 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
     )
     show_progress_bar: bpy.props.BoolProperty(
         name="Progress Bar",
-        description="Display a progress bar in the 3D view during an unwrap",
+        description="Display a progress bar in the 3D view and UV editor during an unwrap",
         default=True,
     )
     stop_timeout: bpy.props.IntProperty(

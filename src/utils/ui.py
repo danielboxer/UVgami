@@ -6,6 +6,39 @@ def newline_label(label, layout):
         layout.label(text=line)
 
 
+def tag_redraw():
+    """Repaint the editors that show unwrap progress. Goes through bpy.data
+    because the manager calls this from a timer, where the context has no
+    window or area. Whole areas, so the sidebar panel updates too."""
+    for wm in bpy.data.window_managers:
+        for window in wm.windows:
+            for area in window.screen.areas:
+                if area.type in {"VIEW_3D", "IMAGE_EDITOR"}:
+                    area.tag_redraw()
+
+
+_status = None
+
+
+def _draw_status(header, context):
+    from bl_ui.space_statusbar import STATUSBAR_HT_header
+
+    # ours first, so it sits at the far left instead of past the right aligned
+    # stats, where it's easy to miss
+    if _status is not None:
+        header.layout.row().label(text=_status[0], icon=_status[1])
+    STATUSBAR_HT_header._draw_orig(header, context)
+
+
+def set_status(text, icon="CHECKMARK"):
+    """Add a message to the end of the status bar, None clears it."""
+    global _status
+    _status = (text, icon) if text else None
+    for wm in bpy.data.window_managers:
+        for window in wm.windows:
+            window.workspace.status_text_set(_draw_status if text else None)
+
+
 def popup(msg, title, icon):
     def draw(self, context):
         newline_label(msg, self.layout)

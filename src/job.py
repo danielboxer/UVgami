@@ -5,10 +5,39 @@ import bpy
 
 from .logger import logger
 from .objfile import merge_obj_files
+from .proxy import transfer_cuts
+from .strips import uv_area_fit
 from .uv_transfer import plan_transfer
-from .utils.mesh import check_exists, new_bmesh, set_bmesh
+from .utils.mesh import check_exists, deselect_all, new_bmesh, set_bmesh
 
 TransferOutcome = namedtuple("TransferOutcome", ["applied", "split_count", "detail"])
+
+
+def output_mesh_data(output, output_uv):
+    """World positions, polygons, per-face loop uvs and seams of an engine
+    output object, in the plain form plan_transfer takes."""
+    output_data = output.data
+    output_matrix = output.matrix_world
+
+    output_positions = [tuple(output_matrix @ v.co) for v in output_data.vertices]
+    output_polygons = []
+    output_uvs = []
+    for poly in output_data.polygons:
+        output_polygons.append(list(poly.vertices))
+        output_uvs.append(
+            [
+                tuple(output_uv.uv[poly.loop_start + c].vector)
+                for c in range(poly.loop_total)
+            ]
+        )
+
+    output_seams = [
+        (edge.vertices[0], edge.vertices[1])
+        for edge in output_data.edges
+        if edge.use_seam
+    ]
+
+    return output_positions, output_polygons, output_uvs, output_seams
 
 
 class Job:
@@ -172,6 +201,10 @@ class HideInput(Job):
 
 
 class TransferUVs(Job):
+    # whether the manager should repack the input mesh in place of the
+    # deleted output at session end
+    repack_input = True
+
     def __init__(self, count):
         super().__init__(count)
 
@@ -209,39 +242,12 @@ class TransferUVs(Job):
 
     def _extract(self, input_mesh, output, output_uv):
         input_data = input_mesh.data
-        output_data = output.data
         input_matrix = input_mesh.matrix_world
-        output_matrix = output.matrix_world
 
         input_positions = [tuple(input_matrix @ v.co) for v in input_data.vertices]
         input_polygons = [list(poly.vertices) for poly in input_data.polygons]
 
-        output_positions = [tuple(output_matrix @ v.co) for v in output_data.vertices]
-        output_polygons = []
-        output_uvs = []
-        for poly in output_data.polygons:
-            output_polygons.append(list(poly.vertices))
-            output_uvs.append(
-                [
-                    tuple(output_uv.uv[poly.loop_start + c].vector)
-                    for c in range(poly.loop_total)
-                ]
-            )
-
-        output_seams = [
-            (edge.vertices[0], edge.vertices[1])
-            for edge in output_data.edges
-            if edge.use_seam
-        ]
-
-        return (
-            input_positions,
-            input_polygons,
-            output_positions,
-            output_polygons,
-            output_uvs,
-            output_seams,
-        )
+        return (input_positions, input_polygons) + output_mesh_data(output, output_uv)
 
     def _apply(self, input_mesh, plan):
         if plan.split_faces:
@@ -301,6 +307,257 @@ class TransferUVs(Job):
             edge.seam = ((a, b) if a < b else (b, a)) in plan.seam_edges
 
         set_bmesh(bm, input_mesh)
+
+
+class IslandUVs(TransferUVs):
+    """Put an engine re-unwrap of one island back into the input mesh, scaled
+    to the uv area it used to cover so the rest of the atlas stays put. Rides
+    TransferUVs' position matching, fed only the island's faces."""
+
+    repack_input = False
+
+    def __init__(self, faces, bbox, area):
+        super().__init__(1)
+        self.faces = faces
+        self.bbox = bbox
+        self.area = area
+        self.orig_vert = []
+        self.loop_base = {}
+        self.loop_counts = []
+
+    def _extract(self, input_mesh, output, output_uv):
+        data = input_mesh.data
+        matrix = input_mesh.matrix_world
+
+        used = sorted({v for fi in self.faces for v in data.polygons[fi].vertices})
+        self.orig_vert = used
+        local = {v: i for i, v in enumerate(used)}
+
+        positions = [tuple(matrix @ data.vertices[v].co) for v in used]
+        polygons = []
+        self.loop_counts = []
+        base = 0
+        for fi in self.faces:
+            poly = data.polygons[fi]
+            self.loop_base[fi] = base
+            self.loop_counts.append(poly.loop_total)
+            base += poly.loop_total
+            polygons.append([local[v] for v in poly.vertices])
+
+        return (positions, polygons) + output_mesh_data(output, output_uv)
+
+    def _fit(self, plan):
+        """Scale the engine's layout back to the island's old uv area, centered
+        on its old spot. The faces a cut split are read from their new parts,
+        the loops they came from are dead."""
+        polygons = []
+        for i, count in enumerate(self.loop_counts):
+            parts = plan.split_faces.get(i)
+            if parts is None:
+                base = self.loop_base[self.faces[i]]
+                polygons.append([plan.loop_uvs[base + c] for c in range(count)])
+            else:
+                polygons.extend(part_uvs for _, part_uvs in parts)
+        move = uv_area_fit(polygons, self.area, self.bbox)
+        for k in plan.loop_uvs:
+            plan.loop_uvs[k] = move(plan.loop_uvs[k])
+        for fi, parts in plan.split_faces.items():
+            plan.split_faces[fi] = [
+                (verts, [move(uv) for uv in part_uvs]) for verts, part_uvs in parts
+            ]
+
+    def _apply(self, input_mesh, plan):
+        self._fit(plan)
+        data = input_mesh.data
+        ov = self.orig_vert
+        seams = {
+            ((ov[a], ov[b]) if ov[a] < ov[b] else (ov[b], ov[a]))
+            for a, b in plan.seam_edges
+        }
+
+        # only edges interior to the island get the plan's seams, the island
+        # boundary and the rest of the mesh keep their marks
+        owner_count = {}
+        for fi in self.faces:
+            poly = data.polygons[fi].vertices
+            n = len(poly)
+            for i in range(n):
+                a, b = poly[i], poly[(i + 1) % n]
+                key = (a, b) if a < b else (b, a)
+                owner_count[key] = owner_count.get(key, 0) + 1
+        interior = {key for key, count in owner_count.items() if count == 2}
+
+        split_faces = {self.faces[fi]: parts for fi, parts in plan.split_faces.items()}
+        if split_faces:
+            self._apply_island_splits(input_mesh, plan, split_faces, seams, interior)
+            return
+
+        layer = data.uv_layers.active
+        for fi in self.faces:
+            poly = data.polygons[fi]
+            base = self.loop_base[fi]
+            for c in range(poly.loop_total):
+                layer.uv[poly.loop_start + c].vector = plan.loop_uvs[base + c]
+
+        for edge in data.edges:
+            a, b = edge.vertices
+            key = (a, b) if a < b else (b, a)
+            if key in interior:
+                edge.use_seam = key in seams
+
+        data.update()
+
+    def _apply_island_splits(self, input_mesh, plan, split_faces, seams, interior):
+        """Same as _apply, but rebuilds the island faces a uv cut runs
+        through, like TransferUVs._apply_with_splits."""
+        bm = new_bmesh(input_mesh)
+        uv_layer = bm.loops.layers.uv.verify()
+        bm.faces.ensure_lookup_table()
+
+        to_split = []
+        for fi in self.faces:
+            face = bm.faces[fi]
+            parts = split_faces.get(fi)
+            if parts is None:
+                base = self.loop_base[fi]
+                for c, loop in enumerate(face.loops):
+                    loop[uv_layer].uv = plan.loop_uvs[base + c]
+            else:
+                to_split.append((face, parts, face.material_index, face.smooth))
+
+        bmesh.ops.delete(
+            bm, geom=[face for face, _, _, _ in to_split], context="FACES_ONLY"
+        )
+        bm.verts.ensure_lookup_table()
+        ov = self.orig_vert
+        for _, parts, material_index, smooth in to_split:
+            for verts, uvs in parts:
+                new_face = bm.faces.new([bm.verts[ov[v]] for v in verts])
+                new_face.material_index = material_index
+                new_face.smooth = smooth
+                for loop, uv in zip(new_face.loops, uvs):
+                    loop[uv_layer].uv = uv
+
+        for edge in bm.edges:
+            a, b = edge.verts[0].index, edge.verts[1].index
+            key = (a, b) if a < b else (b, a)
+            if key in seams:
+                edge.seam = True
+            elif key in interior:
+                edge.seam = False
+
+        set_bmesh(bm, input_mesh)
+
+
+class AreaUVs(IslandUVs):
+    """Put an engine fix of part of an island back into the input mesh. The
+    engine held the patch border in place, so instead of a bbox fit the
+    output is aligned by undoing its normalization through those pinned
+    loops, and they snap back to their exact old uvs so the patch rejoins
+    the island seamlessly."""
+
+    def __init__(self, faces, pins, snapshot):
+        super().__init__(faces, None, None)
+        self.pins = pins  # (face index, corner, old uv)
+        self.snapshot = snapshot  # every patch loop's old uv, for restore
+
+    def restore(self, input_mesh):
+        """Put the patch uvs back after a failed run. The flipped pre-repair
+        changes the map before the engine even starts, so a failure must not
+        leave that behind."""
+        if not check_exists(input_mesh):
+            return
+        old_active = bpy.context.view_layer.objects.active
+        was_in_edit = input_mesh.mode == "EDIT"
+        try:
+            if was_in_edit:
+                bpy.context.view_layer.objects.active = input_mesh
+                bpy.ops.object.mode_set(mode="OBJECT")
+            data = input_mesh.data
+            layer = data.uv_layers.active
+            for fi, c, uv in self.snapshot:
+                layer.uv[data.polygons[fi].loop_start + c].vector = uv
+        finally:
+            if was_in_edit:
+                bpy.context.view_layer.objects.active = input_mesh
+                bpy.ops.object.mode_set(mode="EDIT")
+            bpy.context.view_layer.objects.active = old_active
+
+    def _fit(self, plan):
+        pairs = []
+        for fi, corner, old in self.pins:
+            new = plan.loop_uvs.get(self.loop_base[fi] + corner)
+            if new is not None:
+                pairs.append((old, new))
+        if len(pairs) < 2:
+            return
+
+        # the output is the solved map scaled into the unit box, recover the
+        # uniform scale and offset from the two most distant pins
+        lo = min(pairs, key=lambda p: p[0][0])
+        hi = max(pairs, key=lambda p: p[0][0])
+        if hi[1][0] == lo[1][0]:
+            lo = min(pairs, key=lambda p: p[0][1])
+            hi = max(pairs, key=lambda p: p[0][1])
+            scale = (hi[0][1] - lo[0][1]) / (hi[1][1] - lo[1][1])
+        else:
+            scale = (hi[0][0] - lo[0][0]) / (hi[1][0] - lo[1][0])
+        du = lo[0][0] - scale * lo[1][0]
+        dv = lo[0][1] - scale * lo[1][1]
+
+        def move(uv):
+            return (scale * uv[0] + du, scale * uv[1] + dv)
+
+        for k in plan.loop_uvs:
+            plan.loop_uvs[k] = move(plan.loop_uvs[k])
+        for fi, parts in plan.split_faces.items():
+            plan.split_faces[fi] = [
+                (verts, [move(uv) for uv in part_uvs]) for verts, part_uvs in parts
+            ]
+        # pinned loops held to float noise, snap them so the border welds
+        for fi, corner, old in self.pins:
+            k = self.loop_base[fi] + corner
+            if k in plan.loop_uvs:
+                plan.loop_uvs[k] = old
+
+
+class ProxyUVs(Job):
+    """Cut the original along the unwrapped proxy's seams and unwrap it.
+
+    Rides the transfer uvs slot: the engine ran on a decimated copy, so the
+    original is the mesh that needs a uv map and the copy is thrown away."""
+
+    repack_input = True
+
+    def finish(self, input_mesh, output):
+        if not check_exists(input_mesh) or not check_exists(output):
+            return TransferOutcome(False, 0, "input or output object missing")
+        if output.data.uv_layers.active is None:
+            return TransferOutcome(False, 0, "output mesh has no uv layer")
+
+        old_active = bpy.context.view_layer.objects.active
+        old_selected = list(bpy.context.selected_objects)
+        old_mode = old_active.mode if old_active is not None else "OBJECT"
+        if old_mode != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
+        # the unwrap goes through bpy.ops, which would take every other
+        # selected mesh into edit mode along with this one
+        deselect_all()
+        try:
+            transfer_cuts(input_mesh, output)
+        finally:
+            deselect_all()
+            for obj in old_selected:
+                if check_exists(obj):
+                    obj.select_set(True)
+            if old_active is not None and check_exists(old_active):
+                bpy.context.view_layer.objects.active = old_active
+                if old_mode != "OBJECT":
+                    bpy.ops.object.mode_set(mode=old_mode)
+
+        bpy.data.objects.remove(output, do_unlink=True)
+        input_mesh.hide_set(False)
+        return TransferOutcome(True, 0, "")
 
 
 class Symmetrise(Job):

@@ -28,11 +28,17 @@ from .src.ops.guides import (
     UVGAMI_OT_clear_draw,
 )
 from .src.ops.uv import UVGAMI_OT_pack
+from .src.ops.island import (
+    UVGAMI_OT_recut_area,
+    UVGAMI_OT_relax_area,
+    UVGAMI_OT_unwrap_island,
+)
 from .src.ops.misc import (
     UVGAMI_OT_expand,
     UVGAMI_OT_reset_settings,
     UVGAMI_OT_open_preferences,
-    UVGAMI_OT_preview_symmetry,
+    start_symmetry_draw,
+    stop_symmetry_draw,
 )
 from .src.ops.grid import (
     UVGAMI_OT_add_grid,
@@ -41,6 +47,7 @@ from .src.ops.grid import (
 from .src.ops.viewer import UVGAMI_OT_view_unwrap
 from .src.ops.info import (
     UVGAMI_OT_clear_logs,
+    UVGAMI_OT_clear_result,
     UVGAMI_OT_copy_logs,
 )
 from .src.ui.panels import (
@@ -48,6 +55,7 @@ from .src.ui.panels import (
     UVGAMI_PT_speed,
     UVGAMI_PT_guides,
     UVGAMI_PT_symmetry,
+    UVGAMI_PT_island_uv,
     UVGAMI_PT_grid,
     UVGAMI_PT_pack,
     UVGAMI_PT_misc,
@@ -87,16 +95,20 @@ classes = (
     UVGAMI_OT_exit_draw,
     UVGAMI_OT_clear_draw,
     UVGAMI_OT_pack,
+    UVGAMI_OT_unwrap_island,
+    UVGAMI_OT_recut_area,
+    UVGAMI_OT_relax_area,
     UVGAMI_OT_cancel,
     UVGAMI_OT_remove_grid,
     UVGAMI_OT_view_unwrap,
     UVGAMI_OT_reset_settings,
-    UVGAMI_OT_preview_symmetry,
     UVGAMI_OT_clear_logs,
+    UVGAMI_OT_clear_result,
     UVGAMI_OT_copy_logs,
     UVGAMI_PT_main,
     UVGAMI_PT_guides,
     UVGAMI_PT_symmetry,
+    UVGAMI_PT_island_uv,
     UVGAMI_PT_speed,
     UVGAMI_PT_grid,
     UVGAMI_PT_pack,
@@ -108,14 +120,26 @@ classes = (
 )
 
 
+@bpy.app.handlers.persistent
+def _on_load_pre(*args):
+    # blender passes a different number of args by version, and none are needed.
+    # load_pre, not post, so cleanup can still touch the objects it made
+    manager.shutdown()
+
+
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.uvgami = bpy.props.PointerProperty(type=UVGAMI_PG_properties)
+    bpy.app.handlers.load_pre.append(_on_load_pre)
+    start_symmetry_draw()
 
 
 def unregister():
-    manager.stop_all()
+    manager.shutdown()
+    stop_symmetry_draw()
+    if _on_load_pre in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.remove(_on_load_pre)
     del bpy.types.Scene.uvgami
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
