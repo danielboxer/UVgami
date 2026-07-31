@@ -521,7 +521,12 @@ class UnwrapManager:
         if move_to_invalid:
             if prefs.invalid_collection:
                 # move to collection for invalid meshes
+                old_active = bpy.context.view_layer.objects.active
                 invalid_obj = import_obj(unwrap.path)
+                # the importer makes its object active, which would pull the uv
+                # editor off whatever the user is editing
+                if old_active is not None and check_exists(old_active):
+                    bpy.context.view_layer.objects.active = old_active
                 collection = check_collection(
                     "UVgami Not Unwrapped", bpy.context.scene.collection
                 )
