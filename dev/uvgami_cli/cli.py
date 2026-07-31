@@ -42,6 +42,9 @@ def _add_optcuts_args(group):
         help="seam weight level, default: 3",
     )
     group.add_argument("--optcuts-path", type=Path, help="default: bundled binary")
+    group.add_argument(
+        "--timeout", type=float, help="kill the engine after this many seconds per mesh"
+    )
 
 
 # flags that only apply to optcuts, so the other engine can reject them
@@ -51,6 +54,7 @@ OPTCUTS_FLAGS = {
     "--seam-weights": "seam_weights",
     "--seam-weight": "seam_weight",
     "--optcuts-path": "optcuts_path",
+    "--timeout": "timeout",
 }
 
 
@@ -76,6 +80,7 @@ def run_optcuts(args, pairs):
             args.seam_weights,
             args.seam_weight,
             args.optcuts_path,
+            args.timeout,
         )
 
     return unwrap_all(pairs, unwrap_one)

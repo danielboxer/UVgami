@@ -83,12 +83,22 @@ def test_explicit_output(triangle, tmp_path, fake_optcuts):
 
 def test_optcuts_defaults(triangle, fake_optcuts):
     cli.main(["unwrap", str(triangle)])
-    _, _, quality, import_uvs, seam_weights, seam_weight, engine_path = fake_optcuts[0]
+    (
+        _,
+        _,
+        quality,
+        import_uvs,
+        seam_weights,
+        seam_weight,
+        engine_path,
+        timeout,
+    ) = fake_optcuts[0]
     assert quality == "medium"
     assert import_uvs is False
     assert seam_weights is None
     assert seam_weight == 3
     assert engine_path is None
+    assert timeout is None
 
 
 def test_missing_input(tmp_path, fake_optcuts):
