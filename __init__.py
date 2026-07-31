@@ -46,6 +46,7 @@ from .src.ops.grid import (
 from .src.ops.viewer import UVGAMI_OT_view_unwrap
 from .src.ops.info import (
     UVGAMI_OT_clear_logs,
+    UVGAMI_OT_clear_result,
     UVGAMI_OT_copy_logs,
 )
 from .src.ui.panels import (
@@ -102,6 +103,7 @@ classes = (
     UVGAMI_OT_reset_settings,
     UVGAMI_OT_preview_symmetry,
     UVGAMI_OT_clear_logs,
+    UVGAMI_OT_clear_result,
     UVGAMI_OT_copy_logs,
     UVGAMI_PT_main,
     UVGAMI_PT_guides,
@@ -118,14 +120,24 @@ classes = (
 )
 
 
+@bpy.app.handlers.persistent
+def _on_load_pre(*args):
+    # blender passes a different number of args by version, and none are needed.
+    # load_pre, not post, so cleanup can still touch the objects it made
+    manager.shutdown()
+
+
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.uvgami = bpy.props.PointerProperty(type=UVGAMI_PG_properties)
+    bpy.app.handlers.load_pre.append(_on_load_pre)
 
 
 def unregister():
-    manager.stop_all()
+    manager.shutdown()
+    if _on_load_pre in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.remove(_on_load_pre)
     del bpy.types.Scene.uvgami
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

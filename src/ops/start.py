@@ -25,6 +25,7 @@ from ..utils.mesh import (
     triangulate,
 )
 from ..utils.paths import get_extension_dir_path, get_preferences
+from ..utils.ui import tag_redraw
 from .guides import SEAM_RESTRICTIONS_GROUP
 
 # process objects for at most this long per tick before yielding to the event loop
@@ -402,10 +403,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
             # show the progress bar now instead of after every piece exports
             if get_preferences().show_progress_bar:
                 progress_bar.start()
-                # force redraw of view3D
-                bpy.context.view_layer.objects.active = (
-                    bpy.context.view_layer.objects.active
-                )
+            tag_redraw()
 
             if self.report_msg == "Input contain":
                 self.report({"INFO"}, "UV unwrap in progress")
