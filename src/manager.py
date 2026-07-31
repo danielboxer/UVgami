@@ -694,6 +694,9 @@ class UnwrapManager:
 
     def stop_all(self):
         """Stop all running processes and clean up."""
+        # late import: ops.viewer imports the manager
+        from .ops.viewer import stop_viewer_draw
+
         for unwrap in list(self._running):
             unwrap.stop_process()
             unwrap.cleanup()
@@ -703,6 +706,10 @@ class UnwrapManager:
         self._queue.clear()
         self._unregister_dispatch()
         progress_bar.remove()
+        # the viewer modal dies with a file load, so remove its handler here
+        stop_viewer_draw()
+        self.exit_viewer = True
+        self.is_viewer_active = False
         self.is_active = False
 
     def shutdown(self):
