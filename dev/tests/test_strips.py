@@ -982,6 +982,33 @@ def test_crossing_boundary_counts_as_ruined():
     assert not strips.crosses((0, 0), (2, 0), (3, 0), (5, 0))
 
 
+def sphere(rings=12, sides=24):
+    verts, faces = [], []
+    for i in range(1, rings):
+        t = math.pi * i / rings
+        for j in range(sides):
+            p = 2 * math.pi * j / sides
+            verts.append(
+                [math.sin(t) * math.cos(p), math.sin(t) * math.sin(p), math.cos(t)]
+            )
+    bottom = len(verts)
+    verts.append([0.0, 0.0, 1.0])
+    verts.append([0.0, 0.0, -1.0])
+    for j in range(sides):
+        faces.append([bottom, (j + 1) % sides, j])
+        base = (rings - 2) * sides
+        faces.append([bottom + 1, base + j, base + (j + 1) % sides])
+    for i in range(rings - 2):
+        for j in range(sides):
+            a = i * sides + j
+            b = i * sides + (j + 1) % sides
+            c = (i + 1) * sides + (j + 1) % sides
+            d = (i + 1) * sides + j
+            faces.append([a, b, c])
+            faces.append([a, c, d])
+    return verts, faces
+
+
 def test_vertex_components_join_on_a_shared_vertex():
     verts, faces = tube(sides=4)
     apart_verts, apart_faces = tube(sides=4)
@@ -993,3 +1020,28 @@ def test_vertex_components_join_on_a_shared_vertex():
     # welding one vertex joins them, the connectivity mesh.separate uses
     welded = [[0 if i == offset else i for i in f] for f in faces]
     assert len(strips.vertex_components(welded)) == 1
+
+
+def test_beveled_cube_reads_hard():
+    verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
+    assert strips.is_hard_surface(verts, faces)
+
+
+def test_smooth_blob_reads_organic():
+    # dense enough that the surface never turns past the partition angle:
+    # one region covers everything, the no-structure case
+    verts, faces = sphere(rings=24, sides=48)
+    assert not strips.is_hard_surface(verts, faces)
+
+
+def test_coarse_blob_reads_organic():
+    # coarse enough that every edge turns into the spread band instead
+    verts, faces = sphere(rings=12, sides=24)
+    assert not strips.is_hard_surface(verts, faces)
+
+
+def test_smooth_cylinder_reads_hard():
+    # no crease anywhere, the hard call comes from the sweep rims, the
+    # screwdriver case
+    verts, faces = capped_tube(sides=48)
+    assert strips.is_hard_surface(verts, faces)
