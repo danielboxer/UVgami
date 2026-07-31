@@ -6,7 +6,7 @@ import bpy
 from .logger import logger
 from .objfile import merge_obj_files
 from .proxy import transfer_cuts
-from .strips import uv_area_fit
+from .seams import uv_area_fit
 from .uv_transfer import plan_transfer
 from .utils.mesh import check_exists, deselect_all, new_bmesh, set_bmesh
 

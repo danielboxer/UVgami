@@ -3,7 +3,7 @@ import math
 import bpy
 
 from .ops.guides import SEAM_RESTRICTIONS_GROUP
-from .strips import (
+from .seams import (
     CREASE_ANGLE,
     face_edges,
     is_hard_surface,
