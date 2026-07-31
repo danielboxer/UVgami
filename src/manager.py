@@ -317,6 +317,11 @@ class UnwrapManager:
                 self._running.remove(unwrap)
             unwrap.cleanup()
 
+        # checkpoint each applied result while the session keeps running, so a
+        # mid-session ctrl z can't discard it. the last one is finish()'s push
+        if is_import_ready and (self._running or self._queue or self.hold_count):
+            bpy.ops.ed.undo_push(message="UVgami Unwrap")
+
     def _resolve_join(self, unwrap, invalid_pass):
         """Resolve join job state and return final import paths."""
         path = unwrap.output_path
@@ -647,6 +652,8 @@ class UnwrapManager:
 
     def finish(self):
         """Clean up everything."""
+        # one undo step for the whole session, so a single ctrl z reverts it
+        bpy.ops.ed.undo_push(message="UVgami Unwrap")
         self._unregister_dispatch()
         progress_bar.remove()
         self.is_active = False
