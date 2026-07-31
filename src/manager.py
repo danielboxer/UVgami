@@ -357,9 +357,8 @@ class UnwrapManager:
         if old_active is None:
             old_active = set_active_any()
         output = import_obj(path, f"{unwrap.input_name}_unwrapped")
-        # the new obj importer changes the active object
-        if bpy.app.version >= (3, 2, 0):
-            bpy.context.view_layer.objects.active = old_active
+        # the obj importer changes the active object
+        bpy.context.view_layer.objects.active = old_active
 
         set_origin(output, unwrap.origin)
 
@@ -414,12 +413,6 @@ class UnwrapManager:
             output.data.polygons.foreach_set(
                 "use_smooth", [True] * len(output.data.polygons)
             )
-            if unwrap.auto_smooth != -1:
-                if bpy.app.version >= (4, 1, 0):
-                    pass
-                else:
-                    output.data.use_auto_smooth = True
-                    output.data.auto_smooth_angle = unwrap.auto_smooth
 
         self._restore_vertex_groups(unwrap, output)
 

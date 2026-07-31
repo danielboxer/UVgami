@@ -296,10 +296,7 @@ class UVGAMI_PT_guides(bpy.types.Panel):
 
         row = box.row()
         row.alignment = "CENTER"
-        row.label(
-            text="Seam Restrictions",
-            icon="SNAP_MIDPOINT" if bpy.app.version >= (2, 90, 0) else "IPO_LINEAR",
-        )
+        row.label(text="Seam Restrictions", icon="SNAP_MIDPOINT")
 
         row = box.row()
         row.scale_y = 1.5

@@ -139,7 +139,7 @@ class InputExporter:
 
         guide_path = self._create_guide_file(obj, path, props, has_uvs)
 
-        materials, material_indices, vertex_groups, shade_smooth, auto_smooth = (
+        materials, material_indices, vertex_groups, shade_smooth = (
             self._get_mesh_metadata(obj)
         )
 
@@ -163,7 +163,6 @@ class InputExporter:
             material_indices=material_indices,
             vertex_groups=vertex_groups,
             shade_smooth=shade_smooth,
-            auto_smooth=auto_smooth,
             merge_cuts=props.use_cuts and not props.use_symmetry,
             maintain_mode=props.maintain_mode,
         )
@@ -301,18 +300,8 @@ class InputExporter:
         material_indices = [0] * len(obj.data.polygons)
         obj.data.polygons.foreach_get("material_index", material_indices)
 
-        # check smooth and auto smooth shading
+        # check smooth shading
         shade_smooth = True if obj.data.polygons[0].use_smooth else False
-
-        angle = -1
-        if bpy.app.version >= (4, 1, 0):
-            for modifier in obj.modifiers:
-                # Input_1 is the angle input
-                if "Smooth by Angle" in modifier.name and "Input_1" in modifier:
-                    angle = modifier["Input_1"]
-        else:
-            if obj.data.use_auto_smooth:
-                angle = obj.data.auto_smooth_angle
 
         # get vertex groups
         vertex_groups = {}
@@ -325,7 +314,7 @@ class InputExporter:
                         break
             vertex_groups[group.name] = weights
 
-        return materials, material_indices, vertex_groups, shade_smooth, angle
+        return materials, material_indices, vertex_groups, shade_smooth
 
 
 class UVGAMI_OT_start(bpy.types.Operator):
@@ -526,7 +515,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
     def _apply_modifiers(self, context, obj):
         context.view_layer.objects.active = obj
         for modifier in obj.modifiers:
-            if bpy.app.version >= (4, 1, 0) and "Smooth by Angle" in modifier.name:
+            if "Smooth by Angle" in modifier.name:
                 # don't apply auto smooth modifier
                 continue
 

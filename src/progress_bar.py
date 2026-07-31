@@ -7,7 +7,6 @@ X = 25
 Y = 25
 WIDTH = 150
 TOP = Y + 5
-SHADER_NAME = "UNIFORM_COLOR" if bpy.app.version >= (4, 0, 0) else "2D_UNIFORM_COLOR"
 # created on first use, gpu is unavailable at import time in background mode
 SHADER = None
 
@@ -15,7 +14,7 @@ SHADER = None
 def _get_shader():
     global SHADER
     if SHADER is None:
-        SHADER = gpu.shader.from_builtin(SHADER_NAME)
+        SHADER = gpu.shader.from_builtin("UNIFORM_COLOR")
     return SHADER
 
 

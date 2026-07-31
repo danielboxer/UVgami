@@ -21,12 +21,6 @@ _fill_shader = None
 _face_area = None
 
 
-def _builtin(name):
-    if bpy.app.version >= (3, 4, 0):
-        return gpu.shader.from_builtin(name)
-    return gpu.shader.from_builtin(f"2D_{name}")
-
-
 def load_input_mesh(path):
     """Per-face 3d areas of the input obj. The engine keeps face order, so
     snapshot faces line up with these by index."""
@@ -81,8 +75,8 @@ def set_snapshot(uv_co, uv_indices):
     """Build the fill and wire batches for the latest engine snapshot."""
     global _wire_batch, _fill_batch, _wire_shader, _fill_shader
     if _wire_shader is None:
-        _wire_shader = _builtin("UNIFORM_COLOR")
-        _fill_shader = _builtin("SMOOTH_COLOR")
+        _wire_shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+        _fill_shader = gpu.shader.from_builtin("SMOOTH_COLOR")
 
     tris = numpy.asarray(uv_indices, dtype=numpy.int32)
     co = numpy.asarray(uv_co, dtype=numpy.float32)
