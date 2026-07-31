@@ -11,9 +11,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         name="Engine",
         description="The unwrapping engine to use",
         items=tuple(
-            (e.id, e.label, e.description)
-            for e in ENGINES.values()
-            if e.is_available()
+            (e.id, e.label, e.description) for e in ENGINES.values() if e.is_available()
         ),
         default="OPTCUTS",
     )
@@ -252,11 +250,10 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
     show_popup: bpy.props.BoolProperty(
         name="Show Popup",
         description=(
-            "Show a popup when all meshes are finished unwrapping."
-            " This might contain other information like if any objects were invalid or "
-            "if there were any errors"
+            "Show a popup when all meshes are finished unwrapping. The same"
+            " summary is always shown in the panel and the status bar"
         ),
-        default=True,
+        default=False,
     )
     engine_path: bpy.props.StringProperty(
         name="",
@@ -271,7 +268,7 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
     )
     show_progress_bar: bpy.props.BoolProperty(
         name="Progress Bar",
-        description="Display a progress bar in the 3D view during an unwrap",
+        description="Display a progress bar in the 3D view and UV editor during an unwrap",
         default=True,
     )
     stop_timeout: bpy.props.IntProperty(
