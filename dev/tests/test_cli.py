@@ -9,7 +9,7 @@ import pytest
 from uvgami_cli import cli, optcuts
 from uvgami_cli.common import UnwrapError
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture

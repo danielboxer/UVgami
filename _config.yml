@@ -8,13 +8,10 @@ show_downloads: true
 github:
   zip_url: https://github.com/DanielBoxer/UVgami/releases/latest/download/UVgami.zip
 
-# jekyll publishes everything it isn't told to skip, so keep source and agent docs out
 exclude:
   - src
   - engine
-  - bench
-  - tests
-  - uvgami_cli
+  - dev
   - docs/agents
   - __init__.py
   - pyproject.toml
