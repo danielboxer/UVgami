@@ -9,7 +9,7 @@ from ..manager import manager
 from ..strips import face_edges, pair, signed_area, uv_island_groups
 from ..unwrap import Unwrap
 from ..utils.io import export_obj
-from ..utils.mesh import deselect_all, new_bmesh, set_bmesh
+from ..utils.mesh import deselect_all, new_bmesh, set_bmesh, triangulate
 from ..utils.paths import get_extension_dir_path, get_preferences
 
 
@@ -70,7 +70,7 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
 
     bm = new_bmesh(temp)
     if any(len(f.verts) > 3 for f in bm.faces):
-        bmesh.ops.triangulate(bm, faces=bm.faces, quad_method="BEAUTY")
+        triangulate(bm)
         set_bmesh(bm, temp)
     else:
         bm.free()
@@ -284,7 +284,7 @@ def queue_area(obj, patch, border, k, input_path, props, nocut, snapshot):
     bm = bmesh.new()
     bm.from_mesh(area_mesh)
     if any(len(f.verts) > 3 for f in bm.faces):
-        bmesh.ops.triangulate(bm, faces=bm.faces, quad_method="BEAUTY")
+        triangulate(bm)
         bm.to_mesh(area_mesh)
     bm.free()
 

@@ -1,4 +1,5 @@
 import bmesh
+import bmesh.utils
 import bpy
 
 
@@ -6,6 +7,53 @@ def new_bmesh(obj):
     bm = bmesh.new()
     bm.from_mesh(obj.data)
     return bm
+
+
+def triangulate(bm):
+    """Triangulate for engine input. BEAUTY alone can give two quads the same
+    diagonal (Suzanne's mouth fold), leaving an edge with 4 faces that the
+    engines reject as non-manifold, so split conflicting quads safely first."""
+    _split_conflicting_quads(bm)
+    bmesh.ops.triangulate(bm, faces=bm.faces, quad_method="BEAUTY")
+
+
+def _quad_diagonals(face):
+    verts = face.verts
+    return {
+        frozenset((verts[0].index, verts[2].index)): (verts[0], verts[2]),
+        frozenset((verts[1].index, verts[3].index)): (verts[1], verts[3]),
+    }
+
+
+def _split_conflicting_quads(bm):
+    edges = {frozenset((e.verts[0].index, e.verts[1].index)) for e in bm.edges}
+    claims = {}
+    quads = [f for f in bm.faces if len(f.verts) == 4]
+    for face in quads:
+        for diagonal in _quad_diagonals(face):
+            claims.setdefault(diagonal, []).append(face)
+
+    for face in quads:
+        diagonals = _quad_diagonals(face)
+
+        def conflicts(diagonal):
+            # a split face drops to 3 verts, so resolved partners don't count
+            return diagonal in edges or any(
+                other is not face and len(other.verts) == 4
+                for other in claims[diagonal]
+            )
+
+        if not any(conflicts(d) for d in diagonals):
+            continue
+        safest = min(
+            diagonals,
+            key=lambda d: (
+                conflicts(d),
+                (diagonals[d][0].co - diagonals[d][1].co).length,
+            ),
+        )
+        bmesh.utils.face_split(face, *diagonals[safest])
+        edges.add(safest)
 
 
 def set_bmesh(bm, obj):

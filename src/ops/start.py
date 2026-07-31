@@ -22,6 +22,7 @@ from ..utils.mesh import (
     move_to_collection,
     new_bmesh,
     set_bmesh,
+    triangulate,
 )
 from ..utils.paths import get_extension_dir_path, get_preferences
 from .guides import SEAM_RESTRICTIONS_GROUP
@@ -231,7 +232,7 @@ class InputExporter:
                 self.jobs[obj]["preserve"] = Preserve(1)
                 old_edges = set(bm.edges)
 
-            bmesh.ops.triangulate(bm, faces=bm.faces, quad_method="BEAUTY")
+            triangulate(bm)
 
             if untriangulate:
                 # write added edges to file
