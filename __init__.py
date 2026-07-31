@@ -67,19 +67,6 @@ from .src.ui.props import (
 from .src.engines import ENGINES
 
 
-bl_info = {
-    "name": "UVgami",
-    "author": "Daniel Boxer",
-    "description": "Automatic UV unwrapping",
-    "blender": (2, 90, 0),
-    "version": (1, 1, 6),
-    "location": "View3D > Sidebar > UVgami",
-    "category": "UV",
-    "doc_url": "https://github.com/DanielBoxer/UVgami/blob/master/docs/docs.md",
-    "tracker_url": "https://github.com/DanielBoxer/UVgami/issues",
-}
-
-
 # every bpy class each engine needs registered (property groups and operators)
 engine_classes = tuple(cls for engine in ENGINES.values() for cls in engine.classes)
 

@@ -102,7 +102,6 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
             material_indices=[],
             vertex_groups={},
             shade_smooth=False,
-            auto_smooth=-1,
             merge_cuts=False,
             maintain_mode=props.maintain_mode,
         )
@@ -329,7 +328,6 @@ def queue_area(obj, patch, border, k, input_path, props, nocut, snapshot):
             material_indices=[],
             vertex_groups={},
             shade_smooth=False,
-            auto_smooth=-1,
             merge_cuts=False,
             maintain_mode=props.maintain_mode,
         )

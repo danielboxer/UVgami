@@ -15,7 +15,7 @@ Supported Operating Systems:
 - Intel Mac
 - Apple Silicon Mac
 
-Blender 2.9+
+Blender 4.3+
 
 ## Table of Contents <!-- omit in toc -->
 

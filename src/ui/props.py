@@ -326,9 +326,7 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         row.prop(self, "stop_timeout")
 
         row = cf.row()
-        row.label(
-            icon="OUTLINER_COLLECTION" if bpy.app.version >= (2, 92, 0) else "GROUP"
-        )
+        row.label(icon="OUTLINER_COLLECTION")
         row.prop(self, "invalid_collection")
 
         box.separator()

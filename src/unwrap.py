@@ -31,7 +31,6 @@ class Unwrap:
         material_indices: list,
         vertex_groups: dict,
         shade_smooth: bool,
-        auto_smooth: int,
         merge_cuts: bool,
         maintain_mode: str,
     ):
@@ -63,7 +62,6 @@ class Unwrap:
         self.material_indices = material_indices
         self.vertex_groups = vertex_groups
         self.shade_smooth = shade_smooth
-        self.auto_smooth = auto_smooth
 
         # other
         self.merge_cuts = merge_cuts
