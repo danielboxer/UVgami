@@ -160,6 +160,11 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
             " This will result in a quicker unwrap with a symmetrical UV map"
         ),
     )
+    sym_preview: bpy.props.BoolProperty(
+        name="Preview",
+        description="Show the symmetry planes of the selected meshes in the viewport",
+        default=True,
+    )
     sym_axes: bpy.props.EnumProperty(
         name="Axes",
         description=(
@@ -171,6 +176,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
             ("Y", "Y", "Y axis"),
             ("Z", "Z", "Z axis"),
         ),
+        default={"X"},
         # allows for selection of multiple items
         options={"ENUM_FLAG"},
     )

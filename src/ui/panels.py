@@ -342,7 +342,7 @@ class UVGAMI_PT_symmetry(bpy.types.Panel):
         row.prop(props, "sym_axes")
 
         row = box.row()
-        row.operator("uvgami.preview_symmetry", icon="EMPTY_AXIS")
+        row.prop(props, "sym_preview", icon="EMPTY_AXIS")
         row.prop(props, "sym_merge")
 
 
