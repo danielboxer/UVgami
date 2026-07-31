@@ -2,6 +2,7 @@ import math
 
 import bpy
 
+from .ops.guides import SEAM_RESTRICTIONS_GROUP
 from .strips import (
     CREASE_ANGLE,
     face_edges,
@@ -21,6 +22,21 @@ REPAIR_ITERATIONS = 50
 # halves the stubborn pieces, so this is plenty (pipe_wrench needs 4), and a
 # clean model exits on round one
 REPAIR_ROUNDS = 6
+
+
+def seam_restrictions(obj):
+    """Per-vertex weights from the painted guide, the same group the engine
+    reads. Higher repels seams."""
+    group = obj.vertex_groups.get(SEAM_RESTRICTIONS_GROUP)
+    if group is None:
+        return None
+    weights = {}
+    for v in obj.data.vertices:
+        for g in v.groups:
+            if g.group == group.index and g.weight:
+                weights[v.index] = g.weight
+                break
+    return weights or None
 
 
 def apply_seams(mesh, seams):

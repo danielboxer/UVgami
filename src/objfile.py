@@ -32,6 +32,23 @@ def _offset_face(line, off_v, off_vt, off_vn):
     return "f " + " ".join(new_tokens) + "\n"
 
 
+def remap_weights_to_vt(path, weights):
+    """Remap v-indexed seam weights to vt indices for an obj exported with UVs.
+
+    optcuts rebuilds a UV-carrying mesh with one vertex per vt, so the weights
+    sidecar must be indexed by vt or the weights land on arbitrary vertices.
+    Each vt has one source vertex (export splits shared UVs first)."""
+    vt_to_v = {}
+    with path.open() as f:
+        for line in f:
+            if line.startswith("f "):
+                for token in line.split()[1:]:
+                    parts = token.split("/")
+                    if len(parts) > 1 and parts[1] != "":
+                        vt_to_v.setdefault(int(parts[1]) - 1, int(parts[0]) - 1)
+    return {vt: weights[v] for vt, v in sorted(vt_to_v.items()) if v in weights}
+
+
 def merge_obj_files(paths):
     """Append paths[1:] into paths[0], offsetting face indices by the running
     v/vt/vn counts of the earlier files, and return paths[0]. Face tokens are

@@ -10,6 +10,7 @@ from ..handler import handle_error
 from ..job import HideInput, Join, Preserve, Symmetrise, TransferUVs
 from ..logger import logger
 from ..manager import manager
+from ..objfile import remap_weights_to_vt
 from ..progress_bar import progress_bar
 from ..unwrap import Unwrap
 from ..utils.geometry import apply_transforms, calc_center, cut, cut_on_axes
@@ -133,7 +134,7 @@ class InputExporter:
         has_uvs = self.piece_has_uvs[obj]
         export_obj(obj, path, has_uvs)
 
-        guide_path = self._create_guide_file(obj, path, props)
+        guide_path = self._create_guide_file(obj, path, props, has_uvs)
 
         materials, material_indices, vertex_groups, shade_smooth, auto_smooth = (
             self._get_mesh_metadata(obj)
@@ -257,28 +258,34 @@ class InputExporter:
 
         return edge_path, new_edges
 
-    def _create_guide_file(self, obj, path, props):
-        """Create seam restriction guide file if guided mode is active."""
-        guide_path = None
+    def _create_guide_file(self, obj, path, props, has_uvs):
+        """Write the per-vertex seam weight file from the painted guide.
+        Higher weight repels seams."""
+        weights = {}
         if (
             self.engine.supports_guided
             and props.use_guided_mode
             and SEAM_RESTRICTIONS_GROUP in obj.vertex_groups
         ):
-            # get seam guide
-            guide = ""
             group_idx = obj.vertex_groups[SEAM_RESTRICTIONS_GROUP].index
             for v in obj.data.vertices:
                 for g in v.groups:
                     if g.group == group_idx:
-                        guide += f"{v.index},{g.weight},"
+                        weights[v.index] = g.weight
                         break
-            # remove last comma
-            guide = guide[:-1]
 
-            guide_path = path.parent / f"{path.stem}_weights"
-            with guide_path.open("w") as f:
-                f.write(f"{guide}\n")
+        if not weights:
+            return None
+
+        if has_uvs:
+            # optcuts rebuilds a UV-carrying obj with one vertex per vt, so
+            # vertex-indexed weights would land on the wrong vertices
+            weights = remap_weights_to_vt(path, weights)
+
+        guide = ",".join(f"{index},{weight}" for index, weight in weights.items())
+        guide_path = path.parent / f"{path.stem}_weights"
+        with guide_path.open("w") as f:
+            f.write(f"{guide}\n")
 
         return guide_path
 
