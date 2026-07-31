@@ -6,7 +6,7 @@ from ..hard_surface import REPAIR_ITERATIONS, face_uvs, unwrap
 from ..job import AreaUVs, IslandUVs
 from ..logger import logger
 from ..manager import manager
-from ..strips import face_edges, pair, signed_area, uv_island_groups
+from ..seams import face_edges, pair, signed_area, uv_island_groups
 from ..unwrap import Unwrap
 from ..utils.io import export_obj
 from ..utils.mesh import deselect_all, new_bmesh, set_bmesh, triangulate

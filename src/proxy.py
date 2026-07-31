@@ -25,7 +25,7 @@ from .hard_surface import (
     seam_restrictions,
     unwrap,
 )
-from .strips import face_edges, snap_paths
+from .seams import face_edges, snap_paths
 from .utils.mesh import deselect_all, new_bmesh, set_bmesh
 
 # candidates to pick a facing match from when snapping a cut vertex

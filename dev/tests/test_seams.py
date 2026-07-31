@@ -1,14 +1,53 @@
 import collections
 import importlib.util
 import math
+import sys
 from pathlib import Path
 
 # loaded from file so it doesn't need the bpy-only addon package
+PKG = Path(__file__).parents[2] / "src" / "seams"
 spec = importlib.util.spec_from_file_location(
-    "strips", Path(__file__).parents[2] / "src" / "strips.py"
+    "seams", PKG / "__init__.py", submodule_search_locations=[str(PKG)]
 )
-strips = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(strips)
+sys.modules["seams"] = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sys.modules["seams"])
+from seams import (  # noqa: E402
+    CREASE_ANGLE,
+    LOW_ANGLE,
+    TURN_COST,
+    absorb,
+    boundary_edges,
+    build,
+    close_rings,
+    crease_relief,
+    cross,
+    crosses,
+    cut_path,
+    detect_width,
+    diagonal,
+    disk_cuts,
+    face_edges,
+    flatten_teeth,
+    is_hard_surface,
+    island_groups,
+    island_ruined,
+    pair,
+    partition,
+    path_cost,
+    region_topology,
+    reroute_boundaries,
+    seam_edges,
+    signed_area,
+    snap_paths,
+    split_islands,
+    split_sweeps,
+    turn_angle,
+    uv_area_fit,
+    uv_fit,
+    uv_island_groups,
+    uv_topology,
+    vertex_components,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -24,13 +63,11 @@ def read_obj(path):
 
 
 def region_count(verts, faces, width):
-    weighted, areas, edges = strips.build(verts, faces)
-    find = strips.partition(faces, weighted, edges, strips.LOW_ANGLE)
+    weighted, areas, edges = build(verts, faces)
+    find = partition(faces, weighted, edges, LOW_ANGLE)
     if width == "auto":
-        width = strips.detect_width(
-            verts, faces, areas, edges, find, strips.diagonal(verts)
-        )
-    label, _ = strips.absorb(verts, faces, weighted, areas, edges, find, width)
+        width = detect_width(verts, faces, areas, edges, find, diagonal(verts))
+    label, _ = absorb(verts, faces, weighted, areas, edges, find, width)
     return len(set(label.values()))
 
 
@@ -53,7 +90,7 @@ def test_plain_cube_is_untouched():
 
 def test_seam_edges_on_plain_cube():
     verts, faces = read_obj(FIXTURES / "cube.obj")
-    seams = strips.seam_edges(verts, faces)
+    seams = seam_edges(verts, faces)
     # every one of the 12 cube edges separates two faces, the triangulation
     # diagonals stay interior
     assert len(seams) == 12
@@ -77,11 +114,11 @@ def tube(sides=4, height=1.0):
 
 def test_tube_stops_merging_before_it_closes_the_ring():
     verts, faces = tube()
-    weighted, areas, edges = strips.build(verts, faces)
-    find = strips.partition(faces, weighted, edges, strips.LOW_ANGLE)
+    weighted, areas, edges = build(verts, faces)
+    find = partition(faces, weighted, edges, LOW_ANGLE)
     # width far over the tube's own, so every side is a merge candidate
-    label, _ = strips.absorb(verts, faces, weighted, areas, edges, find, 100.0)
-    ec, _, _ = strips.region_topology(edges, label)
+    label, _ = absorb(verts, faces, weighted, areas, edges, find, 100.0)
+    ec, _, _ = region_topology(edges, label)
     assert len(set(label.values())) == 2
     assert all(value == 1 for value in ec.values())
 
@@ -93,7 +130,7 @@ def test_coarse_tube_merges_into_two_halves():
     # the ring is refused too: at height 1 the cut-open wall would unroll to
     # aspect 2*pi, past the strip bound
     verts, faces = tube(16)
-    seams = strips.seam_edges(verts, faces)
+    seams = seam_edges(verts, faces)
     assert len(seams) == 2
     assert all({verts[v0][2], verts[v1][2]} == {0.0, 1.0} for v0, v1 in seams)
 
@@ -102,7 +139,7 @@ def test_tall_coarse_tube_closes_ring_for_one_cut():
     # same wall at height 2 unrolls to aspect pi, so close_rings merges the
     # halves back into an annulus and disk_cuts opens it with a single cut
     verts, faces = tube(16, height=2.0)
-    seams = strips.seam_edges(verts, faces)
+    seams = seam_edges(verts, faces)
     assert len(seams) == 1
     ((v0, v1),) = seams
     assert {verts[v0][2], verts[v1][2]} == {0.0, 2.0}
@@ -112,15 +149,15 @@ def test_ring_closing_refuses_a_crease():
     # two halves of an octagonal prism pass the aspect bound, but their
     # boundaries turn 45 degrees: creases, so the ring must stay open
     verts, faces = tube(8, height=2.0)
-    weighted, areas, edges = strips.build(verts, faces)
+    weighted, areas, edges = build(verts, faces)
     label = {i: 0 if i < 8 else 1 for i in range(len(faces))}
-    assert strips.close_rings(verts, weighted, areas, edges, label) == label
+    assert close_rings(verts, weighted, areas, edges, label) == label
 
 
 def test_faceted_tube_keeps_its_facets():
     # 45 degrees a segment reads as a crease, and an octagonal prism is one
     verts, faces = tube(8)
-    assert len(strips.seam_edges(verts, faces)) == 8
+    assert len(seam_edges(verts, faces)) == 8
 
 
 def test_seamless_closed_mesh_retries_at_the_floor():
@@ -131,44 +168,40 @@ def test_seamless_closed_mesh_retries_at_the_floor():
         Path(__file__).parents[1] / "bench/models/hard-surface/sharp/fastener_03.obj"
     )
     faces = [tuple(f) for f in faces]
-    at_floor = strips.seam_edges(verts, faces, strips.CREASE_ANGLE)
+    at_floor = seam_edges(verts, faces, CREASE_ANGLE)
     assert at_floor
-    assert strips.seam_edges(verts, faces, 66) == at_floor
+    assert seam_edges(verts, faces, 66) == at_floor
 
 
 def test_lower_feature_angle_keeps_shallow_seams():
     # 22.5 degree panel boundaries merge away at the default 30 but survive
     # 15: the knob's point, more seams toward artist style
     verts, faces = tube(16)
-    assert len(strips.seam_edges(verts, faces, angle=15)) > len(
-        strips.seam_edges(verts, faces)
-    )
+    assert len(seam_edges(verts, faces, angle=15)) > len(seam_edges(verts, faces))
 
 
 def test_beveled_cube_keeps_six_charts_through_every_merge():
     # the smooth merge sees 22.5 degrees across what is left of a dissolved
     # bevel, so without absorb handing over the turn it carried this collapses
     verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
-    seams = strips.seam_edges(verts, faces)
-    edges = strips.face_edges(faces)
-    assert len(strips.island_groups(faces, seams, edges)) == 6
+    seams = seam_edges(verts, faces)
+    edges = face_edges(faces)
+    assert len(island_groups(faces, seams, edges)) == 6
 
 
 def test_absorbed_bevel_still_reads_as_a_crease():
     verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
-    weighted, areas, edges = strips.build(verts, faces)
-    find = strips.partition(faces, weighted, edges, strips.LOW_ANGLE)
-    width = strips.detect_width(
-        verts, faces, areas, edges, find, strips.diagonal(verts)
-    )
-    _, bounds = strips.absorb(verts, faces, weighted, areas, edges, find, width)
+    weighted, areas, edges = build(verts, faces)
+    find = partition(faces, weighted, edges, LOW_ANGLE)
+    width = detect_width(verts, faces, areas, edges, find, diagonal(verts))
+    _, bounds = absorb(verts, faces, weighted, areas, edges, find, width)
     live = [key for key in bounds.length if bounds.length[key] > 0]
     # every boundary left is a cube corner with its bevel absorbed into one
     # side, so all of them must still turn the full 90 degrees. A corner patch
     # carries two bevels at once, which reads a little over
     angles = [bounds.turn[key] / bounds.length[key] for key in live]
     assert angles
-    assert min(angles) > strips.CREASE_ANGLE
+    assert min(angles) > CREASE_ANGLE
     assert max(angles) < 120
     # the turn at the boundary's own edges is only the last bevel segment, so
     # the carry is what the crease reading rests on here
@@ -212,9 +245,9 @@ def elbow(rings=12, sides=12, bend_radius=3.0, tube_radius=1.0):
 
 
 def sweep_regions(verts, faces):
-    weighted, areas, edges = strips.build(verts, faces)
+    weighted, areas, edges = build(verts, faces)
     label = {i: 0 for i in range(len(faces))}
-    return strips.split_sweeps(weighted, areas, edges, label), len(faces)
+    return split_sweeps(weighted, areas, edges, label), len(faces)
 
 
 def test_sweep_split_lifts_the_cap_off_a_sock():
@@ -269,11 +302,11 @@ def test_filleted_cap_is_cut_off_at_its_rim():
     # the wall merges straight over a filleted cap, no boundary turns like a
     # crease, so only the sweep split separates them
     verts, faces = filleted_tube()
-    edges = strips.face_edges(faces)
-    with_rims = strips.seam_edges(verts, faces)
-    without = strips.seam_edges(verts, faces, rims=False)
-    assert len(strips.island_groups(faces, without, edges)) == 1
-    assert len(strips.island_groups(faces, with_rims, edges)) == 2
+    edges = face_edges(faces)
+    with_rims = seam_edges(verts, faces)
+    without = seam_edges(verts, faces, rims=False)
+    assert len(island_groups(faces, without, edges)) == 1
+    assert len(island_groups(faces, with_rims, edges)) == 2
 
 
 def test_sweep_split_leaves_a_shallow_shell_alone():
@@ -295,12 +328,12 @@ def test_annulus_region_is_cut_open():
     # the whole tube as one region, which is what a low-curvature tube wall
     # partitions into and no merge can repair
     verts, faces = tube(8)
-    _, _, edges = strips.build(verts, faces)
+    _, _, edges = build(verts, faces)
     label = {i: 0 for i in range(len(faces))}
-    ec, _, _ = strips.region_topology(edges, label)
+    ec, _, _ = region_topology(edges, label)
     assert ec[0] == 0
 
-    cuts = strips.disk_cuts(verts, edges, label)
+    cuts = disk_cuts(verts, edges, label)
     assert len(cuts) == 1  # one rim to the other, along a single side edge
     v0, v1 = next(iter(cuts))
     assert {verts[v0][2], verts[v1][2]} == {0.0, 1.0}
@@ -311,12 +344,12 @@ def test_painted_restriction_moves_the_cut():
     # the tube's one cut is a side edge, and every other side edge is the
     # same length, so painting the chosen one has to send it elsewhere
     verts, faces = tube(8)
-    _, _, edges = strips.build(verts, faces)
+    _, _, edges = build(verts, faces)
     label = {i: 0 for i in range(len(faces))}
-    plain = strips.disk_cuts(verts, edges, label)
+    plain = disk_cuts(verts, edges, label)
     painted = {v: 1.0 for edge in plain for v in edge}
 
-    cuts = strips.disk_cuts(verts, edges, label, painted)
+    cuts = disk_cuts(verts, edges, label, painted)
     assert len(cuts) == 1
     assert not painted.keys() & {v for edge in cuts for v in edge}
 
@@ -325,10 +358,10 @@ def test_paint_cannot_block_a_cut_that_has_to_happen():
     # painting everything leaves the region non-disk if the cut is dropped,
     # so a restriction must repel, never veto
     verts, faces = tube(8)
-    _, _, edges = strips.build(verts, faces)
+    _, _, edges = build(verts, faces)
     label = {i: 0 for i in range(len(faces))}
     painted = {v: 1.0 for v in range(len(verts))}
-    assert len(strips.disk_cuts(verts, edges, label, painted)) == 1
+    assert len(disk_cuts(verts, edges, label, painted)) == 1
 
 
 def folded_pair(z):
@@ -341,9 +374,9 @@ def folded_pair(z):
 def test_crease_relief_orders_concave_convex_flat():
     def relief_at(z):
         verts, faces = folded_pair(z)
-        weighted, _, edges = strips.build(verts, faces)
-        relief = strips.crease_relief(verts, faces, weighted, edges)
-        return relief.get(strips.pair(0, 1), 1.0)
+        weighted, _, edges = build(verts, faces)
+        relief = crease_relief(verts, faces, weighted, edges)
+        return relief.get(pair(0, 1), 1.0)
 
     concave, convex, flat = relief_at(1.0), relief_at(-1.0), relief_at(0.0)
     assert concave < convex < flat == 1.0
@@ -369,14 +402,14 @@ def test_cut_path_rides_the_crease():
     # the fold route is 8 long against 6 direct, so only the crease
     # discount can make it win
     verts, faces = folded_flap()
-    weighted, _, edges = strips.build(verts, faces)
-    relief = strips.crease_relief(verts, faces, weighted, edges)
+    weighted, _, edges = build(verts, faces)
+    relief = crease_relief(verts, faces, weighted, edges)
     adjacent = vertex_adjacency(faces)
 
-    plain = strips.cut_path(verts, adjacent, {0}, {6})
+    plain = cut_path(verts, adjacent, {0}, {6})
     assert all(verts[v][0] == 0 for v in plain)
 
-    creased = strips.cut_path(verts, adjacent, {0}, {6}, relief=relief)
+    creased = cut_path(verts, adjacent, {0}, {6}, relief=relief)
     assert sum(1 for v in creased if verts[v][0] == 1 and verts[v][2] == 0) == 7
 
 
@@ -402,7 +435,7 @@ def turn_count(verts, path):
     for u, v, w in zip(path, path[1:], path[2:]):
         a = [verts[v][i] - verts[u][i] for i in range(3)]
         b = [verts[w][i] - verts[v][i] for i in range(3)]
-        if strips.cross(a, b) != [0, 0, 0]:
+        if cross(a, b) != [0, 0, 0]:
             turns += 1
     return turns
 
@@ -411,7 +444,7 @@ def test_dull_cut_is_a_line():
     # every corner-to-corner path is 4 long, so without the turn penalty the
     # staircase can win on heap order; with it the single-corner L must
     verts, adjacent = rook_grid()
-    path = strips.cut_path(verts, adjacent, {0}, {8}, relief={})
+    path = cut_path(verts, adjacent, {0}, {8}, relief={})
     assert len(path) == 5
     assert turn_count(verts, path) == 1
 
@@ -421,17 +454,17 @@ def test_creased_staircase_beats_the_line():
     # the turn penalty and discounted, so the seam follows the crease
     verts, adjacent = rook_grid()
     stairs = [(0, 1), (1, 4), (4, 5), (5, 8)]
-    relief = {strips.pair(a, b): 0.85 for a, b in stairs}
-    path = strips.cut_path(verts, adjacent, {0}, {8}, relief=relief)
+    relief = {pair(a, b): 0.85 for a, b in stairs}
+    path = cut_path(verts, adjacent, {0}, {8}, relief=relief)
     assert set(path) == {0, 1, 4, 5, 8}
 
 
 def test_path_cost_prices_turns():
     verts, _ = rook_grid()
-    straight = strips.path_cost(verts, [0, 1, 2], relief={})
-    bent = strips.path_cost(verts, [0, 1, 4], relief={})
+    straight = path_cost(verts, [0, 1, 2], relief={})
+    bent = path_cost(verts, [0, 1, 4], relief={})
     assert straight == 2.0
-    assert bent == 2.0 + strips.TURN_COST * 0.5
+    assert bent == 2.0 + TURN_COST * 0.5
 
 
 def flat_grid():
@@ -448,24 +481,24 @@ def flat_grid():
 
 def test_tooth_on_a_flat_boundary_is_flattened():
     verts, faces = flat_grid()
-    weighted, _, edges = strips.build(verts, faces)
+    weighted, _, edges = build(verts, faces)
     # left column region 0, right column region 1, except one right triangle
     # sticking into the left as a tooth
     label = {0: 0, 1: 0, 4: 0, 5: 0, 2: 1, 3: 1, 6: 1, 7: 1}
     label[3] = 0
 
-    flat = strips.flatten_teeth(weighted, faces, edges, label)
+    flat = flatten_teeth(weighted, faces, edges, label)
     assert flat[3] == 1
-    assert strips.boundary_edges(edges, flat) == {(1, 4), (4, 7)}
+    assert boundary_edges(edges, flat) == {(1, 4), (4, 7)}
 
 
 def test_forced_seam_survives_the_tooth_flip():
     verts, faces = flat_grid()
-    weighted, _, edges = strips.build(verts, faces)
+    weighted, _, edges = build(verts, faces)
     label = {0: 0, 1: 0, 4: 0, 5: 0, 2: 1, 3: 1, 6: 1, 7: 1}
     label[3] = 0
 
-    flat = strips.flatten_teeth(weighted, faces, edges, label, forced={(1, 5)})
+    flat = flatten_teeth(weighted, faces, edges, label, forced={(1, 5)})
     assert flat[3] == 0
 
 
@@ -488,20 +521,20 @@ def folded_planes():
 
 def test_tooth_flip_returns_the_seam_to_the_fold():
     verts, faces = folded_planes()
-    weighted, _, edges = strips.build(verts, faces)
+    weighted, _, edges = build(verts, faces)
     # one vertical triangle mislabeled onto the flat plane: its kept edge is
     # the fold itself, so the flip wins even though its lost edges are dull
     label = {0: 0, 1: 0, 2: 0, 3: 0, 4: 1, 5: 1, 6: 1, 7: 1}
     label[4] = 0
 
-    flat = strips.flatten_teeth(weighted, faces, edges, label)
+    flat = flatten_teeth(weighted, faces, edges, label)
     assert flat[4] == 1
-    assert strips.boundary_edges(edges, flat) == {(0, 1), (1, 2)}
+    assert boundary_edges(edges, flat) == {(0, 1), (1, 2)}
 
 
 def test_corner_on_a_crease_is_not_cut():
     verts, faces = read_obj(FIXTURES / "cube.obj")
-    weighted, _, edges = strips.build(verts, faces)
+    weighted, _, edges = build(verts, faces)
     # top face one region, the rest another: each top triangle has two sharp
     # boundary edges and only a dull diagonal to keep, so no flip may round
     # the corner off
@@ -511,7 +544,7 @@ def test_corner_on_a_crease_is_not_cut():
         for f, face in enumerate(faces)
     }
 
-    assert strips.flatten_teeth(weighted, faces, edges, label) == label
+    assert flatten_teeth(weighted, faces, edges, label) == label
 
 
 def bump_grid():
@@ -531,20 +564,20 @@ def bump_grid():
 
 def test_reroute_straightens_a_boundary_bump():
     verts, faces, label = bump_grid()
-    weighted, areas, edges = strips.build(verts, faces)
-    relief = strips.crease_relief(verts, faces, weighted, edges)
+    weighted, areas, edges = build(verts, faces)
+    relief = crease_relief(verts, faces, weighted, edges)
 
-    moved = strips.reroute_boundaries(verts, faces, areas, edges, label, relief)
+    moved = reroute_boundaries(verts, faces, areas, edges, label, relief)
     assert moved[8] == 1 and moved[9] == 1
-    assert strips.boundary_edges(edges, moved) == {(1, 5), (5, 9), (9, 13)}
+    assert boundary_edges(edges, moved) == {(1, 5), (5, 9), (9, 13)}
 
 
 def test_reroute_leaves_a_forced_chain():
     verts, faces, label = bump_grid()
-    weighted, areas, edges = strips.build(verts, faces)
-    relief = strips.crease_relief(verts, faces, weighted, edges)
+    weighted, areas, edges = build(verts, faces)
+    relief = crease_relief(verts, faces, weighted, edges)
 
-    moved = strips.reroute_boundaries(
+    moved = reroute_boundaries(
         verts, faces, areas, edges, label, relief, forced={(5, 6)}
     )
     assert moved == label
@@ -575,12 +608,12 @@ def test_reroute_drops_the_seam_onto_the_fold():
     label = {f: 1 if f >= 32 else 0 for f in range(48)}
     for f in range(4, 12):
         label[f] = 1
-    weighted, areas, edges = strips.build(verts, faces)
-    relief = strips.crease_relief(verts, faces, weighted, edges)
+    weighted, areas, edges = build(verts, faces)
+    relief = crease_relief(verts, faces, weighted, edges)
 
-    moved = strips.reroute_boundaries(verts, faces, areas, edges, label, relief)
+    moved = reroute_boundaries(verts, faces, areas, edges, label, relief)
     assert all(moved[f] == (1 if f >= 32 else 0) for f in range(48))
-    assert strips.boundary_edges(edges, moved) == {(x, x + 1) for x in range(8)}
+    assert boundary_edges(edges, moved) == {(x, x + 1) for x in range(8)}
 
 
 def capped_prism(sides=12):
@@ -607,28 +640,28 @@ def test_reroute_snaps_a_closed_loop_to_its_rim():
     # loop handling can pull it back
     label = {f: 0 if f < 12 else 1 for f in range(36)}
     label[0] = 1
-    weighted, areas, edges = strips.build(verts, faces)
-    relief = strips.crease_relief(verts, faces, weighted, edges)
+    weighted, areas, edges = build(verts, faces)
+    relief = crease_relief(verts, faces, weighted, edges)
 
-    moved = strips.reroute_boundaries(verts, faces, areas, edges, label, relief)
+    moved = reroute_boundaries(verts, faces, areas, edges, label, relief)
     assert moved[0] == 0
-    rim = {strips.pair(1 + i, 1 + (i + 1) % 12) for i in range(12)}
-    assert strips.boundary_edges(edges, moved) == rim
+    rim = {pair(1 + i, 1 + (i + 1) % 12) for i in range(12)}
+    assert boundary_edges(edges, moved) == rim
 
 
 def test_forced_seam_splits_a_flat_face():
     # both merges would take these coplanar triangles, nothing about the shape
     # says cut here, so only the mark can
     verts, faces = read_obj(FIXTURES / "cube.obj")
-    weighted, _, edges = strips.build(verts, faces)
+    weighted, _, edges = build(verts, faces)
     flat = next(
         key
         for key, owners in edges.items()
-        if len(owners) == 2 and strips.turn_angle(weighted, owners) < 1
+        if len(owners) == 2 and turn_angle(weighted, owners) < 1
     )
-    seams = strips.seam_edges(verts, faces, forced={flat})
+    seams = seam_edges(verts, faces, forced={flat})
     assert flat in seams
-    assert len(strips.island_groups(faces, seams, edges)) == 7
+    assert len(island_groups(faces, seams, edges)) == 7
 
 
 def test_forced_seam_takes_a_detected_one_over():
@@ -636,17 +669,15 @@ def test_forced_seam_takes_a_detected_one_over():
     # panel boundary has to make the smooth merge stop there instead, so the
     # count is unchanged: a mark placed after the merges would be a third cut
     verts, faces = tube(16)
-    edges = strips.face_edges(faces)
-    base = strips.seam_edges(verts, faces)
+    edges = face_edges(faces)
+    base = seam_edges(verts, faces)
     side = next(
-        strips.pair(2 * i, 2 * i + 1)
-        for i in range(16)
-        if strips.pair(2 * i, 2 * i + 1) not in base
+        pair(2 * i, 2 * i + 1) for i in range(16) if pair(2 * i, 2 * i + 1) not in base
     )
-    seams = strips.seam_edges(verts, faces, forced={side})
+    seams = seam_edges(verts, faces, forced={side})
     assert side in seams
     assert len(seams) == len(base) == 2
-    assert len(strips.island_groups(faces, seams, edges)) == 2
+    assert len(island_groups(faces, seams, edges)) == 2
 
 
 def test_forced_seam_moves_the_band_it_blocks():
@@ -654,15 +685,15 @@ def test_forced_seam_moves_the_band_it_blocks():
     # the far side, so the seam moves onto the mark instead of a two edge
     # ribbon surviving between the two
     verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
-    weighted, _, edges = strips.build(verts, faces)
+    weighted, _, edges = build(verts, faces)
     # 22.5 degrees is where a bevel band meets the face beside it
     band = next(
         key
         for key, owners in edges.items()
-        if len(owners) == 2 and 20 < strips.turn_angle(weighted, owners) < 25
+        if len(owners) == 2 and 20 < turn_angle(weighted, owners) < 25
     )
-    seams = strips.seam_edges(verts, faces, forced={band})
-    groups = strips.island_groups(faces, seams, edges)
+    seams = seam_edges(verts, faces, forced={band})
+    groups = island_groups(faces, seams, edges)
     assert len(groups) == 6
     where = {f: i for i, group in enumerate(groups) for f in group}
     a, b = edges[band]
@@ -671,21 +702,21 @@ def test_forced_seam_moves_the_band_it_blocks():
 
 def test_ring_closing_refuses_a_forced_seam():
     verts, faces = tube(16, height=2.0)
-    weighted, areas, edges = strips.build(verts, faces)
+    weighted, areas, edges = build(verts, faces)
     label = {i: 0 if i < 16 else 1 for i in range(len(faces))}
-    assert strips.close_rings(verts, weighted, areas, edges, label) != label
+    assert close_rings(verts, weighted, areas, edges, label) != label
     # a vertical edge on the two halves' own boundary
-    forced = {strips.pair(0, 1)}
-    merged = strips.close_rings(verts, weighted, areas, edges, label, forced=forced)
+    forced = {pair(0, 1)}
+    merged = close_rings(verts, weighted, areas, edges, label, forced=forced)
     assert merged == label
 
 
 def test_disk_regions_are_left_alone():
     verts, faces = read_obj(FIXTURES / "cube.obj")
-    weighted, areas, edges = strips.build(verts, faces)
-    find = strips.partition(faces, weighted, edges, strips.LOW_ANGLE)
+    weighted, areas, edges = build(verts, faces)
+    find = partition(faces, weighted, edges, LOW_ANGLE)
     label = {i: find(i) for i in range(len(faces))}
-    assert strips.disk_cuts(verts, edges, label) == set()
+    assert disk_cuts(verts, edges, label) == set()
 
 
 def strip_island(quads, scale=1.0, angle=0.0):
@@ -724,7 +755,7 @@ def island_count(faces, seams):
     owners = {}
     for fi, f in enumerate(faces):
         for i in range(len(f)):
-            owners.setdefault(strips.pair(f[i], f[(i + 1) % len(f)]), []).append(fi)
+            owners.setdefault(pair(f[i], f[(i + 1) % len(f)]), []).append(fi)
     for key, fs in owners.items():
         if len(fs) == 2 and key not in seams:
             a, b = find(fs[0]), find(fs[1])
@@ -737,7 +768,7 @@ def test_clean_long_island_splits_for_packing():
     # flip-free but a 30:1 strip across the atlas packs badly, so it splits
     # like a ruined strip would
     verts, faces, uvs = strip_island(30)
-    extra = strips.split_islands(verts, faces, set(), uvs)
+    extra = split_islands(verts, faces, set(), uvs)
     assert island_count(faces, extra) == 5
 
 
@@ -745,18 +776,18 @@ def test_clean_short_strip_is_not_split():
     # same shape at 1/200 scale: thin but small, the kind a bevel band
     # leaves, and cutting those would shatter every beveled model
     verts, faces, uvs = strip_island(30, scale=1 / 200)
-    assert strips.split_islands(verts, faces, set(), uvs) == set()
+    assert split_islands(verts, faces, set(), uvs) == set()
 
 
 def test_clean_compact_island_is_not_split():
     verts, faces, uvs = strip_island(4)
-    assert strips.split_islands(verts, faces, set(), uvs) == set()
+    assert split_islands(verts, faces, set(), uvs) == set()
 
 
 def test_folded_long_island_is_split_into_even_pieces():
     verts, faces, uvs = strip_island(30)
     fold_face(uvs, 20)
-    extra = strips.split_islands(verts, faces, set(), uvs)
+    extra = split_islands(verts, faces, set(), uvs)
     assert extra
     # aspect ~29, so 5 slices, each just under the bound
     assert island_count(faces, extra) == 5
@@ -765,7 +796,7 @@ def test_folded_long_island_is_split_into_even_pieces():
 def test_split_is_rotation_invariant():
     verts, faces, uvs = strip_island(30, angle=0.7)
     fold_face(uvs, 20)
-    extra = strips.split_islands(verts, faces, set(), uvs)
+    extra = split_islands(verts, faces, set(), uvs)
     assert island_count(faces, extra) == 5
 
 
@@ -774,7 +805,7 @@ def test_folded_compact_island_is_halved():
     # so it gets one cut and each half a fresh chance to unwrap clean
     verts, faces, uvs = strip_island(4)
     fold_face(uvs, 2)
-    extra = strips.split_islands(verts, faces, set(), uvs)
+    extra = split_islands(verts, faces, set(), uvs)
     assert island_count(faces, extra) == 2
 
 
@@ -783,7 +814,7 @@ def test_short_ruined_island_is_still_halved():
     # SPLIT_LENGTH, so it is halved instead of sliced into aspect bins
     verts, faces, uvs = strip_island(30, scale=1 / 200)
     fold_face(uvs, 20)
-    extra = strips.split_islands(verts, faces, set(), uvs)
+    extra = split_islands(verts, faces, set(), uvs)
     assert island_count(faces, extra) == 2
 
 
@@ -793,8 +824,8 @@ def test_halving_cut_takes_the_shortest_path():
     # lands on a unit column edge, either side of the line
     verts, faces, uvs = strip_island(5)
     fold_face(uvs, 2)
-    extra = strips.split_islands(verts, faces, set(), uvs)
-    assert extra in ({strips.pair(4, 5)}, {strips.pair(6, 7)})
+    extra = split_islands(verts, faces, set(), uvs)
+    assert extra in ({pair(4, 5)}, {pair(6, 7)})
 
 
 def test_painted_column_moves_the_halving_cut():
@@ -802,10 +833,10 @@ def test_painted_column_moves_the_halving_cut():
     # paint on one decides which the straightened cut lands on
     verts, faces, uvs = strip_island(5)
     fold_face(uvs, 2)
-    plain = strips.split_islands(verts, faces, set(), uvs)
+    plain = split_islands(verts, faces, set(), uvs)
     painted = {v: 1.0 for edge in plain for v in edge}
 
-    extra = strips.split_islands(verts, faces, set(), uvs, painted)
+    extra = split_islands(verts, faces, set(), uvs, painted)
     assert len(extra) == 1
     assert not painted.keys() & {v for edge in extra for v in edge}
 
@@ -813,9 +844,9 @@ def test_painted_column_moves_the_halving_cut():
 def test_split_scan_restricted_to_given_groups():
     verts, faces, uvs = strip_island(30)
     fold_face(uvs, 20)
-    assert strips.split_islands(verts, faces, set(), uvs, None, []) == set()
+    assert split_islands(verts, faces, set(), uvs, None, []) == set()
     everything = [list(range(len(faces)))]
-    assert strips.split_islands(verts, faces, set(), uvs, None, everything)
+    assert split_islands(verts, faces, set(), uvs, None, everything)
 
 
 def test_split_respects_existing_seams():
@@ -824,8 +855,8 @@ def test_split_respects_existing_seams():
     verts, faces, uvs = strip_island(30)
     fold_face(uvs, 10)
     fold_face(uvs, 50)
-    mid = strips.pair(30, 31)
-    extra = strips.split_islands(verts, faces, {mid}, uvs)
+    mid = pair(30, 31)
+    extra = split_islands(verts, faces, {mid}, uvs)
     assert mid not in extra
     assert island_count(faces, extra | {mid}) == 6
 
@@ -834,17 +865,17 @@ def test_uv_islands_follow_the_uv_map():
     # a flat strip is one island until its uvs split mid-column, no seam
     # marks involved
     verts, faces, uvs = strip_island(4)
-    edges = strips.face_edges(faces)
-    assert len(strips.uv_island_groups(faces, uvs, edges)) == 1
+    edges = face_edges(faces)
+    assert len(uv_island_groups(faces, uvs, edges)) == 1
     for fi in range(4, 8):
         uvs[fi] = [(u + 5.0, v) for u, v in uvs[fi]]
-    groups = strips.uv_island_groups(faces, uvs, edges)
+    groups = uv_island_groups(faces, uvs, edges)
     assert sorted(len(g) for g in groups) == [4, 4]
 
 
 def vertex_adjacency(faces):
     adjacent = collections.defaultdict(set)
-    for a, b in strips.face_edges(faces):
+    for a, b in face_edges(faces):
         adjacent[a].add(b)
         adjacent[b].add(a)
     return adjacent
@@ -855,7 +886,7 @@ def test_snap_paths_redraws_a_cut_on_the_dense_mesh():
     # as one connected run of real edges
     verts, faces, _ = grid_island(4, 4)
     mapped = [0, 2, 12]
-    paths = strips.snap_paths(verts, vertex_adjacency(faces), mapped, {(0, 1), (1, 2)})
+    paths = snap_paths(verts, vertex_adjacency(faces), mapped, {(0, 1), (1, 2)})
     assert paths == {(0, 1), (1, 2), (2, 7), (7, 12)}
 
 
@@ -864,16 +895,16 @@ def test_snap_paths_drops_a_cut_with_nowhere_to_go():
     verts, faces, _ = grid_island(4, 4)
     adjacent = vertex_adjacency(faces)
     mapped = [3, 3, len(verts)]
-    assert strips.snap_paths(verts, adjacent, mapped, {(0, 1)}) == set()
-    assert strips.snap_paths(verts, adjacent, mapped, {(0, 2)}) == set()
+    assert snap_paths(verts, adjacent, mapped, {(0, 1)}) == set()
+    assert snap_paths(verts, adjacent, mapped, {(0, 2)}) == set()
 
 
 def test_uv_fit_scales_into_old_bounds():
-    move = strips.uv_fit([(0, 0), (2, 1)], (10, 10, 11, 10.5))
+    move = uv_fit([(0, 0), (2, 1)], (10, 10, 11, 10.5))
     assert move((0, 0)) == (10, 10)
     assert move((2, 1)) == (11, 10.5)
     # aspect mismatch keeps the scale uniform and the island inside
-    move = strips.uv_fit([(0, 0), (2, 1)], (0, 0, 1, 1))
+    move = uv_fit([(0, 0), (2, 1)], (0, 0, 1, 1))
     assert move((0, 0)) == (0, 0.25)
     assert move((2, 1)) == (1, 0.75)
 
@@ -884,9 +915,9 @@ def test_uv_area_fit_keeps_the_old_uv_area():
         [(0, 0), (1, 0), (1, 0.4), (0, 0.4)],
         [(0, 0.6), (1, 0.6), (1, 1), (0, 1)],
     ]
-    move = strips.uv_area_fit(charts, 0.8, (0, 0, 0.8, 0.2))
+    move = uv_area_fit(charts, 0.8, (0, 0, 0.8, 0.2))
     moved = [[move(uv) for uv in chart] for chart in charts]
-    area = sum(abs(strips.signed_area(chart)) for chart in moved)
+    area = sum(abs(signed_area(chart)) for chart in moved)
     assert math.isclose(area, 0.8)
     # centered on the old spot, and a bbox fit would have shrunk it instead
     xs = [u for chart in moved for u, _ in chart]
@@ -898,7 +929,7 @@ def test_uv_area_fit_keeps_the_old_uv_area():
 
 def test_uv_area_fit_falls_back_to_the_bbox_without_an_area():
     square = [[(0, 0), (2, 0), (2, 2), (0, 2)]]
-    move = strips.uv_area_fit(square, 0, (0, 0, 1, 1))
+    move = uv_area_fit(square, 0, (0, 0, 1, 1))
     assert move((0, 0)) == (0, 0)
     assert move((2, 2)) == (1, 1)
 
@@ -932,29 +963,29 @@ def annulus_island():
 
 def test_uv_topology_reads_the_unwrap_not_the_mesh():
     verts, faces, uvs = strip_island(4)
-    edges = strips.face_edges(faces)
-    ec, loops = strips.uv_topology(list(range(len(faces))), faces, edges, set())
+    edges = face_edges(faces)
+    ec, loops = uv_topology(list(range(len(faces))), faces, edges, set())
     assert ec == 1 and len(loops) == 1
     # a seam splits corners apart: still one disk per side of the cut
-    seams = {strips.pair(4, 5)}
-    for group in strips.island_groups(faces, seams, edges):
-        ec, loops = strips.uv_topology(group, faces, edges, seams)
+    seams = {pair(4, 5)}
+    for group in island_groups(faces, seams, edges):
+        ec, loops = uv_topology(group, faces, edges, seams)
         assert ec == 1 and len(loops) == 1
 
 
 def test_annulus_island_is_ruined_and_opened_not_split():
     verts, faces, uvs = annulus_island()
-    edges = strips.face_edges(faces)
+    edges = face_edges(faces)
     group = list(range(len(faces)))
-    ec, loops = strips.uv_topology(group, faces, edges, set())
+    ec, loops = uv_topology(group, faces, edges, set())
     assert ec == 0 and len(loops) == 2
-    assert strips.island_ruined(group, faces, uvs, edges, set())
+    assert island_ruined(group, faces, uvs, edges, set())
 
-    extra = strips.split_islands(verts, faces, set(), uvs)
+    extra = split_islands(verts, faces, set(), uvs)
     assert extra
     # opened, not split: still one island, and a disk once the cut is a seam
     assert island_count(faces, extra) == 1
-    ec, loops = strips.uv_topology(group, faces, edges, extra)
+    ec, loops = uv_topology(group, faces, edges, extra)
     assert ec == 1 and len(loops) == 1
 
 
@@ -963,23 +994,23 @@ def test_slit_sides_crossing_counts_as_ruined():
     # share both mesh verts, and once the sides separate in uv they can
     # cross like any other boundary pair
     verts, faces, uvs = grid_island(3, 2)
-    edges = strips.face_edges(faces)
-    seams = {strips.pair(5, 6)}
+    edges = face_edges(faces)
+    seams = {pair(5, 6)}
     group = list(range(len(faces)))
     below = faces.index([1, 6, 5])
     above = faces.index([5, 6, 10])
-    assert not strips.island_ruined(group, faces, uvs, edges, seams)
+    assert not island_ruined(group, faces, uvs, edges, seams)
     uvs[below] = [(1.0, 0.0), (1.8, 0.85), (1.2, 0.85)]
     uvs[above] = [(1.4, 0.7), (1.6, 1.0), (2.0, 2.0)]
-    assert strips.island_ruined(group, faces, uvs, edges, seams)
+    assert island_ruined(group, faces, uvs, edges, seams)
 
 
 def test_crossing_boundary_counts_as_ruined():
     # collinear overlap included, the branch a naive segment test misses
-    assert strips.crosses((0, 0), (2, 0), (1, -1), (1, 1))
-    assert not strips.crosses((0, 0), (2, 0), (0, 1), (2, 1))
-    assert strips.crosses((0, 0), (2, 0), (3, 0), (1, 0))
-    assert not strips.crosses((0, 0), (2, 0), (3, 0), (5, 0))
+    assert crosses((0, 0), (2, 0), (1, -1), (1, 1))
+    assert not crosses((0, 0), (2, 0), (0, 1), (2, 1))
+    assert crosses((0, 0), (2, 0), (3, 0), (1, 0))
+    assert not crosses((0, 0), (2, 0), (3, 0), (5, 0))
 
 
 def sphere(rings=12, sides=24):
@@ -1015,33 +1046,33 @@ def test_vertex_components_join_on_a_shared_vertex():
     offset = len(verts)
     verts += [[v[0] + 5.0, v[1], v[2]] for v in apart_verts]
     faces += [[i + offset for i in f] for f in apart_faces]
-    comps = strips.vertex_components(faces)
+    comps = vertex_components(faces)
     assert sorted(len(c) for c in comps) == [8, 8]
     # welding one vertex joins them, the connectivity mesh.separate uses
     welded = [[0 if i == offset else i for i in f] for f in faces]
-    assert len(strips.vertex_components(welded)) == 1
+    assert len(vertex_components(welded)) == 1
 
 
 def test_beveled_cube_reads_hard():
     verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
-    assert strips.is_hard_surface(verts, faces)
+    assert is_hard_surface(verts, faces)
 
 
 def test_smooth_blob_reads_organic():
     # dense enough that the surface never turns past the partition angle:
     # one region covers everything, the no-structure case
     verts, faces = sphere(rings=24, sides=48)
-    assert not strips.is_hard_surface(verts, faces)
+    assert not is_hard_surface(verts, faces)
 
 
 def test_coarse_blob_reads_organic():
     # coarse enough that every edge turns into the spread band instead
     verts, faces = sphere(rings=12, sides=24)
-    assert not strips.is_hard_surface(verts, faces)
+    assert not is_hard_surface(verts, faces)
 
 
 def test_smooth_cylinder_reads_hard():
     # no crease anywhere, the hard call comes from the sweep rims, the
     # screwdriver case
     verts, faces = capped_tube(sides=48)
-    assert strips.is_hard_surface(verts, faces)
+    assert is_hard_surface(verts, faces)

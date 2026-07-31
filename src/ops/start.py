@@ -614,7 +614,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 cut_on_axes(obj, obj_center, axes)
 
             # seams and uvs are built on the whole mesh before separation:
-            # strips.py reads region widths off the full model, and a small
+            # the seams package reads region widths off the full model, and a small
             # loose part run alone shatters (auto width tunes to the piece)
             has_uvs = self.engine.prepare_uvs(obj, props)
             deselect_all()
