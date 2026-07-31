@@ -37,7 +37,8 @@ from .src.ops.misc import (
     UVGAMI_OT_expand,
     UVGAMI_OT_reset_settings,
     UVGAMI_OT_open_preferences,
-    UVGAMI_OT_preview_symmetry,
+    start_symmetry_draw,
+    stop_symmetry_draw,
 )
 from .src.ops.grid import (
     UVGAMI_OT_add_grid,
@@ -101,7 +102,6 @@ classes = (
     UVGAMI_OT_remove_grid,
     UVGAMI_OT_view_unwrap,
     UVGAMI_OT_reset_settings,
-    UVGAMI_OT_preview_symmetry,
     UVGAMI_OT_clear_logs,
     UVGAMI_OT_clear_result,
     UVGAMI_OT_copy_logs,
@@ -132,10 +132,12 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.uvgami = bpy.props.PointerProperty(type=UVGAMI_PG_properties)
     bpy.app.handlers.load_pre.append(_on_load_pre)
+    start_symmetry_draw()
 
 
 def unregister():
     manager.shutdown()
+    stop_symmetry_draw()
     if _on_load_pre in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(_on_load_pre)
     del bpy.types.Scene.uvgami
