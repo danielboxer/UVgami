@@ -4,7 +4,7 @@ import pathlib
 import bpy
 
 from . import Engine
-from ..hard_surface import build_seam_uvs
+from ..hard_surface import build_seam_uvs, seam_restrictions
 from ..utils.io import print_stdin
 from ..utils.mesh import deselect_all, validate_obj
 from ..utils.paths import get_bundled_engine_path
@@ -92,6 +92,7 @@ class UVGAMI_OT_preview_seams(bpy.types.Operator):
         optcuts = props.optcuts
         angle = math.degrees(optcuts.hard_surface_angle)
         marked = optcuts.hard_surface_marked
+        guided = props.use_guided_mode
         selected = list(context.selected_objects)
         active = context.view_layer.objects.active
         mode = active.mode if active is not None else "OBJECT"
@@ -105,7 +106,8 @@ class UVGAMI_OT_preview_seams(bpy.types.Operator):
             # build_seam_uvs unwraps through bpy.ops, which takes every selected
             # mesh into edit mode at once, so run it on one object alone
             deselect_all()
-            build_seam_uvs(obj, angle, marked)
+            weights = seam_restrictions(obj) if guided else None
+            build_seam_uvs(obj, angle, marked, weights)
             counts.append(str(sum(1 for edge in obj.data.edges if edge.use_seam)))
 
         deselect_all()
@@ -209,6 +211,7 @@ class OptcutsEngine(Engine):
             obj,
             math.degrees(optcuts.hard_surface_angle),
             optcuts.hard_surface_marked,
+            seam_restrictions(obj) if props.use_guided_mode else None,
         )
         return True
 

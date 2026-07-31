@@ -307,6 +307,30 @@ def test_annulus_region_is_cut_open():
     assert euler_after_cut(ec[0], cuts) == 1
 
 
+def test_painted_restriction_moves_the_cut():
+    # the tube's one cut is a side edge, and every other side edge is the
+    # same length, so painting the chosen one has to send it elsewhere
+    verts, faces = tube(8)
+    _, _, edges = strips.build(verts, faces)
+    label = {i: 0 for i in range(len(faces))}
+    plain = strips.disk_cuts(verts, edges, label)
+    painted = {v: 1.0 for edge in plain for v in edge}
+
+    cuts = strips.disk_cuts(verts, edges, label, painted)
+    assert len(cuts) == 1
+    assert not painted.keys() & {v for edge in cuts for v in edge}
+
+
+def test_paint_cannot_block_a_cut_that_has_to_happen():
+    # painting everything leaves the region non-disk if the cut is dropped,
+    # so a restriction must repel, never veto
+    verts, faces = tube(8)
+    _, _, edges = strips.build(verts, faces)
+    label = {i: 0 for i in range(len(faces))}
+    painted = {v: 1.0 for v in range(len(verts))}
+    assert len(strips.disk_cuts(verts, edges, label, painted)) == 1
+
+
 def folded_pair(z):
     """Two triangles sharing the edge (0, 1), the second lifted to z."""
     verts = [[0, 0, 0], [0, 1, 0], [-1, 0.5, 0], [1, 0.5, z]]
@@ -435,6 +459,16 @@ def test_tooth_on_a_flat_boundary_is_flattened():
     assert strips.boundary_edges(edges, flat) == {(1, 4), (4, 7)}
 
 
+def test_forced_seam_survives_the_tooth_flip():
+    verts, faces = flat_grid()
+    weighted, _, edges = strips.build(verts, faces)
+    label = {0: 0, 1: 0, 4: 0, 5: 0, 2: 1, 3: 1, 6: 1, 7: 1}
+    label[3] = 0
+
+    flat = strips.flatten_teeth(weighted, faces, edges, label, forced={(1, 5)})
+    assert flat[3] == 0
+
+
 def folded_planes():
     """Two quad planes meeting at 90 degrees along the line y=0."""
     verts = (
@@ -505,6 +539,17 @@ def test_reroute_straightens_a_boundary_bump():
     assert strips.boundary_edges(edges, moved) == {(1, 5), (5, 9), (9, 13)}
 
 
+def test_reroute_leaves_a_forced_chain():
+    verts, faces, label = bump_grid()
+    weighted, areas, edges = strips.build(verts, faces)
+    relief = strips.crease_relief(verts, faces, weighted, edges)
+
+    moved = strips.reroute_boundaries(
+        verts, faces, areas, edges, label, relief, forced={(5, 6)}
+    )
+    assert moved == label
+
+
 def walled_floor():
     """A floor with a wall folded up along y=0."""
     verts = [[x, y, 0] for y in range(3) for x in range(9)] + [
@@ -569,6 +614,70 @@ def test_reroute_snaps_a_closed_loop_to_its_rim():
     assert moved[0] == 0
     rim = {strips.pair(1 + i, 1 + (i + 1) % 12) for i in range(12)}
     assert strips.boundary_edges(edges, moved) == rim
+
+
+def test_forced_seam_splits_a_flat_face():
+    # both merges would take these coplanar triangles, nothing about the shape
+    # says cut here, so only the mark can
+    verts, faces = read_obj(FIXTURES / "cube.obj")
+    weighted, _, edges = strips.build(verts, faces)
+    flat = next(
+        key
+        for key, owners in edges.items()
+        if len(owners) == 2 and strips.turn_angle(weighted, owners) < 1
+    )
+    seams = strips.seam_edges(verts, faces, forced={flat})
+    assert flat in seams
+    assert len(strips.island_groups(faces, seams, edges)) == 7
+
+
+def test_forced_seam_takes_a_detected_one_over():
+    # the 16 sided wall needs two cuts and detection picks where. Marking one
+    # panel boundary has to make the smooth merge stop there instead, so the
+    # count is unchanged: a mark placed after the merges would be a third cut
+    verts, faces = tube(16)
+    edges = strips.face_edges(faces)
+    base = strips.seam_edges(verts, faces)
+    side = next(
+        strips.pair(2 * i, 2 * i + 1)
+        for i in range(16)
+        if strips.pair(2 * i, 2 * i + 1) not in base
+    )
+    seams = strips.seam_edges(verts, faces, forced={side})
+    assert side in seams
+    assert len(seams) == len(base) == 2
+    assert len(strips.island_groups(faces, seams, edges)) == 2
+
+
+def test_forced_seam_moves_the_band_it_blocks():
+    # a mark on one side of a bevel band: absorb has to dissolve the band into
+    # the far side, so the seam moves onto the mark instead of a two edge
+    # ribbon surviving between the two
+    verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
+    weighted, _, edges = strips.build(verts, faces)
+    # 22.5 degrees is where a bevel band meets the face beside it
+    band = next(
+        key
+        for key, owners in edges.items()
+        if len(owners) == 2 and 20 < strips.turn_angle(weighted, owners) < 25
+    )
+    seams = strips.seam_edges(verts, faces, forced={band})
+    groups = strips.island_groups(faces, seams, edges)
+    assert len(groups) == 6
+    where = {f: i for i, group in enumerate(groups) for f in group}
+    a, b = edges[band]
+    assert where[a] != where[b]
+
+
+def test_ring_closing_refuses_a_forced_seam():
+    verts, faces = tube(16, height=2.0)
+    weighted, areas, edges = strips.build(verts, faces)
+    label = {i: 0 if i < 16 else 1 for i in range(len(faces))}
+    assert strips.close_rings(verts, weighted, areas, edges, label) != label
+    # a vertical edge on the two halves' own boundary
+    forced = {strips.pair(0, 1)}
+    merged = strips.close_rings(verts, weighted, areas, edges, label, forced=forced)
+    assert merged == label
 
 
 def test_disk_regions_are_left_alone():
@@ -686,6 +795,19 @@ def test_halving_cut_takes_the_shortest_path():
     fold_face(uvs, 2)
     extra = strips.split_islands(verts, faces, set(), uvs)
     assert extra in ({strips.pair(4, 5)}, {strips.pair(6, 7)})
+
+
+def test_painted_column_moves_the_halving_cut():
+    # both columns either side of the halving line are equally short, so
+    # paint on one decides which the straightened cut lands on
+    verts, faces, uvs = strip_island(5)
+    fold_face(uvs, 2)
+    plain = strips.split_islands(verts, faces, set(), uvs)
+    painted = {v: 1.0 for edge in plain for v in edge}
+
+    extra = strips.split_islands(verts, faces, set(), uvs, painted)
+    assert len(extra) == 1
+    assert not painted.keys() & {v for edge in extra for v in edge}
 
 
 def test_split_scan_restricted_to_given_groups():
