@@ -158,7 +158,7 @@ def run_partuv(args, pairs):
                 # the editable install serves partuv from site-packages, so its
                 # package-relative default checkpoint misses the source tree
                 repo_checkpoint = (
-                    Path(__file__).parents[1]
+                    Path(__file__).parents[2]
                     / "engine"
                     / "partuv"
                     / "model_objaverse.ckpt"

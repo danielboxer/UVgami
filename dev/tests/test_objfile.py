@@ -3,7 +3,7 @@ from pathlib import Path
 
 # loaded from file so importing doesn't touch the blender addon package
 spec = importlib.util.spec_from_file_location(
-    "addon_objfile", Path(__file__).parents[1] / "src" / "objfile.py"
+    "addon_objfile", Path(__file__).parents[2] / "src" / "objfile.py"
 )
 objfile = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(objfile)

@@ -6,7 +6,7 @@ from pathlib import Path
 
 # loaded from file so importing doesn't touch the blender addon package
 spec = importlib.util.spec_from_file_location(
-    "addon_batch", Path(__file__).parents[1] / "src" / "batch.py"
+    "addon_batch", Path(__file__).parents[2] / "src" / "batch.py"
 )
 addon_batch = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(addon_batch)
