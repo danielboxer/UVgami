@@ -18,7 +18,7 @@ _AXIS_COLORS = {
 
 def reset_group(group):
     # property_unset is a no-op on pointer props, recurse into nested groups
-    for prop in group.__annotations__.keys():
+    for prop in group.__annotations__:
         value = getattr(group, prop)
         if isinstance(value, bpy.types.PropertyGroup):
             reset_group(value)

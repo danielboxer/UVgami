@@ -27,10 +27,10 @@ def feature_labels(verts, faces, angle=CREASE_ANGLE, rims=True, forced=None):
     merges, sweep rims. What survives is the feature structure the seams will
     trace, before the boundary cleanup passes move any edge."""
     weighted, areas, edges = build(verts, faces)
-    find = partition(faces, weighted, edges, LOW_ANGLE, forced)
-    min_width = detect_width(verts, faces, areas, edges, find, diagonal(verts))
+    root = partition(faces, weighted, edges, LOW_ANGLE, forced)
+    min_width = detect_width(verts, faces, areas, edges, root, diagonal(verts))
     label, bounds = absorb(
-        verts, faces, weighted, areas, edges, find, min_width, forced
+        verts, faces, weighted, areas, edges, root, min_width, forced
     )
     label = merge_smooth(edges, label, bounds, min_width, angle, forced)
     label = merge_flat(weighted, areas, edges, label, angle, forced)

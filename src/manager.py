@@ -42,7 +42,6 @@ class UnwrapManager:
         # run context returned by engine.validate, opaque to the manager
         self.engine_ctx = None
         self.is_active = False
-        self.is_viewer_active = False
         # the session was started from the uv editor, so its queue ui goes there
         self.in_uv_editor = False
         self._dispatch_handle = None
@@ -57,6 +56,25 @@ class UnwrapManager:
         # last session's summary, shown as a banner until dismissed
         self.result = []
         self.result_failed = False
+        self._reset_session()
+
+    def _reset_session(self):
+        """Per-run state. Called from __init__ too, so the error path can reach
+        finish() before a session ever starts."""
+        self.starting_count = 0
+        self.finished_count = 0
+        self.cancelled_count = 0
+        self.found_invalid_objects = False
+        self.transfer_uv_failed = False
+        self.transfer_uv_fail_detail = ""
+        self.transfer_uv_split_count = 0
+        self.error_code = 0
+        self.error_stderr = ""
+        self.error_messages = []
+        self.current_viewer = None
+        self.is_viewer_active = False
+        self.exit_viewer = False
+        self._pack_output_objects = []
 
     @property
     def active(self):
@@ -64,39 +82,23 @@ class UnwrapManager:
         return self._running + list(self._queue)
 
     def add(self, unwrap):
-        """Add an unwrap to the queue."""
         self._queue.append(unwrap)
 
     def remove_unwrap(self, unwrap):
-        """Remove an unwrap from running or queue."""
         if unwrap in self._running:
             self._running.remove(unwrap)
         elif unwrap in self._queue:
             self._queue.remove(unwrap)
 
     def start(self, uv_editor=False):
+        self._reset_session()
         self.starting_count = len(self._queue) + len(self._running)
-        # fill initial slots from queue
         self._fill_slots()
         if get_preferences().show_progress_bar:
             progress_bar.start(uv_editor)
         self.in_uv_editor = uv_editor
         self.is_active = True
-        self.found_invalid_objects = False
-        self.transfer_uv_failed = False
-        self.transfer_uv_fail_detail = ""
-        self.transfer_uv_split_count = 0
-        self.finished_count = 0
-        self.cancelled_count = 0
-        self.error_code = 0
-        self.error_stderr = ""
-        self.error_messages = []
         self.clear_result()
-        self.current_viewer = None
-        self.is_viewer_active = False
-        self.exit_viewer = False
-        self._pack_output_objects = []
-        # register central dispatch timer
         self._dispatch_handle = functools.partial(self._dispatch)
         bpy.app.timers.register(self._dispatch_handle)
 
@@ -142,7 +144,6 @@ class UnwrapManager:
             self._running.append(unwrap)
 
     def _dispatch(self):
-        """Central dispatch timer that monitors all running unwraps."""
         # guard against running after finish
         if not self.is_active:
             return None
@@ -154,10 +155,8 @@ class UnwrapManager:
             requeued = []
 
             for unwrap in list(self._running):
-                # update progress
                 unwrap.update_progress()
 
-                # check early stop
                 early_stop = bpy.context.scene.uvgami.early_stop
                 if (
                     self.engine.supports_early_stop
@@ -166,14 +165,11 @@ class UnwrapManager:
                 ):
                     unwrap.is_stopped = True
 
-                # update viewer
                 if unwrap.viewing:
                     unwrap.update_viewer()
 
-                # if part of batch unwrap, hasn't started and stop button pressed
                 if unwrap.is_stopped:
                     self.engine.request_early_stop(unwrap.process)
-                    # track when stop was first requested
                     if unwrap.stop_requested_at is None:
                         unwrap.stop_requested_at = time.monotonic()
                     # force kill if process doesn't respond within configured minutes
@@ -188,11 +184,10 @@ class UnwrapManager:
                         # it once the killed process reports an exit code
                         continue
 
-                # check if unwrap has exceeded the timeout
                 timeout_minutes = bpy.context.scene.uvgami.unwrap_timeout
                 if (
                     timeout_minutes > 0
-                    and hasattr(unwrap, "started_at")
+                    and unwrap.started_at is not None
                     and time.monotonic() - unwrap.started_at > timeout_minutes * 60
                 ):
                     unwrap.stop_process()
@@ -201,7 +196,6 @@ class UnwrapManager:
                     # it once the killed process reports an exit code
                     continue
 
-                # check process status
                 ret_code = unwrap.poll_engine()
                 if ret_code is not None:
                     if ret_code == 0 and unwrap.output_path.is_file():
@@ -221,8 +215,6 @@ class UnwrapManager:
                             failed.append((unwrap, ret_code))
 
             logger.update_time()
-
-            # update progress bar
             self._update_progress_bar()
 
             # process completions (each isolated so one failure doesn't block others)
@@ -263,7 +255,6 @@ class UnwrapManager:
             if requeued:
                 print(f"UVgami: requeued {len(requeued)} mesh(es) after batch ended")
 
-            # fill empty slots from queue
             self._fill_slots()
 
             # check if everything is done; an exporter still adding pieces holds the
@@ -282,7 +273,6 @@ class UnwrapManager:
         return 0.1
 
     def _update_progress_bar(self):
-        """Update the overall progress bar."""
         all_unwraps = self.active
         progress = [numpy.array(unwrap.progress) for unwrap in all_unwraps]
         # pieces still exporting count as remaining, not finished
@@ -298,7 +288,6 @@ class UnwrapManager:
             tag_redraw()
 
     def _process_completion(self, unwrap, invalid_pass=False):
-        """Process a successfully completed unwrap."""
         if not invalid_pass:
             self.finished_count += 1
 
@@ -312,7 +301,6 @@ class UnwrapManager:
         self.exit_viewer = True
 
         if not invalid_pass:
-            # remove from running and clean up files
             if unwrap in self._running:
                 self._running.remove(unwrap)
             unwrap.cleanup()
@@ -323,7 +311,6 @@ class UnwrapManager:
             bpy.ops.ed.undo_push(message="UVgami Unwrap")
 
     def _resolve_join(self, unwrap, invalid_pass):
-        """Resolve join job state and return final import paths."""
         path = unwrap.output_path
         edge_path = unwrap.edge_path
         added_edges = []
@@ -346,7 +333,6 @@ class UnwrapManager:
         return path, edge_path, added_edges, is_import_ready
 
     def _import_and_finalize(self, unwrap, path, edge_path, added_edges):
-        """Import the unwrapped OBJ and apply all post-processing."""
         props = bpy.context.scene.uvgami
 
         # reroute seams before importing
@@ -362,7 +348,6 @@ class UnwrapManager:
 
         set_origin(output, unwrap.origin)
 
-        # set materials
         materials = [
             bpy.data.materials.get(m_name)
             for m_name in unwrap.materials
@@ -405,10 +390,8 @@ class UnwrapManager:
         if should_pack(props):
             self._pack_output_objects.append(output)
 
-        # show seams
         edit_restore([output], show_seams)
 
-        # shade smooth
         if unwrap.shade_smooth:
             output.data.polygons.foreach_set(
                 "use_smooth", [True] * len(output.data.polygons)
@@ -433,25 +416,23 @@ class UnwrapManager:
             if outcome.applied:
                 self.transfer_uv_split_count += outcome.split_count
                 return
-            else:
-                # transfer failed, restore pack list if we changed it
-                if pack_replaced:
-                    for i, obj in enumerate(self._pack_output_objects):
-                        if obj == input_mesh:
-                            self._pack_output_objects[i] = output
-                            break
-                self.transfer_uv_failed = True
-                self.transfer_uv_fail_detail = outcome.detail
-                logger.add_data(
-                    "errors",
-                    f"UV transfer failed ({outcome.detail}), keeping output",
-                )
+            # transfer failed, restore pack list if we changed it
+            if pack_replaced:
+                for i, obj in enumerate(self._pack_output_objects):
+                    if obj == input_mesh:
+                        self._pack_output_objects[i] = output
+                        break
+            self.transfer_uv_failed = True
+            self.transfer_uv_fail_detail = outcome.detail
+            logger.add_data(
+                "errors",
+                f"UV transfer failed ({outcome.detail}), keeping output",
+            )
 
         collection = check_collection("UVgami Unwrapped", bpy.context.scene.collection)
         move_to_collection(output, collection)
 
     def _restore_vertex_groups(self, unwrap, output):
-        """Restore pre-captured vertex groups to the output mesh."""
         if unwrap.join_job is not None and len(unwrap.join_job.unwrapped) > 1:
             # combine vertex groups from all joined unwraps with offset indices
             combined_groups = {}
@@ -474,15 +455,12 @@ class UnwrapManager:
                     new_group.add([v_idx], weight, "REPLACE")
 
     def _handle_failure(self, unwrap, ret_code):
-        """Handle an unwrap process that exited with a non-zero code."""
         prefs = get_preferences()
         msg = ""
 
-        # convert unsigned int
-        THRESHOLD = 2147483648
-        ADJUSTMENT = 4294967296
-        if ret_code >= THRESHOLD:
-            ret_code -= ADJUSTMENT
+        # windows reports exit codes unsigned, convert back to signed
+        if ret_code >= 2**31:
+            ret_code -= 2**32
 
         move_to_invalid = False
         # manager-synthetic codes for timeout and force-kill
@@ -513,7 +491,6 @@ class UnwrapManager:
 
         if move_to_invalid:
             if prefs.invalid_collection:
-                # move to collection for invalid meshes
                 old_active = bpy.context.view_layer.objects.active
                 invalid_obj = import_obj(unwrap.path)
                 # the importer makes its object active, which would pull the uv
@@ -547,7 +524,6 @@ class UnwrapManager:
         if hasattr(job, "restore"):
             job.restore(self.input[job])
 
-        # remove from running
         if unwrap in self._running:
             self._running.remove(unwrap)
         unwrap.release_engine()
@@ -642,14 +618,12 @@ class UnwrapManager:
         set_status(None)
 
     def _unregister_dispatch(self):
-        """Unregister the dispatch timer if active."""
         if self._dispatch_handle is not None:
             if bpy.app.timers.is_registered(self._dispatch_handle):
                 bpy.app.timers.unregister(self._dispatch_handle)
             self._dispatch_handle = None
 
     def finish(self):
-        """Clean up everything."""
         # one undo step for the whole session, so a single ctrl z reverts it
         bpy.ops.ed.undo_push(message="UVgami Unwrap")
         self._unregister_dispatch()
@@ -659,13 +633,9 @@ class UnwrapManager:
         self._queue.clear()
         self._pack_output_objects.clear()
 
-        if (
-            bpy.context.scene.uvgami.auto_grid
-            and getattr(self, "finished_count", 0) > 0
-        ):
+        if bpy.context.scene.uvgami.auto_grid and self.finished_count > 0:
             switch_shading("MATERIAL")
 
-        # clean up io folders
         for file in (get_extension_dir_path() / "input").iterdir():
             file.unlink()
         for file in (get_extension_dir_path() / "output").iterdir():
@@ -684,7 +654,6 @@ class UnwrapManager:
                 self.cancelled_count += len(job.unwrapped)
 
     def cancel_unwrap(self, unwrap):
-        """Cancel a specific unwrap."""
         self.cancelled_count += 1
         unwrap.release_engine()
         self.remove_unwrap(unwrap)
@@ -694,11 +663,9 @@ class UnwrapManager:
         if hasattr(job, "restore"):
             job.restore(self.input[job])
         self.exit_viewer = True
-        # update 3d view to remove progress bar
-        bpy.context.view_layer.objects.active = bpy.context.view_layer.objects.active
+        tag_redraw()
 
     def stop_all(self):
-        """Stop all running processes and clean up."""
         # late import: ops.viewer imports the manager
         from .ops.viewer import stop_viewer_draw
 

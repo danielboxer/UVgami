@@ -11,7 +11,7 @@ import collections
 import math
 
 from .cuts import connect_loops, crease_relief, cut_path, edge_cost, path_cost
-from .mesh import build, face_edges, island_groups, pair, signed_area
+from .mesh import build, face_edges, find, island_groups, pair, signed_area
 
 
 # strip test: length squared over uv area, about length/width. a folded
@@ -34,14 +34,8 @@ def uv_topology(group, faces, edges, seams):
     """
     parent = {}
 
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
     def union(a, b):
-        ra, rb = find(a), find(b)
+        ra, rb = find(parent, a), find(parent, b)
         if ra != rb:
             parent[ra] = rb
 
@@ -67,32 +61,25 @@ def uv_topology(group, faces, edges, seams):
         face = faces[f]
         n = len(face)
         for i in range(n):
-            a, b = find((f, face[i])), find((f, face[(i + 1) % n]))
+            a, b = find(parent, (f, face[i])), find(parent, (f, face[(i + 1) % n]))
             edge_count[(a, b) if a < b else (b, a)] += 1
 
-    classes = {find(node) for node in parent}
+    classes = {find(parent, node) for node in parent}
     ec = len(classes) - len(edge_count) + len(group)
 
     comp_parent = {}
-
-    def comp_find(x):
-        while comp_parent[x] != x:
-            comp_parent[x] = comp_parent[comp_parent[x]]
-            x = comp_parent[x]
-        return x
-
     boundary = [key for key, count in edge_count.items() if count == 1]
     for a, b in boundary:
         comp_parent.setdefault(a, a)
         comp_parent.setdefault(b, b)
-        ra, rb = comp_find(a), comp_find(b)
+        ra, rb = find(comp_parent, a), find(comp_parent, b)
         if ra != rb:
             comp_parent[ra] = rb
 
     loops = collections.defaultdict(set)
     for a, b in boundary:
         # a corner class only ever holds one mesh vert, its node's second slot
-        loops[comp_find(a)].update((a[1], b[1]))
+        loops[find(comp_parent, a)].update((a[1], b[1]))
     return ec, list(loops.values())
 
 

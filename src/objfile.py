@@ -1,6 +1,3 @@
-# no bpy imports here so the merge helper stays testable outside blender
-
-
 def _count_elements(path):
     # obj files from blender's exporters list v/vt/vn before the first f line,
     # so stopping at the first f gives the full counts
@@ -72,7 +69,7 @@ def merge_obj_files(paths):
                         out.write(line)
                     elif line.startswith("f "):
                         out.write(_offset_face(line, off_v, off_vt, off_vn))
-                    elif line.startswith("o ") or line.startswith("g "):
+                    elif line.startswith(("o ", "g ")):
                         # importer creates one object per o/g line, so drop these
                         # from appended files to keep the merged file as one object
                         pass

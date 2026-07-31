@@ -23,37 +23,35 @@ def make_grid_img():
 
 
 def make_grid_mat(grid_img):
-    grid_mat = None
-    if "UVgami_grid" in bpy.data.materials:
-        grid_mat = bpy.data.materials.get("UVgami_grid")
-    else:
-        # create new material
-        grid_mat = bpy.data.materials.new("UVgami_grid")
-        grid_mat.use_nodes = True
-        tree_nodes = grid_mat.node_tree.nodes
-        nodes = (
-            tree_nodes.new(type="ShaderNodeTexImage"),
-            tree_nodes.get("Principled BSDF"),
-            tree_nodes.get("Material Output"),
-        )
-        nodes[0].image = grid_img
-        nodes[0].location = (-300, 300)
-        grid_mat.node_tree.links.new(nodes[0].outputs[0], nodes[1].inputs[0])
-        for node in nodes:
-            node.select = False
-            node.hide = True
+    grid_mat = bpy.data.materials.get("UVgami_grid")
+    if grid_mat is not None:
+        return grid_mat
+
+    grid_mat = bpy.data.materials.new("UVgami_grid")
+    grid_mat.use_nodes = True
+    tree_nodes = grid_mat.node_tree.nodes
+    nodes = (
+        tree_nodes.new(type="ShaderNodeTexImage"),
+        tree_nodes.get("Principled BSDF"),
+        tree_nodes.get("Material Output"),
+    )
+    nodes[0].image = grid_img
+    nodes[0].location = (-300, 300)
+    grid_mat.node_tree.links.new(nodes[0].outputs[0], nodes[1].inputs[0])
+    for node in nodes:
+        node.select = False
+        node.hide = True
 
     return grid_mat
 
 
 def add_grid(obj, grid_mat):
-    # store all materials
     materials = [slot.material for slot in obj.material_slots]
 
     if grid_mat not in materials:
         obj.data.materials.clear()
 
-        # add materials back with grid as the first active material
+        # grid goes first so it's the active material
         obj.data.materials.append(grid_mat)
         for m in materials:
             obj.data.materials.append(m)

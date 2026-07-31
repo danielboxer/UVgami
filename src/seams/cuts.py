@@ -11,7 +11,7 @@ import collections
 import heapq
 import math
 
-from .mesh import LOW_ANGLE, norm, pair, turn_angle
+from .mesh import LOW_ANGLE, find, norm, pair, turn_angle
 
 
 # what a fully painted vertex multiplies an edge's length by. bounded on
@@ -40,12 +40,6 @@ def boundary_components(edges, label):
     would be a point, not a path, and the region is already joined there."""
     parent = {}
 
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
     for (v0, v1), owners in edges.items():
         regions = {label[o] for o in owners}
         if len(owners) == 2 and len(regions) == 1:
@@ -54,13 +48,13 @@ def boundary_components(edges, label):
             a, b = (r, v0), (r, v1)
             parent.setdefault(a, a)
             parent.setdefault(b, b)
-            ra, rb = find(a), find(b)
+            ra, rb = find(parent, a), find(parent, b)
             if ra != rb:
                 parent[ra] = rb
 
     grouped = collections.defaultdict(lambda: collections.defaultdict(set))
     for region, vert in parent:
-        grouped[region][find((region, vert))].add(vert)
+        grouped[region][find(parent, (region, vert))].add(vert)
     return {r: list(comps.values()) for r, comps in grouped.items()}
 
 
@@ -138,7 +132,7 @@ def cut_path(verts, adjacent, sources, targets, weights=None, relief=None):
     staircase that happens to be shortest.
     """
     if relief is None:
-        dist = {v: 0.0 for v in sources}
+        dist = dict.fromkeys(sources, 0.0)
         prev = {}
         heap = [(0.0, v) for v in sources]
         heapq.heapify(heap)

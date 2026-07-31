@@ -28,7 +28,6 @@ class Engine:
 
     def draw_settings(self, layout, props):
         """Draw this engine's settings rows in the main panel."""
-        pass
 
     def prepare_uvs(self, obj, props):
         """Return whether to export obj's uv map, building one first if the
@@ -42,7 +41,6 @@ class Engine:
 
     def draw_prefs(self, layout, prefs):
         """Draw this engine's section in the addon preferences."""
-        pass
 
     def batches_queue(self, props):
         """Whether queued meshes share one engine process. Batching and running
@@ -60,7 +58,6 @@ class Engine:
 
     def build_env(self, ctx):
         """Return the subprocess env, or None to inherit."""
-        return None
 
     def describe_failure(self, code):
         """Map an engine exit code to (message, move_to_invalid), or None if the
@@ -86,7 +83,7 @@ class Engine:
 
 
 # imported after Engine because each module subclasses it
-from . import optcuts, partuv, xatlas
+from . import optcuts, partuv, xatlas  # noqa: E402
 
 # order sets the enum/ui order
 ENGINES = {e.id: e for e in (optcuts.ENGINE, partuv.ENGINE, xatlas.ENGINE)}

@@ -34,11 +34,9 @@ class Unwrap:
         merge_cuts: bool,
         maintain_mode: str,
     ):
-        # unwrap name
         self.name = name
         self.input_name = input_name
 
-        # paths
         self.path = path
         self.output_path = get_extension_dir_path() / "output" / f"{self.path.stem}.obj"
         # seam restrictions
@@ -54,7 +52,6 @@ class Unwrap:
         self.symmetrize_job = jobs[3]
         self.transfer_uvs_job = jobs[4]
 
-        # object info
         self.origin = mathutils.Vector(origin)
         self.materials = materials
         self.added_edges = added_edges
@@ -63,7 +60,6 @@ class Unwrap:
         self.vertex_groups = vertex_groups
         self.shade_smooth = shade_smooth
 
-        # other
         self.merge_cuts = merge_cuts
         # snapshot: the edge file was written for this mode, so a later change
         # must not reach the untriangulate pass
@@ -81,6 +77,7 @@ class Unwrap:
         self.uv_indices = collections.deque()
         self.is_uv_data_ready = False
         self.is_stopped = False
+        self.started_at = None
         self.stop_requested_at = None
         # bounded tail of the solo process's stderr, drained by a reader thread
         self.stderr_tail = collections.deque(maxlen=10)
@@ -99,7 +96,6 @@ class Unwrap:
             env=manager.engine.build_env(manager.engine_ctx),
         )
 
-        # start reading thread
         thread = threading.Thread(target=self.get_output)
         thread.start()
 
@@ -133,10 +129,7 @@ class Unwrap:
             return self.process.poll()
         # the engine reports when it reaches each mesh, the timeout clock
         # starts then
-        if (
-            not hasattr(self, "started_at")
-            and self.path.stem in self.batch_process.started
-        ):
+        if self.started_at is None and self.path.stem in self.batch_process.started:
             self.started_at = time.monotonic()
         return self.batch_process.poll_result(self.path.stem)
 
@@ -162,10 +155,8 @@ class Unwrap:
 
     def get_output(self):
         parser = EngineOutput(self)
-        # get lines until there are no more left
         for line in iter(self.process.stdout.readline, ""):
             parser.feed(line)
-        # process has ended, thread will exit here
 
     def update_progress(self):
         """Read progress from the stdout reader thread."""

@@ -40,24 +40,18 @@ def draw_queue(box):
 
 
 def _build_unwrap_groups(active_unwraps):
-    """Group unwraps by their join jobs."""
+    """Unwraps keyed by their join job, or by index when they have none. The
+    key type is what tells the two apart when drawing."""
     groups = {}
     active_groups = []
     for unwrap_idx, unwrap in enumerate(active_unwraps):
-        # check for join jobs
-        # meshes with matching join jobs will be grouped together
-        found = False
-        if unwrap.join_job is not None:
-            job = unwrap.join_job
-            if job not in groups:
-                groups[job] = []
-            groups[job].append(unwrap)
-            found = True
-            if unwrap.is_active and job not in active_groups:
-                active_groups.append(job)
-        if not found:
-            # add to dictionary with unique int key
+        job = unwrap.join_job
+        if job is None:
             groups[unwrap_idx] = [unwrap]
+            continue
+        groups.setdefault(job, []).append(unwrap)
+        if unwrap.is_active and job not in active_groups:
+            active_groups.append(job)
     return groups, active_groups
 
 
@@ -67,12 +61,9 @@ def _draw_unwrap_groups(box, groups, active_groups):
     for group_id, group in groups.items():
         display_box = box.box()
         row = display_box.row()
-        label_text = ""
-        # if the key isn't an int, it's part of a group, and can be expanded
+        # if the key isn't an int, it's a join job, so the group can be expanded
         expand_layout = not isinstance(group_id, int)
 
-        # draw active icon and name
-        is_active = False
         if expand_layout:
             row.operator(
                 "uvgami.expand",
@@ -105,10 +96,7 @@ def _draw_unwrap_groups(box, groups, active_groups):
             cancel_op.end_idx = cancel_index + len(group)
             cancel_op.whole_group = True
 
-        # draw buttons
         if not expand_layout or group_id.is_expanded:
-            # if the group is expanded, show all items
-
             for item in group:
                 if expand_layout:
                     row = display_box.row()
@@ -119,7 +107,9 @@ def _draw_unwrap_groups(box, groups, active_groups):
 
                 # viewer button, only once the unwrap has started producing
                 if item.progress != (0, 0, 1) and manager.engine.supports_viewer:
-                    view_op = row.operator("uvgami.view_unwrap", text="", icon="HIDE_OFF")
+                    view_op = row.operator(
+                        "uvgami.view_unwrap", text="", icon="HIDE_OFF"
+                    )
                     view_op.index = manager.active.index(item)
                 # stop button, only a running mesh on an engine that can
                 # finish early with a result
@@ -127,14 +117,13 @@ def _draw_unwrap_groups(box, groups, active_groups):
                     stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
                     stop_op.start_idx = cancel_index
                     stop_op.end_idx = cancel_index + 1
-                # cancel button
                 cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
                 cancel_op.start_idx = cancel_index
                 cancel_op.end_idx = cancel_index + 1
 
                 cancel_index += 1
-        elif expand_layout and not group_id.is_expanded:
-            # the length of the group needs to be added
+        else:
+            # collapsed, so no per-item rows drew, skip the whole group's indices
             cancel_index += len(group)
 
     if len(groups) > 1:

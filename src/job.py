@@ -51,8 +51,52 @@ class Job:
 
 
 class Preserve(Job):
-    def __init__(self, count):
-        super().__init__(count)
+    @staticmethod
+    def _seam_edges(bm):
+        """The mesh edges that carry a uv seam, found by rebuilding the uv
+        layout as its own mesh: welding its coincident corners leaves the
+        seams as the only boundary edges."""
+        uvs = []
+        uv_idcs = []
+        mesh_verts = []
+        uv_count = 0
+        uv_layer = bm.loops.layers.uv.active
+
+        for face in bm.faces:
+            uv_i = []
+            for loop in face.loops:
+                uv = loop[uv_layer].uv
+                uvs.append((uv.x, uv.y, 0))
+                # all face points are added, duplicates are removed later
+                # that means the index is new each time
+                uv_i.append(uv_count)
+                uv_count += 1
+                # store the original mesh vertex so it can be accessed using the uvs
+                mesh_verts.append(loop.vert)
+            uv_idcs.append(uv_i)
+
+        mesh_data = bpy.data.meshes.new("")
+        mesh_data.from_pydata(uvs, [], uv_idcs)
+        uvbm = bmesh.new()
+        uvbm.from_mesh(mesh_data)
+
+        uvvert_to_meshvert = {}
+        for uv_v_idx, uv_v in enumerate(uvbm.verts):
+            uvvert_to_meshvert[uv_v] = mesh_verts[uv_v_idx]
+
+        # the faces will all be separate, so merging by distance joins them
+        bmesh.ops.remove_doubles(uvbm, verts=uvbm.verts, dist=0.0001)
+
+        seams = []
+        for e in uvbm.edges:
+            if e.is_boundary:
+                m_v1 = uvvert_to_meshvert[e.verts[0]]
+                m_v2 = uvvert_to_meshvert[e.verts[1]]
+                for edge in m_v1.link_edges:
+                    if edge.other_vert(m_v1) is m_v2:
+                        seams.append(edge)
+        uvbm.free()
+        return seams
 
     def finish(self, unwrap, output, added_edges):
         # return mesh to original state
@@ -66,58 +110,8 @@ class Preserve(Job):
         if not added_edges:
             added_edges = unwrap.added_edges
 
-        if unwrap.maintain_mode == "PARTIAL":
-            # get seams so they can be avoided
-            uvs = []
-            uv_idcs = []
-            uvvert_to_meshvert = {}
-            mesh_verts = []
-            uv_count = 0
-            uv_layer = bm.loops.layers.uv.active
-
-            # get uv data
-            for face in bm.faces:
-                uv_i = []
-                for loop in face.loops:
-                    # get uv coordinate
-                    uv = loop[uv_layer].uv
-                    uvs.append((uv.x, uv.y, 0))
-                    # all face points are added, duplicates are removed later
-                    # that means the index is new each time
-                    uv_i.append(uv_count)
-                    uv_count += 1
-                    # store the original mesh vertex so it can be accessed using the uvs
-                    mesh_verts.append(loop.vert)
-                uv_idcs.append(uv_i)
-
-            # make uv bmesh out of mesh data
-            mesh_data = bpy.data.meshes.new("")
-            mesh_data.from_pydata(uvs, [], uv_idcs)
-            uvbm = bmesh.new()
-            uvbm.from_mesh(mesh_data)
-
-            # make lookup table between mesh and uv mesh
-            for uv_v_idx, uv_v in enumerate(uvbm.verts):
-                uvvert_to_meshvert[uv_v] = mesh_verts[uv_v_idx]
-
-            # the faces will all be separate, so merging by distance joins them
-            bmesh.ops.remove_doubles(uvbm, verts=uvbm.verts, dist=0.0001)
-
-            # find boundary edges of uv bmesh which are seams of original bmesh
-            seams = []
-            for e in uvbm.edges:
-                if e.is_boundary:
-                    uv_v1 = e.verts[0]
-                    uv_v2 = e.verts[1]
-
-                    m_v1 = uvvert_to_meshvert[uv_v1]
-                    m_v2 = uvvert_to_meshvert[uv_v2]
-
-                    # get edge from vertices
-                    for edge in m_v1.link_edges:
-                        if edge.other_vert(m_v1) is m_v2:
-                            seams.append(edge)
-            uvbm.free()
+        # partial keeps the seams, so only non-seam edges may dissolve
+        seams = self._seam_edges(bm) if unwrap.maintain_mode == "PARTIAL" else ()
 
         dissolve_edges = []
         for e in added_edges:
@@ -140,10 +134,7 @@ class Preserve(Job):
                 # skip removing edge
                 continue
 
-            if unwrap.maintain_mode == "PARTIAL":
-                if bm_edge not in seams:
-                    dissolve_edges.append(bm_edge)
-            else:
+            if bm_edge not in seams:
                 dissolve_edges.append(bm_edge)
 
         bmesh.ops.dissolve_edges(bm, edges=dissolve_edges)
@@ -192,9 +183,6 @@ class Join(Job):
 
 
 class HideInput(Job):
-    def __init__(self, count):
-        super().__init__(count)
-
     def finish(self, input_mesh):
         if check_exists(input_mesh):
             input_mesh.hide_set(True)
@@ -204,9 +192,6 @@ class TransferUVs(Job):
     # whether the manager should repack the input mesh in place of the
     # deleted output at session end
     repack_input = True
-
-    def __init__(self, count):
-        super().__init__(count)
 
     def finish(self, input_mesh, output):
         if not check_exists(input_mesh) or not check_exists(output):

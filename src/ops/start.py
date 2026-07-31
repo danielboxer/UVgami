@@ -1,3 +1,4 @@
+import contextlib
 import time
 from collections import deque
 
@@ -116,10 +117,9 @@ class InputExporter:
         # consume upfront so a failure below can't double count this piece,
         # the error path only subtracts what's still in the queue
         manager.pending_count -= 1
-        # get unwrap name
         unwrap_name = self.names[obj.name][1]
         path = self.input_path / f"{bpy.path.clean_name(unwrap_name)}.obj"
-        # if path to file already exists, find a unique name
+        # find a unique name if the path is taken
         while path.is_file():
             path = path.parent / (f"{path.stem}1.obj")
 
@@ -293,17 +293,14 @@ class InputExporter:
 
     def _get_mesh_metadata(self, obj):
         """Gather materials and shading info from the mesh."""
-        # get materials
         materials = [slot.material.name for slot in obj.material_slots if slot.material]
 
-        # get per-face material indices so they can be restored after import
+        # per-face indices, so they can be restored after import
         material_indices = [0] * len(obj.data.polygons)
         obj.data.polygons.foreach_get("material_index", material_indices)
 
-        # check smooth shading
-        shade_smooth = True if obj.data.polygons[0].use_smooth else False
+        shade_smooth = obj.data.polygons[0].use_smooth
 
-        # get vertex groups
         vertex_groups = {}
         for group in obj.vertex_groups:
             weights = {}
@@ -394,10 +391,10 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 progress_bar.start()
             tag_redraw()
 
-            if self.report_msg == "Input contain":
-                self.report({"INFO"}, "UV unwrap in progress")
-            else:
+            if self.report_msg:
                 self.report({"WARNING"}, f"UV unwrap in progress. {self.report_msg}")
+            else:
+                self.report({"INFO"}, "UV unwrap in progress")
 
         except Exception as e:
             handle_error(e, "START", objects=start_objects)
@@ -475,23 +472,21 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         objects = []
         names = {}
-        messages = [False, False]
+        skipped = set()
         for obj in self.input_objs:
             if obj.type != "MESH":
-                messages[0] = True
+                skipped.add("non mesh objects")
                 continue
             if len(obj.data.polygons) == 0:
-                messages[1] = True
+                skipped.add("objects with zero polygons")
                 continue
 
-            # make unlinked duplicate of object
+            # unlinked duplicate, so the original is never touched
             copy_object = obj.copy()
             copy_object.data = obj.data.copy()
             copy_object.animation_data_clear()
 
-            # link to scene
-            object_collection = obj.users_collection[0]
-            object_collection.objects.link(copy_object)
+            obj.users_collection[0].objects.link(copy_object)
 
             self._apply_modifiers(context, copy_object)
             if props.use_proxy:
@@ -502,13 +497,9 @@ class UVGAMI_OT_start(bpy.types.Operator):
             names[copy_object.name] = [obj.name, obj.name]
             objects.append(copy_object)
 
-        report_msg = "Input contains"
-        if messages[0]:
-            report_msg += " non mesh objects,"
-        if messages[1]:
-            report_msg += " objects with zero polygons "
-        # remove comma or space at end
-        report_msg = report_msg[:-1]
+        report_msg = ""
+        if skipped:
+            report_msg = f"Input contains {', '.join(sorted(skipped))}"
 
         return objects, names, report_msg
 
@@ -519,11 +510,9 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 # don't apply auto smooth modifier
                 continue
 
-            try:
+            # a disabled modifier can't be applied
+            with contextlib.suppress(RuntimeError):
                 bpy.ops.object.modifier_apply(modifier=modifier.name)
-            except RuntimeError:
-                # if the modifier is disabled, don't apply
-                pass
 
     def _apply_cuts_if_needed(self, target_obj, source_obj, props):
         if not (props.use_cuts and not props.use_symmetry):
@@ -547,7 +536,6 @@ class UVGAMI_OT_start(bpy.types.Operator):
         d = cuts // axis_count
         r = cuts % axis_count
 
-        # distribute cuts
         x_num = d if r == 0 else d + 1
         y_num = d if r != 2 else d + 1
         z_num = d
@@ -662,9 +650,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
                             "symmetrize": symmetrize_job,
                             "transfer_uvs": transfer_uvs_job,
                         }
-                        piece_has_uvs[o] = self.engine.piece_uses_uvs(
-                            o, props, has_uvs
-                        )
+                        piece_has_uvs[o] = self.engine.piece_uses_uvs(o, props, has_uvs)
                         separated_objects.append(o)
                         self.names[o.name] = [
                             unwrap_name,

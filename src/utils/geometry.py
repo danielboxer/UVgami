@@ -15,8 +15,7 @@ def set_origin(obj, point):
 
 def calc_center(obj):
     lc = 0.125 * sum((mathutils.Vector(co) for co in obj.bound_box), mathutils.Vector())
-    center = obj.matrix_world @ lc
-    return center
+    return obj.matrix_world @ lc
 
 
 def apply_transforms(obj):

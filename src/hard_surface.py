@@ -56,9 +56,9 @@ def auto_hard_faces(obj, marked="NONE"):
     )
     hard = set()
     for comp in vertex_components(faces):
-        if marked_verts and marked_verts & {v for fi in comp for v in faces[fi]}:
-            hard.update(comp)
-        elif marked != "ONLY" and is_hard_surface(verts, [faces[fi] for fi in comp]):
+        if (marked_verts and marked_verts & {v for fi in comp for v in faces[fi]}) or (
+            marked != "ONLY" and is_hard_surface(verts, [faces[fi] for fi in comp])
+        ):
             hard.update(comp)
     return hard
 

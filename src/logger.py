@@ -42,13 +42,11 @@ class Logger:
         return self.unwrap_info[-1]
 
     def get_all(self):
+        """Every run's info, newest first, blank separated."""
         output = []
-        # get the most recent ones first
         for info in reversed(self.unwrap_info):
             output.extend(info.get_info())
-            # add empty string for newline
             output.append("")
-        # remove final newline
         return output[:-1]
 
     def start_timer(self):
