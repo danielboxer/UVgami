@@ -6,11 +6,13 @@ from .ops.guides import SEAM_RESTRICTIONS_GROUP
 from .strips import (
     CREASE_ANGLE,
     face_edges,
+    is_hard_surface,
     island_groups,
     island_ruined,
     seam_edges,
     signed_area,
     split_islands,
+    vertex_components,
 )
 
 # slim iterations for re-unwrapping a folded island alone. 50 flattens the
@@ -37,6 +39,28 @@ def seam_restrictions(obj):
                 weights[v.index] = g.weight
                 break
     return weights or None
+
+
+def auto_hard_faces(obj, marked="NONE"):
+    """Face indices of the loose parts worth preseeding, for auto mode.
+
+    Each part classifies on its own geometry. A part carrying marked seams
+    counts as hard whenever marks are in use: the user placed seams there
+    deliberately. With marked ONLY detection never runs, so the marked parts
+    are the whole hard set."""
+    mesh = obj.data
+    verts = [tuple(v.co) for v in mesh.vertices]
+    faces = [tuple(p.vertices) for p in mesh.polygons]
+    marked_verts = (
+        {v for edge in marked_seams(mesh) for v in edge} if marked != "NONE" else set()
+    )
+    hard = set()
+    for comp in vertex_components(faces):
+        if marked_verts and marked_verts & {v for fi in comp for v in faces[fi]}:
+            hard.update(comp)
+        elif marked != "ONLY" and is_hard_surface(verts, [faces[fi] for fi in comp]):
+            hard.update(comp)
+    return hard
 
 
 def apply_seams(mesh, seams):

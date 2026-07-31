@@ -4,7 +4,7 @@ import pathlib
 import bpy
 
 from . import Engine
-from ..hard_surface import build_seam_uvs, seam_restrictions
+from ..hard_surface import auto_hard_faces, build_seam_uvs, seam_restrictions
 from ..utils.io import print_stdin
 from ..utils.mesh import deselect_all, validate_obj
 from ..utils.paths import get_bundled_engine_path
@@ -23,6 +23,13 @@ class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
                 "ON",
                 "On",
                 "Cut feature seams on every part before the unwrap",
+            ),
+            (
+                "AUTO",
+                "Auto",
+                "Cut feature seams only on the loose parts that read as hard "
+                "surface. Organic parts unwrap from scratch, so a mixed model "
+                "gets both treatments",
             ),
         ),
         default="OFF",
@@ -106,8 +113,16 @@ class UVGAMI_OT_preview_seams(bpy.types.Operator):
             # build_seam_uvs unwraps through bpy.ops, which takes every selected
             # mesh into edit mode at once, so run it on one object alone
             deselect_all()
+            only = None
+            if optcuts.hard_surface == "AUTO":
+                only = auto_hard_faces(obj, marked)
+                if not only:
+                    counts.append("organic")
+                    continue
+                if len(only) == len(obj.data.polygons):
+                    only = None
             weights = seam_restrictions(obj) if guided else None
-            build_seam_uvs(obj, angle, marked, weights)
+            build_seam_uvs(obj, angle, marked, weights, only)
             counts.append(str(sum(1 for edge in obj.data.edges if edge.use_seam)))
 
         deselect_all()
@@ -207,13 +222,29 @@ class OptcutsEngine(Engine):
         optcuts = props.optcuts
         if optcuts.hard_surface == "OFF":
             return props.import_uvs
+        only = None
+        if optcuts.hard_surface == "AUTO":
+            only = auto_hard_faces(obj, optcuts.hard_surface_marked)
+            if not only:
+                return props.import_uvs
+            if len(only) == len(obj.data.polygons):
+                only = None
         build_seam_uvs(
             obj,
             math.degrees(optcuts.hard_surface_angle),
             optcuts.hard_surface_marked,
             seam_restrictions(obj) if props.use_guided_mode else None,
+            only,
         )
         return True
+
+    def piece_uses_uvs(self, obj, props, has_uvs):
+        # auto mode routes per loose part: a piece the preseed skipped has no
+        # seams and goes to the engine bare, to be cut from scratch. With
+        # import uvs on, organic pieces keep the user's map instead
+        if props.optcuts.hard_surface != "AUTO" or props.import_uvs:
+            return has_uvs
+        return has_uvs and any(e.use_seam for e in obj.data.edges)
 
     def draw_prefs(self, layout, prefs):
         row = layout.row()

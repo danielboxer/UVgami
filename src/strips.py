@@ -1850,6 +1850,84 @@ def vertex_components(faces):
     return list(members.values())
 
 
+# auto mode guards, tuned on the bench model sets (table in
+# docs/agents/bench-results.md). A part is hard surface only when every one
+# holds: one region covering the part means no structure (a smooth blob),
+ORGANIC_SHARE = 0.9
+# regions averaging under this many faces mean the partition found noise,
+# not panels (chainmail reads 1 face per region),
+FRAGMENT_FACES = 8
+# turn between LOW_ANGLE and this is spread curvature. A bevel is spread
+# turn beside a feature boundary and a sculpt is spread turn everywhere, so
+# the share is read away from the region boundaries, and a part with too
+# much of its interior edge length spread is sculpted,
+SPREAD_ANGLE = 25
+SPREAD_SHARE = 0.21
+# and the region boundaries must mostly be deliberate: on an edge that is
+# itself creased, or a rim split_sweeps placed. A duck's wing outline is
+# neither, a screwdriver's dull boundaries are all rims
+BOUNDARY_ANGLE = 20
+BOUNDARY_CREASED = 0.6
+
+
+def is_hard_surface(verts, faces):
+    """Whether a loose part's features are worth preseeding.
+
+    Reads the merged region structure at the CREASE_ANGLE floor, not the
+    feature angle knob: the question is whether structure exists at all, and
+    the knob only tunes seam density once it does. split_sweeps runs so a
+    smooth cylinder whose rims no angle test sees still reads hard, and its
+    rims count as deliberate boundaries. Misreading organic costs a slow
+    from-scratch unwrap, misreading hard costs seams on sculpt ridges, so
+    ties fall organic."""
+    weighted, areas, edges, presweep = feature_labels(verts, faces, rims=False)
+    label = split_sweeps(weighted, areas, edges, presweep)
+    total = sum(areas)
+    if total <= 0:
+        return False
+    region = collections.defaultdict(float)
+    for i, r in label.items():
+        region[r] += areas[i]
+    if max(region.values()) / total >= ORGANIC_SHARE:
+        return False
+    if len(faces) / len(region) < FRAGMENT_FACES:
+        return False
+
+    near = set()
+    for key, owners in edges.items():
+        if len(owners) == 2 and label[owners[0]] != label[owners[1]]:
+            near.update(owners)
+    # two rings, so a dissolved bevel band beside a seam stays out of the
+    # interior read
+    for _ in range(2):
+        grown = set(near)
+        for owners in edges.values():
+            if len(owners) == 2 and not near.isdisjoint(owners):
+                grown.update(owners)
+        near = grown
+
+    spread = interior = boundary = boundary_creased = 0.0
+    for (a, b), owners in edges.items():
+        if len(owners) != 2:
+            continue
+        length = norm([verts[a][i] - verts[b][i] for i in range(3)])
+        turn = turn_angle(weighted, owners)
+        if label[owners[0]] != label[owners[1]]:
+            boundary += length
+            if turn >= BOUNDARY_ANGLE or presweep[owners[0]] == presweep[owners[1]]:
+                boundary_creased += length
+        elif owners[0] not in near and owners[1] not in near:
+            interior += length
+            if LOW_ANGLE < turn < SPREAD_ANGLE:
+                spread += length
+    if not boundary:
+        return False
+    return (
+        (not interior or spread / interior < SPREAD_SHARE)
+        and boundary_creased / boundary >= BOUNDARY_CREASED
+    )
+
+
 def seam_edges(verts, faces, angle=CREASE_ANGLE, rims=True, weights=None, forced=None):
     """The full pipeline at auto width: partition, the three merges, seams.
 
