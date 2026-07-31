@@ -51,7 +51,7 @@ explicit = true
 
 [tool.ruff]
 target-version = "py311"
-extend-exclude = ["engine", "src", "/__init__.py"]
+extend-exclude = ["engine", "src/pyqtree.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["dev/tests"]

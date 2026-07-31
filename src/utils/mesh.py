@@ -114,13 +114,13 @@ def select_uvs():
 
 
 def set_active_any():
-    # find any mesh and set it to active
+    """Make any linked mesh the active object, for the callers that need one.
+    An unlinked object can't be active, so it doesn't count."""
     for obj in bpy.data.objects:
-        if obj.type == "MESH":
-            # don't set an unlinked object to active
-            if len(obj.users_collection) != 0:
-                bpy.context.view_layer.objects.active = obj
-                return obj
+        if obj.type == "MESH" and len(obj.users_collection) != 0:
+            bpy.context.view_layer.objects.active = obj
+            return obj
+    return None
 
 
 def edit_restore(input, func, *args, **kwargs):

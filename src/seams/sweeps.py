@@ -11,7 +11,7 @@ between, while a bent tube fills the middle band."""
 import collections
 import math
 
-from .mesh import cross, norm
+from .mesh import cross, find, norm
 
 
 # a region splits at its rims when the 30-60 degree middle band holds under
@@ -151,13 +151,6 @@ def split_sweeps(weighted, areas, edges, label):
 
         # connected components of same-class faces over the region's edges
         parent = {i: i for i in group}
-
-        def find(x):
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]
-                x = parent[x]
-            return x
-
         contact = collections.Counter()
         for owners in edges.values():
             if len(owners) != 2:
@@ -166,7 +159,7 @@ def split_sweeps(weighted, areas, edges, label):
             if a not in in_group or b not in in_group:
                 continue
             if is_cap[a] == is_cap[b]:
-                ra, rb = find(a), find(b)
+                ra, rb = find(parent, a), find(parent, b)
                 if ra != rb:
                     parent[ra] = rb
             else:
@@ -174,7 +167,7 @@ def split_sweeps(weighted, areas, edges, label):
 
         comp_area = collections.defaultdict(float)
         for i in group:
-            comp_area[find(i)] += areas[i]
+            comp_area[find(parent, i)] += areas[i]
         # a rim seam is not worth a speck: merge any component smaller than
         # a real cap into whichever neighbour it touches most
         while True:
@@ -183,7 +176,7 @@ def split_sweeps(weighted, areas, edges, label):
                 break
             touch = collections.Counter()
             for (a, b), c in contact.items():
-                ra, rb = find(a), find(b)
+                ra, rb = find(parent, a), find(parent, b)
                 if ra == rb:
                     continue
                 if speck in (ra, rb):
@@ -196,7 +189,7 @@ def split_sweeps(weighted, areas, edges, label):
         if len(comp_area) < 2:
             continue
         for i in group:
-            relabel[i] = find(i)
+            relabel[i] = find(parent, i)
 
     if not relabel:
         return label

@@ -33,6 +33,15 @@ def pair(a, b):
     return (a, b) if a < b else (b, a)
 
 
+def find(parent, x):
+    """Union-find root of x with path compression. parent is a list or a dict
+    mapping each element to its parent, itself for a root."""
+    while parent[x] != x:
+        parent[x] = parent[parent[x]]
+        x = parent[x]
+    return x
+
+
 def face_keys(face):
     """A face's edges as sorted vertex index pairs."""
     return [pair(face[i], face[(i + 1) % len(face)]) for i in range(len(face))]
@@ -80,21 +89,15 @@ def island_groups(faces, seams, edges):
     """Faces grouped into uv islands: joined by interior edges not on a seam."""
     parent = list(range(len(faces)))
 
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
     for key, owners in edges.items():
         if len(owners) == 2 and key not in seams:
-            a, b = find(owners[0]), find(owners[1])
+            a, b = find(parent, owners[0]), find(parent, owners[1])
             if a != b:
                 parent[a] = b
 
     members = collections.defaultdict(list)
     for fi in range(len(faces)):
-        members[find(fi)].append(fi)
+        members[find(parent, fi)].append(fi)
     return list(members.values())
 
 
@@ -104,12 +107,6 @@ def uv_island_groups(faces, uvs, edges):
     needs no seam marks."""
     parent = list(range(len(faces)))
 
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
     def corner_uv(f, v):
         return uvs[f][faces[f].index(v)]
 
@@ -118,13 +115,13 @@ def uv_island_groups(faces, uvs, edges):
             continue
         f, g = owners
         if corner_uv(f, u) == corner_uv(g, u) and corner_uv(f, v) == corner_uv(g, v):
-            a, b = find(f), find(g)
+            a, b = find(parent, f), find(parent, g)
             if a != b:
                 parent[a] = b
 
     members = collections.defaultdict(list)
     for fi in range(len(faces)):
-        members[find(fi)].append(fi)
+        members[find(parent, fi)].append(fi)
     return list(members.values())
 
 
@@ -133,23 +130,17 @@ def vertex_components(faces):
     connectivity mesh.separate(type="LOOSE") splits on."""
     parent = {}
 
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
     for face in faces:
         for v in face:
             parent.setdefault(v, v)
         for v in face[1:]:
-            ra, rb = find(face[0]), find(v)
+            ra, rb = find(parent, face[0]), find(parent, v)
             if ra != rb:
                 parent[ra] = rb
 
     members = collections.defaultdict(list)
     for fi, face in enumerate(faces):
-        members[find(face[0])].append(fi)
+        members[find(parent, face[0])].append(fi)
     return list(members.values())
 
 

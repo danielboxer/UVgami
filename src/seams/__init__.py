@@ -1,6 +1,5 @@
 """Feature seams by strip merging, the hard surface Seams mode.
 
-No bpy imports anywhere, so the algorithm stays testable outside blender.
 Modules in pipeline order: mesh, regions, sweeps, cuts, boundaries,
 islands, pipeline."""
 
@@ -14,6 +13,7 @@ from .mesh import (
     diagonal,
     face_edges,
     face_keys,
+    find,
     island_groups,
     norm,
     pair,
@@ -37,3 +37,47 @@ from .regions import (
     region_topology,
 )
 from .sweeps import split_sweeps
+
+__all__ = [
+    "CREASE_ANGLE",
+    "FLAT_ANGLE",
+    "LOW_ANGLE",
+    "TURN_COST",
+    "absorb",
+    "boundary_edges",
+    "build",
+    "close_rings",
+    "crease_relief",
+    "cross",
+    "crosses",
+    "cut_path",
+    "detect_width",
+    "diagonal",
+    "disk_cuts",
+    "face_edges",
+    "face_keys",
+    "find",
+    "flatten_teeth",
+    "is_hard_surface",
+    "island_groups",
+    "island_ruined",
+    "merge_flat",
+    "merge_smooth",
+    "norm",
+    "pair",
+    "partition",
+    "path_cost",
+    "region_topology",
+    "reroute_boundaries",
+    "seam_edges",
+    "signed_area",
+    "snap_paths",
+    "split_islands",
+    "split_sweeps",
+    "turn_angle",
+    "uv_area_fit",
+    "uv_fit",
+    "uv_island_groups",
+    "uv_topology",
+    "vertex_components",
+]

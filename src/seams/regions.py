@@ -11,11 +11,12 @@ disk pairs whose union is a short annulus. Every merge refuses to
 leave a region with a hole, the engine throws non-disk charts away."""
 
 import collections
+import functools
 import heapq
 import math
 
 from .islands import SPLIT_ASPECT
-from .mesh import norm, pair, turn_angle
+from .mesh import find, norm, pair, turn_angle
 
 
 # auto width: at the low partition angle region widths are dominated by
@@ -46,12 +47,6 @@ def partition(faces, weighted, edges, angle, forced=None):
     edge in forced whatever it turns."""
     parent = list(range(len(faces)))
 
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
     for key, owners in edges.items():
         if len(owners) != 2:
             continue
@@ -60,10 +55,10 @@ def partition(faces, weighted, edges, angle, forced=None):
         if forced and key in forced:
             continue
         a, b = owners
-        ra, rb = find(a), find(b)
+        ra, rb = find(parent, a), find(parent, b)
         if ra != rb:
             parent[ra] = rb
-    return find
+    return functools.partial(find, parent)
 
 
 def boundary_turns(verts, weighted, edges, label):
@@ -157,9 +152,9 @@ def region_stats(verts, areas, edges, label):
     return area, shared, perimeter
 
 
-def detect_width(verts, faces, areas, edges, find, scale):
+def detect_width(verts, faces, areas, edges, root, scale):
     """Absolute merge width from a high quantile of the region widths."""
-    label = {i: find(i) for i in range(len(faces))}
+    label = {i: root(i) for i in range(len(faces))}
     area, _, perimeter = region_stats(verts, areas, edges, label)
     ws = sorted(2 * area[r] / perimeter[r] for r in area if perimeter[r] > 0)
     if not ws:
@@ -168,7 +163,7 @@ def detect_width(verts, faces, areas, edges, find, scale):
     return min(WIDTH_FACTOR * quantile, WIDTH_CAP * scale)
 
 
-def absorb(verts, faces, weighted, areas, edges, find, min_width, forced=None):
+def absorb(verts, faces, weighted, areas, edges, root, min_width, forced=None):
     """Repeatedly merge the narrowest region into its longest-shared neighbour.
 
     Stats update incrementally per merge and the heap is lazy, an entry
@@ -178,7 +173,7 @@ def absorb(verts, faces, weighted, areas, edges, find, min_width, forced=None):
     boundary's own edges, never moves. Returns labels plus the per-boundary
     sums the smooth merge reads.
     """
-    label = {i: find(i) for i in range(len(faces))}
+    label = {i: root(i) for i in range(len(faces))}
     area, shared, perimeter = region_stats(verts, areas, edges, label)
     turns = boundary_turns(verts, weighted, edges, label)
     steps = collections.defaultdict(float, turns)
@@ -267,14 +262,8 @@ def absorb(verts, faces, weighted, areas, edges, find, min_width, forced=None):
         if new_width < min_width:
             heapq.heappush(heap, (new_width, best))
 
-    def resolve(r):
-        while parent[r] != r:
-            parent[r] = parent[parent[r]]
-            r = parent[r]
-        return r
-
     bounds = Boundaries(turns, steps, spread, shared)
-    return {i: resolve(r) for i, r in label.items()}, bounds
+    return {i: find(parent, r) for i, r in label.items()}, bounds
 
 
 def merge_smooth(edges, label, bounds, min_width, angle=CREASE_ANGLE, forced=None):
@@ -358,13 +347,7 @@ def merge_smooth(edges, label, bounds, min_width, angle=CREASE_ANGLE, forced=Non
             if value < angle:
                 heapq.heappush(heap, (value, *((a, n) if a < n else (n, a))))
 
-    def resolve(r):
-        while parent[r] != r:
-            parent[r] = parent[parent[r]]
-            r = parent[r]
-        return r
-
-    return {i: resolve(r) for i, r in label.items()}
+    return {i: find(parent, r) for i, r in label.items()}
 
 
 def merge_flat(weighted, areas, edges, label, angle=FLAT_ANGLE, forced=None):
@@ -437,13 +420,7 @@ def merge_flat(weighted, areas, edges, label, angle=FLAT_ANGLE, forced=None):
             if r >= bound:
                 heapq.heappush(heap, (-r, *((a, n) if a < n else (n, a))))
 
-    def resolve(r):
-        while parent[r] != r:
-            parent[r] = parent[parent[r]]
-            r = parent[r]
-        return r
-
-    return {i: resolve(r) for i, r in label.items()}
+    return {i: find(parent, r) for i, r in label.items()}
 
 
 def close_rings(verts, weighted, areas, edges, label, angle=CREASE_ANGLE, forced=None):

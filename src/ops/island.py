@@ -28,6 +28,32 @@ def selected_faces(mesh):
     return {fi for fi in selected if uv_select.data[fi].value}
 
 
+def queue_fix(obj, job, name, path, vertex_count, props):
+    """Queue an exported patch on the manager with the job that puts the
+    engine's result back into obj. A fix carries none of the material or
+    vertex group state a full unwrap does, the input mesh keeps its own."""
+    manager.input[job] = obj
+    manager.add(
+        Unwrap(
+            name=name,
+            input_name=name,
+            path=path,
+            guide_path=None,
+            edge_path=None,
+            jobs=(None, None, None, None, job),
+            origin=obj.matrix_world.translation,
+            materials=[],
+            added_edges=[],
+            vertex_count=vertex_count,
+            material_indices=[],
+            vertex_groups={},
+            shade_smooth=False,
+            merge_cuts=False,
+            maintain_mode=props.maintain_mode,
+        )
+    )
+
+
 def target_islands(obj):
     """Uv islands under the selected faces, each with its uv bounds and the uv
     area it covers."""
@@ -85,27 +111,7 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
     bpy.data.objects.remove(temp, do_unlink=True)
     bpy.data.meshes.remove(island_mesh)
 
-    job = IslandUVs(list(group), bbox, area)
-    manager.input[job] = obj
-    manager.add(
-        Unwrap(
-            name=name,
-            input_name=name,
-            path=path,
-            guide_path=None,
-            edge_path=None,
-            jobs=(None, None, None, None, job),
-            origin=obj.matrix_world.translation,
-            materials=[],
-            added_edges=[],
-            vertex_count=vertex_count,
-            material_indices=[],
-            vertex_groups={},
-            shade_smooth=False,
-            merge_cuts=False,
-            maintain_mode=props.maintain_mode,
-        )
-    )
+    queue_fix(obj, IslandUVs(list(group), bbox, area), name, path, vertex_count, props)
 
 
 def target_areas(obj, rings):
@@ -311,27 +317,7 @@ def queue_area(obj, patch, border, k, input_path, props, nocut, snapshot):
     vertex_count = len(area_mesh.vertices)
     bpy.data.meshes.remove(area_mesh)
 
-    job = AreaUVs(patch, pins, snapshot)
-    manager.input[job] = obj
-    manager.add(
-        Unwrap(
-            name=name,
-            input_name=name,
-            path=path,
-            guide_path=None,
-            edge_path=None,
-            jobs=(None, None, None, None, job),
-            origin=obj.matrix_world.translation,
-            materials=[],
-            added_edges=[],
-            vertex_count=vertex_count,
-            material_indices=[],
-            vertex_groups={},
-            shade_smooth=False,
-            merge_cuts=False,
-            maintain_mode=props.maintain_mode,
-        )
-    )
+    queue_fix(obj, AreaUVs(patch, pins, snapshot), name, path, vertex_count, props)
 
 
 def validate_engine(op, props):

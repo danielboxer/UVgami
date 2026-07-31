@@ -77,7 +77,6 @@ def reroute_seams(path, edge_path):
 
             # get linked texture coordinates
             for v_idx, vertex in enumerate(v):
-
                 # if the vertex key isn't in dictionary yet
                 if vertex not in v_vt:
                     # set it to empty array (unknown size)

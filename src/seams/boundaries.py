@@ -8,7 +8,7 @@ straighten and settle onto sharp edges."""
 import collections
 
 from .cuts import CREASED_RELIEF, cut_path, path_cost
-from .mesh import face_keys, norm, pair, turn_angle
+from .mesh import face_keys, find, norm, pair, turn_angle
 from .regions import CREASE_ANGLE
 
 
@@ -255,12 +255,6 @@ def reroute_boundaries(verts, faces, areas, edges, label, relief, forced=None):
         union = {f for f in label if label[f] in p}
         parent = {f: f for f in union}
 
-        def find(x):
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]
-                x = parent[x]
-            return x
-
         for f in union:
             for key in face_keys(faces[f]):
                 if key in new:
@@ -273,12 +267,12 @@ def reroute_boundaries(verts, faces, areas, edges, label, relief, forced=None):
                     continue
                 if label[f] != label[g] and key not in run_set:
                     continue
-                fa, fb = find(f), find(g)
+                fa, fb = find(parent, f), find(parent, g)
                 if fa != fb:
                     parent[fa] = fb
         comps = collections.defaultdict(list)
         for f in union:
-            comps[find(f)].append(f)
+            comps[find(parent, f)].append(f)
         if len(comps) != 2:
             return
         one, two = comps.values()

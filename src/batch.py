@@ -1,5 +1,3 @@
-# no bpy imports here so the classes stay testable outside blender
-
 import collections
 import subprocess
 import threading
