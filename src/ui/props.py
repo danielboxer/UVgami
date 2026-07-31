@@ -80,6 +80,18 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         max=120,
         default=0,
     )
+    area_expand: bpy.props.IntProperty(
+        name="",
+        description=(
+            "Grow the selected area by this many face rings before fixing."
+            " The border of the grown area is what stays in place, so"
+            " expanding lets the selection itself reshape and gives cuts"
+            " room to land"
+        ),
+        min=0,
+        max=10,
+        default=1,
+    )
     use_cuts: bpy.props.BoolProperty(
         name="",
         description=("Cut the input mesh into pieces. This will speed up the unwrap"),

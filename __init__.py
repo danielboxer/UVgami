@@ -28,6 +28,11 @@ from .src.ops.guides import (
     UVGAMI_OT_clear_draw,
 )
 from .src.ops.uv import UVGAMI_OT_pack
+from .src.ops.island import (
+    UVGAMI_OT_recut_area,
+    UVGAMI_OT_relax_area,
+    UVGAMI_OT_unwrap_island,
+)
 from .src.ops.misc import (
     UVGAMI_OT_expand,
     UVGAMI_OT_reset_settings,
@@ -48,6 +53,7 @@ from .src.ui.panels import (
     UVGAMI_PT_speed,
     UVGAMI_PT_guides,
     UVGAMI_PT_symmetry,
+    UVGAMI_PT_island_uv,
     UVGAMI_PT_grid,
     UVGAMI_PT_pack,
     UVGAMI_PT_misc,
@@ -87,6 +93,9 @@ classes = (
     UVGAMI_OT_exit_draw,
     UVGAMI_OT_clear_draw,
     UVGAMI_OT_pack,
+    UVGAMI_OT_unwrap_island,
+    UVGAMI_OT_recut_area,
+    UVGAMI_OT_relax_area,
     UVGAMI_OT_cancel,
     UVGAMI_OT_remove_grid,
     UVGAMI_OT_view_unwrap,
@@ -97,6 +106,7 @@ classes = (
     UVGAMI_PT_main,
     UVGAMI_PT_guides,
     UVGAMI_PT_symmetry,
+    UVGAMI_PT_island_uv,
     UVGAMI_PT_speed,
     UVGAMI_PT_grid,
     UVGAMI_PT_pack,

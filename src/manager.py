@@ -418,7 +418,7 @@ class UnwrapManager:
             input_mesh = self.input[unwrap.transfer_uvs_job]
             # replace output with input in pack list before finish deletes output
             pack_replaced = False
-            if should_pack(props):
+            if should_pack(props) and unwrap.transfer_uvs_job.repack_input:
                 for i, obj in enumerate(self._pack_output_objects):
                     if obj == output:
                         self._pack_output_objects[i] = input_mesh
@@ -530,6 +530,12 @@ class UnwrapManager:
                 # will be empty
                 if isinstance(job, Join):
                     found_job = job
+
+        # a failed area fix may have pre-repaired the patch before the engine
+        # ran, put the old uvs back
+        job = unwrap.transfer_uvs_job
+        if hasattr(job, "restore"):
+            job.restore(self.input[job])
 
         # remove from running
         if unwrap in self._running:
@@ -645,6 +651,10 @@ class UnwrapManager:
         unwrap.release_engine()
         self.remove_unwrap(unwrap)
         unwrap.cleanup()
+        # a cancelled area fix keeps its old uvs, not the flipped pre-repair
+        job = unwrap.transfer_uvs_job
+        if hasattr(job, "restore"):
+            job.restore(self.input[job])
         self.exit_viewer = True
         # update 3d view to remove progress bar
         bpy.context.view_layer.objects.active = bpy.context.view_layer.objects.active

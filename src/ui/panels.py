@@ -332,6 +332,29 @@ class UVGAMI_PT_grid(bpy.types.Panel):
         box.prop(props, "auto_grid")
 
 
+class UVGAMI_PT_island_uv(bpy.types.Panel):
+    bl_label = "UVgami"
+    bl_space_type = "IMAGE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "UVgami"
+
+    def draw(self, context):
+        box = self.layout.box()
+
+        col = box.column()
+        col.scale_y = 1.5
+        col.operator("uvgami.unwrap_island", icon="UV")
+        col.operator("uvgami.recut_area", icon="UV_FACESEL")
+        col.operator("uvgami.relax_area", icon="UV_VERTEXSEL")
+
+        row = box.row()
+        row.label(icon="PROP_ON", text="Expand Area")
+        row.prop(context.scene.uvgami, "area_expand", text="")
+
+        if context.mode != "EDIT_MESH":
+            box.label(text="Select faces in Edit Mode", icon="INFO")
+
+
 class UVGAMI_PT_pack(bpy.types.Panel):
     bl_label = "Pack"
     bl_space_type = "VIEW_3D"
