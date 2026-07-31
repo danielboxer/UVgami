@@ -1,4 +1,7 @@
+import math
+import os
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -102,6 +105,34 @@ def test_run_engine_failure(triangle, tmp_path, fake_engine, monkeypatch):
     assert error.value.exit_code == 4
 
 
+def test_run_timeout_kills_the_engine(triangle, tmp_path, fake_engine, monkeypatch):
+    class HangingProcess:
+        """Blocks in the stdout loop until something kills it, like a stuck engine."""
+
+        def __init__(self, argv, **kwargs):
+            self.returncode = 1
+            self.killed = threading.Event()
+            self.stdout = self._lines()
+
+        def _lines(self):
+            assert self.killed.wait(10), "the timer never killed the engine"
+            yield from ()
+
+        def kill(self):
+            self.killed.set()
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr(subprocess, "Popen", HangingProcess)
+    with pytest.raises(UnwrapError) as error:
+        optcuts.run(
+            triangle, tmp_path / "out.obj", "medium", False, None, 3, fake_engine, 0.05
+        )
+    assert error.value.exit_code == 4
+    assert "timed out" in str(error.value)
+
+
 def test_run_output_missing_uvs(triangle, tmp_path, fake_engine, monkeypatch):
     popen_recorder(monkeypatch, output_text="v 0 0 0\nf 1 1 1\n")
     with pytest.raises(UnwrapError) as error:
@@ -125,3 +156,174 @@ def test_optcuts_smoke(cube, tmp_path):
     text = output.read_text()
     assert "vt " in text
     assert "f " in text
+
+
+def _write_bump_patch(path, n=12, height=0.3, width=0.05):
+    """A grid patch with a gaussian bump and its flat grid as the uv map, so
+    the interior is stretched but the border uvs are exact. vt indices mirror
+    v indices, the layout the fix area export writes."""
+    verts = []
+    border = []
+    for j in range(n + 1):
+        for i in range(n + 1):
+            x, y = i / n, j / n
+            z = height * math.exp(-((x - 0.5) ** 2 + (y - 0.5) ** 2) / width)
+            verts.append((x, y, z))
+            if i in (0, n) or j in (0, n):
+                border.append(j * (n + 1) + i)
+    faces = []
+    for j in range(n):
+        for i in range(n):
+            a = j * (n + 1) + i
+            faces.append((a, a + 1, a + n + 2))
+            faces.append((a, a + n + 2, a + n + 1))
+    with path.open("w") as f:
+        for x, y, z in verts:
+            f.write(f"v {x} {y} {z}\n")
+        for x, y, _ in verts:
+            f.write(f"vt {x} {y}\n")
+        for face in faces:
+            f.write("f " + " ".join(f"{c + 1}/{c + 1}" for c in face) + "\n")
+    (path.parent / f"{path.stem}_fixed").write_text(",".join(map(str, border)))
+    return verts, faces, border
+
+
+@pytest.mark.smoke
+@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
+def test_optcuts_pinned_border(tmp_path):
+    """A _fixed sidecar must hold the listed verts: after undoing the output
+    normalization, the border uvs come back unchanged."""
+    input_dir = tmp_path / "input"
+    out_dir = tmp_path / "output"
+    input_dir.mkdir()
+    out_dir.mkdir()
+    obj = input_dir / "patch.obj"
+    verts, faces, border = _write_bump_patch(obj)
+
+    subprocess.run(
+        [str(BUNDLED), "-i", str(obj), "-o", str(out_dir) + os.sep],
+        check=True,
+        timeout=300,
+        capture_output=True,
+    )
+
+    uvs_out = []
+    faces_out = []
+    for line in (out_dir / "patch.obj").read_text().splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] == "vt":
+            uvs_out.append((float(parts[1]), float(parts[2])))
+        elif parts[0] == "f":
+            faces_out.append(tuple(int(c.split("/")[1]) - 1 for c in parts[1:]))
+    assert len(faces_out) == len(faces)
+
+    # face order survives the engine, map input vts to output vts through it
+    vt_map = {}
+    for face_in, face_out in zip(faces, faces_out):
+        for ti, to in zip(face_in, face_out):
+            vt_map[ti] = to
+
+    # the output is uniformly scaled into the unit box, undo it via two pins
+    pin_pairs = [((verts[t][0], verts[t][1]), uvs_out[vt_map[t]]) for t in border]
+    lo = min(pin_pairs, key=lambda p: p[0][0])
+    hi = max(pin_pairs, key=lambda p: p[0][0])
+    scale = (hi[0][0] - lo[0][0]) / (hi[1][0] - lo[1][0])
+    du = lo[0][0] - scale * lo[1][0]
+    dv = lo[0][1] - scale * lo[1][1]
+    residual = max(
+        max(abs(scale * out[0] + du - old[0]), abs(scale * out[1] + dv - old[1]))
+        for old, out in pin_pairs
+    )
+    assert residual < 1e-6
+
+
+@pytest.mark.smoke
+@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
+def test_optcuts_nocut_relaxes_without_cutting(tmp_path):
+    """A nocut line in the _fixed sidecar must keep the topology exactly:
+    no new uv verts, pins held, and the stretched interior still moves. The
+    bump is steep enough that the default pinned run does cut it."""
+    input_dir = tmp_path / "input"
+    out_dir = tmp_path / "output"
+    input_dir.mkdir()
+    out_dir.mkdir()
+    obj = input_dir / "patch.obj"
+    verts, faces, border = _write_bump_patch(obj, n=20, height=1.5, width=0.01)
+    sidecar = input_dir / "patch_fixed"
+    sidecar.write_text(sidecar.read_text() + "\nnocut")
+
+    subprocess.run(
+        [str(BUNDLED), "-i", str(obj), "-o", str(out_dir) + os.sep],
+        check=True,
+        timeout=300,
+        capture_output=True,
+    )
+
+    uvs_out = []
+    faces_out = []
+    for line in (out_dir / "patch.obj").read_text().splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] == "vt":
+            uvs_out.append((float(parts[1]), float(parts[2])))
+        elif parts[0] == "f":
+            faces_out.append(tuple(int(c.split("/")[1]) - 1 for c in parts[1:]))
+    assert len(faces_out) == len(faces)
+    # a cut duplicates the uv verts along it
+    assert len(uvs_out) == len(verts)
+
+    vt_map = {}
+    for face_in, face_out in zip(faces, faces_out):
+        for ti, to in zip(face_in, face_out):
+            vt_map[ti] = to
+
+    pin_pairs = [((verts[t][0], verts[t][1]), uvs_out[vt_map[t]]) for t in border]
+    lo = min(pin_pairs, key=lambda p: p[0][0])
+    hi = max(pin_pairs, key=lambda p: p[0][0])
+    scale = (hi[0][0] - lo[0][0]) / (hi[1][0] - lo[1][0])
+    du = lo[0][0] - scale * lo[1][0]
+    dv = lo[0][1] - scale * lo[1][1]
+    residual = max(
+        max(abs(scale * out[0] + du - old[0]), abs(scale * out[1] + dv - old[1]))
+        for old, out in pin_pairs
+    )
+    assert residual < 1e-6
+
+    # the flat grid map is distorted over the bump, relaxing must move it
+    interior = set(range(len(verts))) - set(border)
+    moved = max(
+        max(
+            abs(scale * uvs_out[vt_map[t]][0] + du - verts[t][0]),
+            abs(scale * uvs_out[vt_map[t]][1] + dv - verts[t][1]),
+        )
+        for t in interior
+    )
+    assert moved > 1e-3
+
+
+@pytest.mark.smoke
+@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
+def test_optcuts_pinned_rejects_broken_map(tmp_path):
+    """Pins on a map the engine cannot keep must exit 110, never fall through
+    to the cut-to-disk relayout that would move the pinned border."""
+    input_dir = tmp_path / "input"
+    (tmp_path / "output").mkdir()
+    input_dir.mkdir()
+    obj = input_dir / "patch.obj"
+    verts, _, _ = _write_bump_patch(obj)
+
+    # drag one interior uv far away, inverting its faces
+    lines = obj.read_text().splitlines()
+    center = len(verts) // 2
+    lines[len(verts) + center] = "vt -5 -5"
+    obj.write_text("\n".join(lines) + "\n")
+
+    ran = subprocess.run(
+        [str(BUNDLED), "-i", str(obj), "-o", str(tmp_path / "output") + os.sep],
+        timeout=300,
+        capture_output=True,
+    )
+    assert ran.returncode == 110

@@ -141,6 +141,8 @@ class TriMesh {
                         bool toBound = true) const;
     bool isBoundaryVert(int vI) const;
 
+    bool cutLeavesPinlessPiece(const std::vector<int> &path) const;
+
     void compute2DInwardNormal(int vI, Eigen::RowVector2d &normal) const;
 
     void splitEdgeOnBoundary(const std::pair<int, int> &edge,

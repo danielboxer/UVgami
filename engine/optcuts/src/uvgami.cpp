@@ -20,8 +20,6 @@
 #include <igl/harmonic.h>
 #include <igl/arap.h>
 #include <igl/avg_edge_length.h>
-#include <igl/opengl/glfw/Viewer.h>
-#include <igl/png/writePNG.h>
 #include <igl/euler_characteristic.h>
 #include <igl/edge_lengths.h>
 #include <igl/is_vertex_manifold.h>
@@ -45,6 +43,11 @@ std::vector<uvgami::Energy *> energyTerms;
 std::vector<double> energyParams;
 
 bool rand1PInitCut = false;
+// pinned runs can chase an unreachable distortion bound forever, capped below
+bool pinnedMode = false;
+// relax the kept map without any split/merge, stops at the first stationary point
+bool noCutMode = false;
+int stationaryCount = 0;
 double lambda_init = 0.999;
 bool optimization_on = false;
 int iterNum = 0;
@@ -73,25 +76,9 @@ int inSplitTotalAmt;
 std::string outputFolderPath;
 std::string meshName;
 
-// visualization
-bool headlessMode = false;
-igl::opengl::glfw::Viewer viewer_;
 const int channel_initial = 0;
 const int channel_result = 1;
-const int channel_findExtrema = 2;
-int viewChannel = channel_result;
-bool viewUV = true; // view UV or 3D model
-double texScale = 1.0;
-bool showSeam = true;
-Eigen::MatrixXd seamColor;
-bool showTexture = true; // show checkerboard
-bool isLighting = false;
-bool showFracTail = true;
-float fracTailSize = 15.0f;
 bool canSaveMesh = false;
-std::string infoName = "";
-bool isCapture3D = false;
-int capture3DI = 0;
 bool mute = true;
 std::atomic<bool> forceQuit = false;
 std::atomic<bool> forceQuitSave = false;
@@ -131,158 +118,21 @@ void proceedOptimization(int proceedNum) {
     }
 }
 
-void updateViewerData_meshEdges(void) {
-    viewer_.data().show_lines = !showSeam;
-    viewer_.data().set_edges(Eigen::MatrixXd(0, 3), Eigen::MatrixXi(0, 2),
-                             Eigen::RowVector3d(0.0, 0.0, 0.0));
-    if (showSeam) {
-        // only draw air mesh edges
-        if (optimizer->isScaffolding() && viewUV &&
-            (viewChannel == channel_result)) {
-            const Eigen::MatrixXd V_airMesh =
-                optimizer->getAirMesh().V * texScale;
-            for (int triI = 0; triI < optimizer->getAirMesh().F.rows();
-                 triI++) {
-                const Eigen::RowVector3i &triVInd =
-                    optimizer->getAirMesh().F.row(triI);
-                for (int eI = 0; eI < 3; eI++)
-                    viewer_.data().add_edges(
-                        V_airMesh.row(triVInd[eI]),
-                        V_airMesh.row(triVInd[(eI + 1) % 3]),
-                        Eigen::RowVector3d::Zero());
-            }
-        }
-    }
-}
-
-void updateViewerData_seam(Eigen::MatrixXd &V, Eigen::MatrixXi &F,
-                           Eigen::MatrixXd &UV) {
-    if (showSeam) {
-        const Eigen::VectorXd cohIndices =
-            Eigen::VectorXd::LinSpaced(triSoup[viewChannel]->cohE.rows(), 0,
-                                       triSoup[viewChannel]->cohE.rows() - 1);
-        Eigen::MatrixXd color;
-        color.resize(cohIndices.size(), 3);
-        color.rowwise() = Eigen::RowVector3d(1.0, 0.5, 0.0);
-
-        seamColor.resize(0, 3);
-        double seamThickness =
-            (viewUV ? (triSoup[viewChannel]->virtualRadius * 0.0007 /
-                       viewer_.core().camera_zoom * texScale)
-                    : (triSoup[viewChannel]->virtualRadius * 0.006));
-        for (int eI = 0; eI < triSoup[viewChannel]->cohE.rows(); eI++) {
-            const Eigen::RowVector4i &cohE = triSoup[viewChannel]->cohE.row(eI);
-            const auto finder = triSoup[viewChannel]->edge2Tri.find(
-                std::pair<int, int>(cohE[0], cohE[1]));
-            assert(finder != triSoup[viewChannel]->edge2Tri.end());
-            const Eigen::RowVector3d &sn =
-                triSoup[viewChannel]->triNormal.row(finder->second);
-
-            // seam edge
-            uvgami::IglUtils::addThickEdge(
-                V, F, UV, seamColor, color.row(eI), V.row(cohE[0]),
-                V.row(cohE[1]), seamThickness, texScale, !viewUV, sn);
-            if (viewUV)
-                uvgami::IglUtils::addThickEdge(
-                    V, F, UV, seamColor, color.row(eI), V.row(cohE[2]),
-                    V.row(cohE[3]), seamThickness, texScale, !viewUV, sn);
-        }
-    }
-}
-
-void updateViewerData_distortion(const std::string &meshName) {
-    Eigen::MatrixXd color_distortionVis;
+// per-iteration reporting: emits the progress line the addon parses and serves
+// the snapshot command
+void reportProgress(void) {
     Eigen::VectorXd distortionPerElem;
-    energyTerms[0]->getEnergyValPerElem(*triSoup[viewChannel],
+    energyTerms[0]->getEnergyValPerElem(*triSoup[channel_result],
                                         distortionPerElem, true);
-    uvgami::IglUtils::mapScalarToColor(meshName, distortionPerElem,
-                                       color_distortionVis, 4.0, 8.5, 0);
-
-    if (optimizer->isScaffolding() && viewUV && (viewChannel == channel_result))
-        optimizer->getScaffold().augmentFColorwithAirMesh(color_distortionVis);
-
-    if (showSeam) {
-        color_distortionVis.conservativeResize(
-            color_distortionVis.rows() + seamColor.rows(), 3);
-        color_distortionVis.bottomRows(seamColor.rows()) = seamColor;
-    }
-
-    viewer_.data().set_colors(color_distortionVis);
-}
-
-void updateViewerData(const std::string &meshName) {
-    Eigen::MatrixXd UV_vis = triSoup[viewChannel]->V * texScale;
-    Eigen::MatrixXi F_vis = triSoup[viewChannel]->F;
-    if (viewUV) {
-        if (optimizer->isScaffolding() && (viewChannel == channel_result)) {
-            optimizer->getScaffold().augmentUVwithAirMesh(UV_vis, texScale);
-            optimizer->getScaffold().augmentFwithAirMesh(F_vis);
-        }
-        UV_vis.conservativeResize(UV_vis.rows(), 3);
-        UV_vis.rightCols(1) = Eigen::VectorXd::Zero(UV_vis.rows());
-        viewer_.core().align_camera_center(UV_vis, F_vis);
-        updateViewerData_seam(UV_vis, F_vis, UV_vis);
-
-        if ((UV_vis.rows() != viewer_.data().V.rows()) ||
-            (F_vis.rows() != viewer_.data().F.rows())) {
-            viewer_.data().clear();
-        }
-        viewer_.data().set_mesh(UV_vis, F_vis);
-        viewer_.data().show_texture = false;
-        viewer_.core().lighting_factor = 0.0;
-
-        updateViewerData_meshEdges();
-
-        viewer_.data().set_points(Eigen::MatrixXd::Zero(0, 3),
-                                  Eigen::RowVector3d(0.0, 0.0, 0.0));
-        if (showFracTail) {
-            for (const auto &tailVI : triSoup[viewChannel]->fracTail)
-                viewer_.data().add_points(UV_vis.row(tailVI),
-                                          Eigen::RowVector3d(0.0, 0.0, 0.0));
-        }
-    } else {
-        Eigen::MatrixXd V_vis = triSoup[viewChannel]->V_rest;
-        viewer_.core().align_camera_center(V_vis, F_vis);
-        updateViewerData_seam(V_vis, F_vis, UV_vis);
-
-        if ((V_vis.rows() != viewer_.data().V.rows()) ||
-            (UV_vis.rows() != viewer_.data().V_uv.rows()) ||
-            (F_vis.rows() != viewer_.data().F.rows())) {
-            viewer_.data().clear();
-        }
-        viewer_.data().set_mesh(V_vis, F_vis);
-
-        if (showTexture) {
-            viewer_.data().set_uv(UV_vis);
-            viewer_.data().show_texture = true;
-        } else {
-            viewer_.data().show_texture = false;
-        }
-
-        if (isLighting) {
-            viewer_.core().lighting_factor = 1.0;
-        } else {
-            viewer_.core().lighting_factor = 0.0;
-        }
-        updateViewerData_meshEdges();
-
-        viewer_.data().set_points(Eigen::MatrixXd::Zero(0, 3),
-                                  Eigen::RowVector3d(0.0, 0.0, 0.0));
-        if (showFracTail) {
-            for (const auto &tailVI : triSoup[viewChannel]->fracTail)
-                viewer_.data().add_points(V_vis.row(tailVI),
-                                          Eigen::RowVector3d(0.0, 0.0, 0.0));
-        }
-    }
-    updateViewerData_distortion(meshName);
-    viewer_.data().compute_normals();
+    uvgami::IglUtils::reportDistortion(distortionPerElem, 4.0, 8.5);
 
     if (snapshot) {
         triSoup[channel_result]->saveAsMesh(F, true);
         snapshot = false;
     }
 }
-bool postDrawFunc(igl::opengl::glfw::Viewer &viewer) {
+
+bool postDrawFunc(void) {
     if (iterNum == 0) {
         optimization_on = !optimization_on;
         if (optimization_on && converged)
@@ -291,8 +141,6 @@ bool postDrawFunc(igl::opengl::glfw::Viewer &viewer) {
     if (forceQuit) {
         canSaveMesh = forceQuitSave;
         outerLoopFinished = true;
-        isCapture3D = true;
-        capture3DI = 2;
     }
     if (canSaveMesh) {
         // save mesh
@@ -304,18 +152,8 @@ bool postDrawFunc(igl::opengl::glfw::Viewer &viewer) {
         canSaveMesh = false;
     }
 
-    if (outerLoopFinished) {
-        if (!isCapture3D) {
-            viewer.core().is_animating = true;
-            isCapture3D = true;
-        } else {
-            if (capture3DI < 2) {
-                capture3DI++;
-            } else {
-                return true;
-            }
-        }
-    }
+    if (outerLoopFinished)
+        return true;
 
     return false;
 }
@@ -372,6 +210,16 @@ int computeBestCand(const std::vector<std::pair<double, double>> &energyChanges,
     }
 
     return id_minEChange;
+}
+
+// with a pinned border there may be no boundary-split candidates at all, and
+// the lambda loops below would compare against DBL_MAX sentinels forever
+bool hasValidCand(const std::vector<std::pair<double, double>> &energyChanges) {
+    for (const auto &candI : energyChanges) {
+        if ((candI.first != DBL_MAX) && (candI.second != DBL_MAX))
+            return true;
+    }
+    return false;
 }
 
 bool checkCand(const std::vector<std::pair<double, double>> &energyChanges) {
@@ -523,6 +371,14 @@ bool updateLambda_stationaryV(bool cancelMomentum = true,
                 // iterNum_bestFeasible << std::endl;
             }
             return false;
+        } else if (oscillate) {
+            // no feasible config yet, so there is nothing to roll back to,
+            // but revisiting the same stationary state means the split/merge
+            // pair is cycling and spinning further cannot reach the bound.
+            // give it a few chances to escape, then keep the current map
+            static int oscillated_infeasible = 0;
+            if (++oscillated_infeasible >= 3)
+                return false;
         } else {
             configs_stationaryV[E_se].emplace_back(
                 std::pair<double, double>(lambda, E_SD));
@@ -572,11 +428,19 @@ bool updateLambda_stationaryV(bool cancelMomentum = true,
             // DISABLE logFile << "curUpdated = " << energyParams[0] << ",
             // increase" << std::endl;
             if ((!energyChanges_merge.empty()) &&
+                hasValidCand(energyChanges_bSplit) &&
                 (computeOptPicked(energyChanges_bSplit, energyChanges_merge,
                                   1.0 - energyParams[0]) == 1)) {
-                // still picking merge
+                // still picking merge. the dual update saturates in double
+                // precision (x/(1+x) sticks at 1), and with a pinned border
+                // the pick can stay merge at every lambda, so break at the
+                // fixed point instead of spinning
+                double lambda_last = -1.0;
                 do {
                     energyParams[0] = updateLambda(measure_bound);
+                    if (energyParams[0] == lambda_last)
+                        break;
+                    lambda_last = energyParams[0];
                 } while (
                     (computeOptPicked(energyChanges_bSplit, energyChanges_merge,
                                       1.0 - energyParams[0]) == 1));
@@ -597,14 +461,24 @@ bool updateLambda_stationaryV(bool cancelMomentum = true,
                     energyChanges_bSplit, 1.0 - energyParams[0], eDec_b);
                 int id_pickingISplit = computeBestCand(
                     energyChanges_iSplit, 1.0 - energyParams[0], eDec_i);
+                // break at the dual update's fixed point, pins can leave no
+                // split profitable at any lambda
+                double lambda_last = -1.0;
                 while ((eDec_b > 0.0) && (eDec_i > 0.0)) {
+                    if (energyParams[0] == lambda_last)
+                        break;
+                    lambda_last = energyParams[0];
                     energyParams[0] = updateLambda(measure_bound);
                     id_pickingBSplit = computeBestCand(
                         energyChanges_bSplit, 1.0 - energyParams[0], eDec_b);
                     id_pickingISplit = computeBestCand(
                         energyChanges_iSplit, 1.0 - energyParams[0], eDec_i);
                 }
-                if (eDec_b <= 0.0) {
+                if (id_pickingBSplit < 0 && id_pickingISplit < 0) {
+                    // no pickable split at all, widen the filter instead
+                    reQuery = true;
+                } else if ((id_pickingISplit < 0) || (eDec_b <= 0.0) ||
+                           ((id_pickingBSplit >= 0) && (eDec_b <= eDec_i))) {
                     opType_queried = 0;
                     path_queried = paths_bSplit[id_pickingBSplit];
                     newVertPos_queried = newVertPoses_bSplit[id_pickingBSplit];
@@ -639,11 +513,17 @@ bool updateLambda_stationaryV(bool cancelMomentum = true,
             // DISABLE logFile << "curUpdated = " << energyParams[0] << ",
             // decrease" << std::endl;
             //!!! also account for iSplit for this switch?
-            if (computeOptPicked(energyChanges_bSplit, energyChanges_merge,
+            if (hasValidCand(energyChanges_bSplit) &&
+                computeOptPicked(energyChanges_bSplit, energyChanges_merge,
                                  1.0 - energyParams[0]) == 0) {
-                // still picking split
+                // still picking split, break at the dual update's fixed point
+                // (see the merge loop above)
+                double lambda_last = -1.0;
                 do {
                     energyParams[0] = updateLambda(measure_bound);
+                    if (energyParams[0] == lambda_last)
+                        break;
+                    lambda_last = energyParams[0];
                 } while (computeOptPicked(energyChanges_bSplit,
                                           energyChanges_merge,
                                           1.0 - energyParams[0]) == 0);
@@ -656,10 +536,26 @@ bool updateLambda_stationaryV(bool cancelMomentum = true,
             assert(!energyChanges_merge.empty());
             int id_pickingMerge = computeBestCand(
                 energyChanges_merge, 1.0 - energyParams[0], eDec_m);
+            // break at the dual update's fixed point (see the merge loop in
+            // the increase branch)
+            double lambda_last = -1.0;
             while (eDec_m > 0.0) {
+                if (energyParams[0] == lambda_last)
+                    break;
+                lambda_last = energyParams[0];
                 energyParams[0] = updateLambda(measure_bound);
                 id_pickingMerge = computeBestCand(
                     energyChanges_merge, 1.0 - energyParams[0], eDec_m);
+            }
+            if (id_pickingMerge < 0) {
+                // a merge can be listed but unpickable (partial DBL_MAX
+                // sentinel), treat it like the noOp case above
+                energyParams[0] = 1.0 - eps_lambda;
+                optimizer->updateEnergyData(true, false, false);
+                if (iterNum_bestFeasible != iterNum)
+                    optimizer->setConfig(triSoup_bestFeasible, iterNum,
+                                         optimizer->getTopoIter());
+                return false;
             }
             opType_queried = 2;
             path_queried = paths_merge[id_pickingMerge];
@@ -682,20 +578,27 @@ bool updateLambda_stationaryV(bool cancelMomentum = true,
     return true;
 }
 
-void converge_preDrawFunc(igl::opengl::glfw::Viewer &viewer) {
-    updateViewerData(meshName);
+void converge_preDrawFunc(void) {
+    reportProgress();
     optimization_on = false;
-    viewer.core().is_animating = false;
     // std::cout << "optimization converged, in " << secPast << "s." <<
     // std::endl;
     outerLoopFinished = true;
 }
 
-bool preDrawFunc(igl::opengl::glfw::Viewer &viewer) {
+bool preDrawFunc(void) {
     if (optimization_on) {
-        while (!converged)
+        while (!converged) {
             proceedOptimization(1);
-        updateViewerData(meshName);
+            // check per iteration, not per phase: a stop or viewer request
+            // during a long solve must not wait for convergence
+            if (forceQuit)
+                // postDrawFunc saves the current map and exits
+                return false;
+            if (snapshot)
+                reportProgress();
+        }
+        reportProgress();
 
         // give postDraw option to save mesh
         canSaveMesh = true;
@@ -713,20 +616,52 @@ bool preDrawFunc(igl::opengl::glfw::Viewer &viewer) {
         if (!optimizer->isScaffolding() && rand1PInitCut)
             optimizer->setScaffolding(true);
 
+        // everything past this point queries cuts, a nocut run is done at the
+        // first stationary point of the kept map
+        if (noCutMode) {
+            converge_preDrawFunc();
+            return false;
+        }
+
         double E_se;
         triSoup[channel_result]->computeSeamSparsity(E_se);
         E_se /= triSoup[channel_result]->virtualRadius;
         const double E_SD = optimizer->getLastEnergyVal(true) / energyParams[0];
 
-        // std::cout << iterNum << ": " << E_SD << " " << E_se << " " <<
-        // triSoup[channel_result]->V_rest.rows() << std::endl;
-        //  DISABLE logFile << iterNum << ": " << E_SD << " " << E_se << " " <<
-        //  triSoup[channel_result]->V_rest.rows() << std::endl;
+        if (pinnedMode && ++stationaryCount > 500) {
+            converge_preDrawFunc();
+            return false;
+        }
+
+        // a queued split the line search rejects leaves the map untouched,
+        // the solve re-converges to the same stationary state and the same
+        // op gets picked again, with lambda creeping one dual step per round
+        // (each step is exactly eps_lambda, so oscillation detection can
+        // never see a revisit). unchanged energies and vertex count mean
+        // nothing is moving, stop with the map we have. E_SD wobbles in its
+        // last bits with the lambda renormalization, so compare with a
+        // tolerance far below any real step
+        static int noProgressCount = 0;
+        static double E_se_last = -1.0, E_SD_last = -1.0;
+        static Eigen::Index V_last = -1;
+        if (std::abs(E_se - E_se_last) <= 1.0e-9 * std::abs(E_se_last) &&
+            std::abs(E_SD - E_SD_last) <= 1.0e-9 * std::abs(E_SD_last) &&
+            triSoup[channel_result]->V_rest.rows() == V_last) {
+            if (++noProgressCount >= 50) {
+                converge_preDrawFunc();
+                return false;
+            }
+        } else {
+            noProgressCount = 0;
+            E_se_last = E_se;
+            E_SD_last = E_SD;
+            V_last = triSoup[channel_result]->V_rest.rows();
+        }
 
         // continue to split boundary
         if (!updateLambda_stationaryV()) {
             // oscillation detected
-            converge_preDrawFunc(viewer);
+            converge_preDrawFunc();
         } else {
             // DISABLE logFile << "boundary op V " <<
             // triSoup[channel_result]->V_rest.rows() << std::endl;
@@ -744,21 +679,35 @@ bool preDrawFunc(igl::opengl::glfw::Viewer &viewer) {
                 } else {
                     if (!updateLambda_stationaryV(false, true)) {
                         // all converged
-                        converge_preDrawFunc(viewer);
+                        converge_preDrawFunc();
                     } else {
                         // split or merge after lambda update
                         if (reQuery) {
-                            filterExp_in +=
-                                std::log(2.0) / std::log(inSplitTotalAmt);
-                            filterExp_in = (std::min)(1.0, filterExp_in);
-                            while (!optimizer->createFracture(
-                                fracThres, false, topoLineSearch, true)) {
-                                filterExp_in +=
-                                    std::log(2.0) / std::log(inSplitTotalAmt);
-                                filterExp_in = (std::min)(1.0, filterExp_in);
-                            }
+                            bool found = false;
+                            do {
+                                // log(0) and log(1) would make this step 0 or
+                                // inf, a tiny pinned patch has 0 or 1 interior
+                                // candidates, so saturate outright
+                                if (inSplitTotalAmt >= 2) {
+                                    filterExp_in +=
+                                        std::log(2.0) /
+                                        std::log(inSplitTotalAmt);
+                                    filterExp_in =
+                                        (std::min)(1.0, filterExp_in);
+                                } else {
+                                    filterExp_in = 1.0;
+                                }
+                                found = optimizer->createFracture(
+                                    fracThres, false, topoLineSearch, true);
+                            } while (!found && filterExp_in < 1.0);
                             reQuery = false;
                             // TODO: set filtering param back?
+                            if (!found) {
+                                // a pinned border can leave nothing left to
+                                // split, stop at the best map found
+                                converge_preDrawFunc();
+                                return false;
+                            }
                         } else {
                             optimizer->createFracture(
                                 opType_queried, path_queried,
@@ -769,26 +718,6 @@ bool preDrawFunc(igl::opengl::glfw::Viewer &viewer) {
                     }
                 }
             }
-        }
-    } else {
-        if (isCapture3D && (capture3DI < 2)) {
-            // change view accordingly
-            double rotDeg =
-                ((capture3DI < 8) ? (M_PI_2 * (capture3DI / 2)) : M_PI_2);
-            Eigen::Vector3f rotAxis = Eigen::Vector3f::UnitY();
-            if ((capture3DI / 2) == 4) {
-                rotAxis = Eigen::Vector3f::UnitX();
-            } else if ((capture3DI / 2) == 5) {
-                rotAxis = -Eigen::Vector3f::UnitX();
-            }
-            viewer.core().trackball_angle =
-                Eigen::Quaternionf(Eigen::AngleAxisf(rotDeg, rotAxis));
-            viewChannel = channel_result;
-            viewUV = false;
-            showSeam = true;
-            isLighting = false;
-            showTexture = capture3DI % 2;
-            updateViewerData(meshName);
         }
     }
     return false;
@@ -809,8 +738,33 @@ static std::vector<float> split(const std::string &str, char sep) {
     return tokens;
 }
 
+// a chart is disk-topology when its euler characteristic is 1. imported UV
+// charts that aren't disks have to be cut before they can be flattened
+static std::vector<bool> chartDiskFlags(const Eigen::MatrixXi &F,
+                                        int n_components,
+                                        const Eigen::VectorXi &C) {
+    std::vector<std::set<int>> verts(n_components);
+    std::vector<std::set<std::pair<int, int>>> edges(n_components);
+    std::vector<int> faces(n_components, 0);
+    for (int triI = 0; triI < F.rows(); ++triI) {
+        int c = C[triI];
+        ++faces[c];
+        for (int i = 0; i < 3; ++i) {
+            int a = F(triI, i), b = F(triI, (i + 1) % 3);
+            verts[c].insert(a);
+            edges[c].insert(std::pair<int, int>(std::min(a, b), std::max(a, b)));
+        }
+    }
+    std::vector<bool> isDisk(n_components);
+    for (int c = 0; c < n_components; ++c) {
+        isDisk[c] = static_cast<int>(verts[c].size()) -
+                        static_cast<int>(edges[c].size()) + faces[c] ==
+                    1;
+    }
+    return isDisk;
+}
+
 int main(int argc, char *argv[]) {
-    int progMode = 100;
     std::string meshFileName;
     lambda_init = 0.999;
     std::filesystem::path inputFolderPath;
@@ -819,9 +773,6 @@ int main(int argc, char *argv[]) {
 
     try {
         TCLAP::CmdLine cmd("uvgami command line", ' ', "1.1.2");
-        TCLAP::ValueArg<uint32_t> programModeArg("p", "program_mode",
-                                                 "Program mode", false, 0,
-                                                 "unsigned integer", cmd);
         TCLAP::ValueArg<std::string> inputArg("i", "input", "Input mesh", true,
                                               "", "string", cmd);
         TCLAP::ValueArg<std::string> outputArg(
@@ -849,20 +800,6 @@ int main(int argc, char *argv[]) {
             outputFolderPath =
                 std::string(inputFolderPath.parent_path().u8string()) +
                 pathSeparator() + "output" + pathSeparator();
-        if (programModeArg.isSet())
-            progMode = programModeArg.getValue();
-        switch (progMode) {
-        case 10:
-            headlessMode = false;
-            break;
-        case 100:
-            headlessMode = true;
-            break;
-        default: {
-            std::cout << "Invalid program mode " << progMode << std::endl;
-            return 0;
-        }
-        }
         if (lambdaInitArg.isSet()) {
             lambda_init = lambdaInitArg.getValue();
             if (lambda_init < 0.0 || lambda_init >= 1.0)
@@ -909,65 +846,7 @@ int main(int argc, char *argv[]) {
     //    F = squareMesh.F;
 
     hasUV = !ignoreUV && (UV.rows() != 0);
-    if (hasUV) {
-        uvgami::TriMesh *temp = new uvgami::TriMesh(V, F, UV, FUV, false);
-        std::vector<std::vector<int>> bnd_all;
-        igl::boundary_loop(temp->F, bnd_all);
-        int UVGridDim = std::ceil(std::sqrt(bnd_all.size()));
-        // if (UVGridDim > 1)
-        //	std::cout << "Multi-chart bijective UV map needs to be
-        // validated." << std::endl;
-
-        bool hasInversion = !temp->checkInversion();
-        bool hasOverlap = uvgami::IglUtils::checkUVBoundaryOverlap(temp->V,
-                                                                   bnd_all);
-        if (hasInversion || hasOverlap /*|| (UVGridDim > 1)*/) {
-            std::cout << (hasInversion ? "local injectivity violated"
-                                       : "self-intersecting UV islands")
-                      << " in input UV map, " <<
-                //"or multi-chart bijective UV map needs to be ensured, " <<
-                "obtaining new initial UV map by applying Tutte's embedding..."
-                      << std::endl;
-            Eigen::VectorXi bnd_stacked;
-            Eigen::MatrixXd bnd_uv_stacked;
-            int curBndVAmt = 0;
-            for (int bndI = 0; bndI < bnd_all.size(); bndI++) {
-                // map boundary to unit circle
-                bnd_stacked.conservativeResize(curBndVAmt +
-                                               bnd_all[bndI].size());
-                bnd_stacked.tail(bnd_all[bndI].size()) = Eigen::VectorXi::Map(
-                    bnd_all[bndI].data(), bnd_all[bndI].size());
-                Eigen::MatrixXd bnd_uv;
-                igl::map_vertices_to_circle(
-                    temp->V_rest, bnd_stacked.tail(bnd_all[bndI].size()),
-                    bnd_uv);
-                double xOffset = bndI % UVGridDim * 2.1,
-                       yOffset = bndI / UVGridDim * 2.1;
-                for (int bnd_uvI = 0; bnd_uvI < bnd_uv.rows(); bnd_uvI++) {
-                    bnd_uv(bnd_uvI, 0) += xOffset;
-                    bnd_uv(bnd_uvI, 1) += yOffset;
-                }
-                bnd_uv_stacked.conservativeResize(curBndVAmt + bnd_uv.rows(),
-                                                  2);
-                bnd_uv_stacked.bottomRows(bnd_uv.rows()) = bnd_uv;
-                curBndVAmt = bnd_stacked.size();
-            }
-            // Harmonic map with uniform weights
-            Eigen::MatrixXd UV_Tutte;
-            Eigen::SparseMatrix<double> A, M;
-            uvgami::IglUtils::computeUniformLaplacian(temp->F, A);
-            igl::harmonic(A, M, bnd_stacked, bnd_uv_stacked, 1, temp->V);
-            if (!temp->checkInversion()) {
-                std::cout << "local injectivity still violated in the computed "
-                             "initial UV map, "
-                          << "please carefully check UV topology for e.g. "
-                             "non-manifold vertices. "
-                          << "Exit program..." << std::endl;
-                return UVGAMI_RC_INVALID_UV;
-            }
-        }
-        triSoup.emplace_back(temp);
-    } else {
+    if (!hasUV) {
         vertAmt_input = V.rows();
         Eigen::VectorXi B;
         bool isManifoldVertices = igl::is_vertex_manifold(F, B);
@@ -981,15 +860,172 @@ int main(int argc, char *argv[]) {
             std::cerr << "input mesh contains non-manifold edges" << std::endl;
             return UVGAMI_RC_NON_MANIFOLD_EDGES;
         }
+    }
 
-        // no UV provided, compute initial UV
-        Eigen::VectorXi C;
-        igl::facet_components(F, C);
-        int n_components = C.maxCoeff() + 1;
+    // with input UV the components are the UV charts, so the cutting below
+    // works on either
+    Eigen::VectorXi C;
+    igl::facet_components(hasUV ? FUV : F, C);
+    int n_components = C.maxCoeff() + 1;
 
+    uvgami::TriMesh temp =
+        hasUV ? uvgami::TriMesh(V, F, UV, FUV, false)
+              : uvgami::TriMesh(V, F, Eigen::MatrixXd(), Eigen::MatrixXi(),
+                                false);
+
+    // an input UV chart is kept when it is already a valid flattening: no
+    // flipped or overlapping triangles, and disk topology. the rest are cut to
+    // disks below and re-laid out, which keeps the input seams and adds only
+    // what the topology needs. the test is per chart, so one bad chart no
+    // longer costs every other chart its layout
+    std::vector<bool> keepChart(n_components, false);
+    int keptCharts = 0;
+    bool keepInputUV = false;
+    if (hasUV) {
+        std::vector<std::vector<int>> chartTris(n_components);
+        for (int triI = 0; triI < temp.F.rows(); ++triI) {
+            chartTris[C[triI]].emplace_back(triI);
+        }
+
+        std::vector<bool> isDisk = chartDiskFlags(temp.F, n_components, C);
+
+        std::vector<std::vector<int>> bnd_all;
+        igl::boundary_loop(temp.F, bnd_all);
+        std::set<int> crossingVerts;
+        uvgami::IglUtils::checkUVBoundaryOverlap(temp.V, bnd_all,
+                                                 &crossingVerts);
+        // a crossing condemns both charts it touches, so two islands laid on
+        // top of each other are both re-cut
+        std::vector<bool> overlaps(n_components, false);
+        for (int triI = 0; triI < temp.F.rows(); ++triI) {
+            for (int i = 0; i < 3; ++i) {
+                if (crossingVerts.count(temp.F(triI, i))) {
+                    overlaps[C[triI]] = true;
+                }
+            }
+        }
+
+        // a pinched vertex belongs to two charts at once (the fans meet at a
+        // point, so nothing joins them into one component). pinning it for one
+        // chart while re-cutting the other would pull it two ways, so when the
+        // map is not kept whole, neither of those charts is kept
+        std::vector<int> vertChart(temp.V.rows(), -1);
+        std::vector<bool> pinched(n_components, false);
+        for (int triI = 0; triI < temp.F.rows(); ++triI) {
+            for (int i = 0; i < 3; ++i) {
+                int &owner = vertChart[temp.F(triI, i)];
+                if (owner == -1) {
+                    owner = C[triI];
+                } else if (owner != C[triI]) {
+                    pinched[owner] = true;
+                    pinched[C[triI]] = true;
+                }
+            }
+        }
+
+        std::vector<bool> inverted(n_components);
+        for (int c = 0; c < n_components; ++c) {
+            inverted[c] = !temp.checkInversion(true, chartTris[c]);
+        }
+        bool anyInversion = false, allDisks = true;
+        for (int c = 0; c < n_components; ++c) {
+            anyInversion = anyInversion || inverted[c];
+            allDisks = allDisks && isDisk[c];
+        }
+        // whole-map decision first, so a map that was kept before is still
+        // kept byte for byte
+        keepInputUV = allDisks && !anyInversion && crossingVerts.empty();
+
+        int badInverted = 0, badOverlapping = 0, badNonDisk = 0;
+        if (keepInputUV) {
+            keepChart.assign(n_components, true);
+            keptCharts = n_components;
+        } else {
+            for (int c = 0; c < n_components; ++c) {
+                keepChart[c] =
+                    isDisk[c] && !overlaps[c] && !inverted[c] && !pinched[c];
+                keptCharts += keepChart[c];
+                if (inverted[c]) {
+                    ++badInverted;
+                } else if (overlaps[c]) {
+                    ++badOverlapping;
+                } else if (!isDisk[c]) {
+                    ++badNonDisk;
+                }
+            }
+        }
+
+        if (!keepInputUV && keptCharts == 0) {
+            std::cout << (anyInversion             ? "local injectivity violated"
+                          : !crossingVerts.empty() ? "self-intersecting UV islands"
+                                                   : "charts are not disk-topology")
+                      << " in input UV map, cutting to disk-topology and "
+                         "applying Tutte's embedding..."
+                      << std::endl;
+        } else if (!keepInputUV) {
+            std::cout << "kept " << keptCharts << " of " << n_components
+                      << " input UV charts, re-cutting " << badInverted
+                      << " inverted, " << badOverlapping
+                      << " self-intersecting, " << badNonDisk
+                      << " not disk-topology" << std::endl;
+        }
+    }
+
+    // pinned uvs: <mesh>_fixed lists comma-separated 0-based uv vertex
+    // indices to hold in place while the rest reshapes and cuts. only valid
+    // when the input map is kept, a redone layout has nothing to pin to,
+    // and the check comes before the cut-to-disk fallback so pinned runs
+    // fail with this reason instead of a cutting error
+    std::set<int> fixedVerts;
+    std::string fixedFileName = std::string(inputFolderPath.u8string()) +
+                                pathSeparator() + meshName + "_fixed";
+    std::ifstream fixedFile(fixedFileName);
+    if (fixedFile.is_open()) {
+        std::string line;
+        getline(fixedFile, line);
+        for (float token : split(line, ','))
+            fixedVerts.insert((int)token);
+        // optional second line "nocut" keeps the map's topology untouched
+        if (getline(fixedFile, line)) {
+            while (!line.empty() &&
+                   (line.back() == '\r' || line.back() == '\n'))
+                line.pop_back();
+            noCutMode = !fixedVerts.empty() && line == "nocut";
+        }
+        fixedFile.close();
+    }
+    if (!fixedVerts.empty() && !keepInputUV) {
+        std::cerr << "pinned vertices need the input UV map kept" << std::endl;
+        return UVGAMI_RC_PINNED_UV_NOT_KEPT;
+    }
+    if (!fixedVerts.empty()) {
+        // the distortion energy is scale-sensitive and pins block the global
+        // rescale the solver would otherwise start with, it would inflate the
+        // interior against the held border instead. match the uv scale to the
+        // rest shape up front, the output is normalized and realigned through
+        // the pins so this scale never leaks out
+        double uvArea = 0.0, restArea = 0.0;
+        for (int triI = 0; triI < temp.F.rows(); ++triI) {
+            const Eigen::RowVector3i &tri = temp.F.row(triI);
+            const Eigen::RowVector2d e1 = temp.V.row(tri[1]) - temp.V.row(tri[0]);
+            const Eigen::RowVector2d e2 = temp.V.row(tri[2]) - temp.V.row(tri[0]);
+            uvArea += std::abs(e1[0] * e2[1] - e1[1] * e2[0]) / 2;
+            const Eigen::RowVector3d p0 = temp.V_rest.row(tri[0]);
+            const Eigen::RowVector3d p1 = temp.V_rest.row(tri[1]);
+            const Eigen::RowVector3d p2 = temp.V_rest.row(tri[2]);
+            restArea += (p1 - p0).cross(p2 - p0).norm() / 2;
+        }
+        if (uvArea > 0.0 && restArea > 0.0)
+            temp.V *= std::sqrt(restArea / uvArea);
+    }
+
+    uvgami::TriMesh *keptInputMesh = nullptr;
+    if (keepInputUV) {
+        keptInputMesh = new uvgami::TriMesh(temp);
+        triSoup.emplace_back(keptInputMesh);
+    } else {
         // in each pass, make one cut on each component if needed, until all
         // becoming disk-topology
-        uvgami::TriMesh temp(V, F, Eigen::MatrixXd(), Eigen::MatrixXi(), false);
         std::vector<Eigen::MatrixXi> F_component(n_components);
         std::vector<std::set<int>> V_ind_component(n_components);
         for (int triI = 0; triI < temp.F.rows(); ++triI) {
@@ -1101,10 +1137,73 @@ int main(int argc, char *argv[]) {
             ++UVGridDim;
         } while (UVGridDim * UVGridDim < n_components);
 
+        // a re-cut chart starts as a unit circle, which beside charts kept
+        // from a packed input map is far bigger than its own rest shape, and
+        // the optimizer would spend its iterations shrinking it. match the
+        // kept charts' uv-to-3D scale instead, and keep the unit circle when
+        // nothing is kept so that layout is untouched
+        std::vector<double> chartRadius(n_components, 1.0);
+        double gridCell = 2.1, gridOriginX = 0.0;
+        if (keptCharts) {
+            double keptUV = 0.0, kept3D = 0.0;
+            std::vector<double> area3D(n_components, 0.0);
+            for (int triI = 0; triI < temp.F.rows(); ++triI) {
+                const Eigen::RowVector3i &tri = temp.F.row(triI);
+                const Eigen::RowVector3d p0 = temp.V_rest.row(tri[0]);
+                const Eigen::RowVector3d p1 = temp.V_rest.row(tri[1]);
+                const Eigen::RowVector3d p2 = temp.V_rest.row(tri[2]);
+                double a3 = (p1 - p0).cross(p2 - p0).norm() / 2;
+                area3D[C[triI]] += a3;
+                if (keepChart[C[triI]]) {
+                    const Eigen::RowVector2d e1 =
+                        temp.V.row(tri[1]) - temp.V.row(tri[0]);
+                    const Eigen::RowVector2d e2 =
+                        temp.V.row(tri[2]) - temp.V.row(tri[0]);
+                    keptUV += std::abs(e1[0] * e2[1] - e1[1] * e2[0]) / 2;
+                    kept3D += a3;
+                }
+            }
+            double uvPerRest =
+                (keptUV > 0.0 && kept3D > 0.0) ? std::sqrt(keptUV / kept3D) : 1.0;
+            gridCell = 0.0;
+            for (int c = 0; c < n_components; ++c) {
+                chartRadius[c] = uvPerRest * std::sqrt(area3D[c] / M_PI);
+                if (!keepChart[c]) {
+                    gridCell = (std::max)(gridCell, 2.1 * chartRadius[c]);
+                }
+            }
+            // and place them past the kept charts, since the output layout is
+            // only normalized, never packed, so a circle landing on a kept
+            // chart would stay on top of it
+            for (int componentI = 0; componentI < n_components; ++componentI) {
+                if (!keepChart[componentI]) {
+                    continue;
+                }
+                for (const auto &vI : V_ind_component[componentI]) {
+                    gridOriginX =
+                        (std::max)(gridOriginX, temp.V(vI, 0) + gridCell / 2);
+                }
+            }
+        }
+
         // compute boundary UV coordinates, using a grid layout for multiComp
         Eigen::VectorXi bnd_stacked;
         Eigen::MatrixXd bnd_uv_stacked;
         for (int componentI = 0; componentI < n_components; ++componentI) {
+            if (keepChart[componentI]) {
+                // pin every vertex of a kept chart, so the harmonic solve
+                // reproduces its input UV exactly and only fills in the rest
+                const std::set<int> &chartV = V_ind_component[componentI];
+                int base = bnd_stacked.size();
+                bnd_stacked.conservativeResize(base + chartV.size());
+                bnd_uv_stacked.conservativeResize(base + chartV.size(), 2);
+                for (const auto &vI : chartV) {
+                    bnd_stacked[base] = vI;
+                    bnd_uv_stacked.row(base) = temp.V.row(vI);
+                    ++base;
+                }
+                continue;
+            }
             std::vector<std::vector<int>> bnd_all;
             igl::boundary_loop(F_component[componentI], bnd_all);
 
@@ -1132,11 +1231,13 @@ int main(int argc, char *argv[]) {
                     temp.V_rest,
                     bnd_stacked.tail(bnd_all[longest_bnd_id].size()), bnd_uv);
             }
-            double xOffset = componentI % UVGridDim * 2.1,
-                   yOffset = componentI / UVGridDim * 2.1;
+            double xOffset = gridOriginX + componentI % UVGridDim * gridCell,
+                   yOffset = componentI / UVGridDim * gridCell;
             for (int bnd_uvI = 0; bnd_uvI < bnd_uv.rows(); bnd_uvI++) {
-                bnd_uv(bnd_uvI, 0) += xOffset;
-                bnd_uv(bnd_uvI, 1) += yOffset;
+                bnd_uv(bnd_uvI, 0) =
+                    bnd_uv(bnd_uvI, 0) * chartRadius[componentI] + xOffset;
+                bnd_uv(bnd_uvI, 1) =
+                    bnd_uv(bnd_uvI, 1) * chartRadius[componentI] + yOffset;
             }
             bnd_uv_stacked.conservativeResize(
                 bnd_uv_stacked.rows() + bnd_uv.rows(), 2);
@@ -1181,9 +1282,17 @@ int main(int argc, char *argv[]) {
             }
         }
     }
+    if (!fixedVerts.empty()) {
+        if (*fixedVerts.begin() < 0 ||
+            *fixedVerts.rbegin() >= keptInputMesh->V.rows()) {
+            std::cerr << "pinned vertex index out of range" << std::endl;
+            return UVGAMI_RC_INVALID_UV;
+        }
+        keptInputMesh->resetFixedVert(fixedVerts);
+        pinnedMode = true;
+    }
+
     outputFolderPath += meshName;
-    texScale =
-        10.0 / (triSoup[0]->bbox.row(1) - triSoup[0]->bbox.row(0)).maxCoeff();
     energyParams.emplace_back(1.0 - lambda_init);
     energyTerms.emplace_back(new uvgami::SymDirichletEnergy());
 
@@ -1226,25 +1335,10 @@ int main(int argc, char *argv[]) {
     }
 
     std::thread t(&stdin_listener);
-    if (headlessMode) {
-        while (true) {
-            preDrawFunc(viewer_);
-            if (postDrawFunc(viewer_))
-                break;
-        }
-    } else {
-        // Setup viewer and launch
-        viewer_.core().background_color << 1.0f, 1.0f, 1.0f, 0.0f;
-        viewer_.callback_pre_draw = &preDrawFunc;
-        viewer_.callback_post_draw = &postDrawFunc;
-        viewer_.data().show_lines = true;
-        viewer_.core().orthographic = true;
-        viewer_.core().camera_zoom *= 1.9;
-        viewer_.core().animation_max_fps = 60.0;
-        viewer_.data().point_size = fracTailSize;
-        viewer_.data().show_overlay = true;
-        updateViewerData(meshName);
-        viewer_.launch();
+    while (true) {
+        preDrawFunc();
+        if (postDrawFunc())
+            break;
     }
     // cleanup
     t.detach();

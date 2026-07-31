@@ -80,11 +80,7 @@ endif()
 
 include(Dependencies)
 
-# libigl
-set(LIBIGL_OPENGL  ON)
-set(LIBIGL_PNG  ON)
-set(LIBIGL_IMGUI ON)
-set(LIBIGL_GLFW ON)
+# libigl. the engine is headless, so no opengl/glfw/png/imgui
 set(LIBIGL_RESTRICTED_TRIANGLE ON)
 set(LIBIGL_USE_STATIC_LIBRARY ON)
 add_subdirectory(ext/libigl EXCLUDE_FROM_ALL)
@@ -104,9 +100,6 @@ file(GLOB SRCFILES
 include_directories(
   ${CMAKE_CURRENT_BINARY_DIR}/_deps/eigen-src
   ${CMAKE_CURRENT_BINARY_DIR}/_deps/triangle-src
-  ${CMAKE_CURRENT_BINARY_DIR}/_deps/stb-src
-  ${CMAKE_CURRENT_BINARY_DIR}/_deps/glad-src/include
-  ${CMAKE_CURRENT_BINARY_DIR}/_deps/glfw-src/include
   ${CMAKE_CURRENT_SOURCE_DIR}/ext/libigl/include
   src
   src/Energy
@@ -121,7 +114,7 @@ endif()
 
 add_executable(${PROJECT_NAME} ${SRCFILES})
 
-target_link_libraries(${PROJECT_NAME} PRIVATE igl::glfw  igl::png  igl_restricted::triangle  TBB::tbb ${UVGAMI_COMPILE_OPTIONS})
+target_link_libraries(${PROJECT_NAME} PRIVATE igl::core  igl_restricted::triangle  TBB::tbb ${UVGAMI_COMPILE_OPTIONS})
 
 # link the mimalloc object file so its malloc/free override the crt (windows only)
 if(WIN32 AND UVGAMI_USE_MIMALLOC AND TARGET mimalloc-obj)
