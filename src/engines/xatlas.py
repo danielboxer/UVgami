@@ -5,8 +5,14 @@ from ..utils.paths import get_bundled_engine_path, get_extension_dir_path
 
 
 class UVGAMI_PG_xatlas(bpy.types.PropertyGroup):
-    # xatlas has no settings in v0.1, but the pointer registration needs a group
-    pass
+    max_cost: bpy.props.FloatProperty(
+        name="",
+        description="Cost limit for growing a chart. Lower values cut the mesh into more UV islands",
+        default=2.0,
+        # above 10 the chart count stops dropping, xatlas' merge pass sets the floor
+        min=0.1,
+        max=10.0,
+    )
 
 
 class XatlasEngine(Engine):
@@ -25,6 +31,11 @@ class XatlasEngine(Engine):
             return None, "Bundled xatlas engine is missing"
         return bundled, None
 
+    def draw_settings(self, layout, props):
+        row = layout.row()
+        row.label(icon="UV_ISLANDSEL", text="Chart Cost")
+        row.prop(props.xatlas, "max_cost")
+
     def draw_prefs(self, layout, prefs):
         row = layout.row()
         _, error = self.validate(prefs)
@@ -35,7 +46,15 @@ class XatlasEngine(Engine):
 
     def build_args(self, ctx, input_path, props):
         output_path = get_extension_dir_path() / "output" / f"{input_path.stem}.obj"
-        return [str(ctx), "-i", str(input_path), "-o", str(output_path)]
+        return [
+            str(ctx),
+            "-i",
+            str(input_path),
+            "-o",
+            str(output_path),
+            "--max-cost",
+            f"{props.xatlas.max_cost:.4f}",
+        ]
 
     def describe_failure(self, code):
         return {

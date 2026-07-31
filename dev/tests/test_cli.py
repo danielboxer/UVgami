@@ -387,6 +387,26 @@ def test_xatlas_path_flag_passed_through(triangle, tmp_path, fake_xatlas):
     assert fake_xatlas[0][2] == engine
 
 
+def test_xatlas_max_cost_passed_through(triangle, fake_xatlas):
+    code = cli.main(
+        ["unwrap", str(triangle), "--engine", "xatlas", "--max-cost", "0.8"]
+    )
+    assert code == 0
+    assert fake_xatlas[0][3] == 0.8
+
+
+def test_xatlas_max_cost_must_be_positive(triangle, fake_xatlas, capsys):
+    code = cli.main(["unwrap", str(triangle), "--engine", "xatlas", "--max-cost", "0"])
+    assert code == 2
+    assert "--max-cost" in capsys.readouterr().err
+
+
+def test_max_cost_rejected_for_optcuts(triangle, capsys):
+    code = cli.main(["unwrap", str(triangle), "--max-cost", "0.8"])
+    assert code == 2
+    assert "--max-cost" in capsys.readouterr().err
+
+
 def test_optcuts_flag_rejected_for_xatlas(triangle, capsys):
     code = cli.main(
         ["unwrap", str(triangle), "--engine", "xatlas", "--quality", "high"]
