@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 from .common import (
@@ -36,7 +37,14 @@ def build_args(engine_path, input_path, output_dir, quality, seam_weight, import
 
 
 def run(
-    input_path, output_path, quality, import_uvs, seam_weights, seam_weight, engine_path
+    input_path,
+    output_path,
+    quality,
+    import_uvs,
+    seam_weights,
+    seam_weight,
+    engine_path,
+    timeout=None,
 ):
     engine = find_engine("optcuts", "OptCuts", engine_path)
     with tempfile.TemporaryDirectory(prefix="uvgami-") as tmp:
@@ -60,9 +68,29 @@ def run(
             stdin=subprocess.DEVNULL,
             text=True,
         )
-        for line in process.stdout:
-            sys.stderr.write(line)
-        returncode = process.wait()
+        # a timer, not wait(timeout=): the stdout loop below would block past
+        # the deadline, and killing the engine is what ends it
+        killed = threading.Event()
+        timer = None
+        if timeout is not None:
+
+            def kill():
+                killed.set()
+                process.kill()
+
+            timer = threading.Timer(timeout, kill)
+            timer.start()
+        try:
+            for line in process.stdout:
+                sys.stderr.write(line)
+            returncode = process.wait()
+        finally:
+            if timer is not None:
+                timer.cancel()
+        if killed.is_set():
+            raise UnwrapError(
+                EXIT_ENGINE_FAILURE, f"OptCuts timed out after {timeout}s"
+            )
         if returncode != 0:
             raise UnwrapError(
                 EXIT_ENGINE_FAILURE, f"OptCuts exited with code {returncode}"

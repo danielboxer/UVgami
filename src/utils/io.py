@@ -1,7 +1,44 @@
 import bpy
 
 
+def split_shared_uvs(obj):
+    """Nudge apart different vertices that landed on the same UV point.
+
+    The obj exporter merges identical UVs into one vt, and optcuts rebuilds a
+    UV-carrying mesh with one vertex per vt, so a UV shared by two 3D vertices
+    welds them and degenerates the rebuilt mesh (the engine exits -1). Nudge
+    per (vertex, uv) group so a vertex's corners stay welded to each other.
+    Compare at export precision (6 decimals) and nudge past it."""
+    layer = obj.data.uv_layers.active.data
+    groups = {}  # (vertex, rounded uv) -> loop indices
+    for poly in obj.data.polygons:
+        for li in poly.loop_indices:
+            uv = layer[li].uv
+            vert = obj.data.loops[li].vertex_index
+            key = (vert, (round(uv.x, 6), round(uv.y, 6)))
+            groups.setdefault(key, []).append(li)
+
+    taken = {}  # rounded uv -> vertex that owns it
+    fixed = 0
+    for (vert, uv_key), loops in groups.items():
+        owner = taken.setdefault(uv_key, vert)
+        if owner == vert:
+            continue
+        step = 1
+        while True:
+            nudged = (round(uv_key[0] + step * 1e-4, 6), uv_key[1])
+            if taken.setdefault(nudged, vert) == vert:
+                break
+            step += 1
+        for li in loops:
+            layer[li].uv.x = nudged[0]
+        fixed += 1
+    return fixed
+
+
 def export_obj(obj, path, export_uv):
+    if export_uv and obj.data.uv_layers.active:
+        split_shared_uvs(obj)
     obj.select_set(True)
 
     if bpy.app.version >= (3, 1, 0):
@@ -73,9 +110,6 @@ def import_obj(path, name=""):
             axis_forward="Y",
             axis_up="Z",
         )
-    # push to undo stack
-    bpy.ops.ed.undo_push()
-
     after = set(bpy.context.scene.objects)
 
     # get imported object

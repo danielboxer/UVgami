@@ -9,7 +9,7 @@ import pytest
 from uvgami_cli import cli, optcuts
 from uvgami_cli.common import UnwrapError
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
@@ -83,12 +83,22 @@ def test_explicit_output(triangle, tmp_path, fake_optcuts):
 
 def test_optcuts_defaults(triangle, fake_optcuts):
     cli.main(["unwrap", str(triangle)])
-    _, _, quality, import_uvs, seam_weights, seam_weight, engine_path = fake_optcuts[0]
+    (
+        _,
+        _,
+        quality,
+        import_uvs,
+        seam_weights,
+        seam_weight,
+        engine_path,
+        timeout,
+    ) = fake_optcuts[0]
     assert quality == "medium"
     assert import_uvs is False
     assert seam_weights is None
     assert seam_weight == 3
     assert engine_path is None
+    assert timeout is None
 
 
 def test_missing_input(tmp_path, fake_optcuts):
@@ -385,6 +395,26 @@ def test_xatlas_path_flag_passed_through(triangle, tmp_path, fake_xatlas):
     )
     assert code == 0
     assert fake_xatlas[0][2] == engine
+
+
+def test_xatlas_max_cost_passed_through(triangle, fake_xatlas):
+    code = cli.main(
+        ["unwrap", str(triangle), "--engine", "xatlas", "--max-cost", "0.8"]
+    )
+    assert code == 0
+    assert fake_xatlas[0][3] == 0.8
+
+
+def test_xatlas_max_cost_must_be_positive(triangle, fake_xatlas, capsys):
+    code = cli.main(["unwrap", str(triangle), "--engine", "xatlas", "--max-cost", "0"])
+    assert code == 2
+    assert "--max-cost" in capsys.readouterr().err
+
+
+def test_max_cost_rejected_for_optcuts(triangle, capsys):
+    code = cli.main(["unwrap", str(triangle), "--max-cost", "0.8"])
+    assert code == 2
+    assert "--max-cost" in capsys.readouterr().err
 
 
 def test_optcuts_flag_rejected_for_xatlas(triangle, capsys):

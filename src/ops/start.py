@@ -7,10 +7,12 @@ import numpy
 
 from ..engines import get_engine
 from ..handler import handle_error
-from ..job import HideInput, Join, Preserve, Symmetrise, TransferUVs
+from ..job import HideInput, Join, Preserve, ProxyUVs, Symmetrise, TransferUVs
 from ..logger import logger
 from ..manager import manager
+from ..objfile import remap_weights_to_vt
 from ..progress_bar import progress_bar
+from ..proxy import make_proxy
 from ..unwrap import Unwrap
 from ..utils.geometry import apply_transforms, calc_center, cut, cut_on_axes
 from ..utils.io import export_obj
@@ -20,8 +22,10 @@ from ..utils.mesh import (
     move_to_collection,
     new_bmesh,
     set_bmesh,
+    triangulate,
 )
 from ..utils.paths import get_extension_dir_path, get_preferences
+from ..utils.ui import tag_redraw
 from .guides import SEAM_RESTRICTIONS_GROUP
 
 # process objects for at most this long per tick before yielding to the event loop
@@ -39,6 +43,7 @@ class InputExporter:
         input_path,
         names,
         jobs,
+        piece_has_uvs,
         separated_objects,
         old_active,
         old_mode,
@@ -50,6 +55,7 @@ class InputExporter:
         self.input_path = input_path
         self.names = names
         self.jobs = jobs
+        self.piece_has_uvs = piece_has_uvs
         self.remaining = deque(separated_objects)
         self.old_active = old_active
         self.old_mode = old_mode
@@ -127,9 +133,11 @@ class InputExporter:
         # export uses selected-objects mode and the user can change selection between
         # ticks, deselect so only this object lands in the obj file
         deselect_all()
-        export_obj(obj, path, props.import_uvs and self.engine.supports_import_uvs)
+        # seams and uvs were built before separation, see create_jobs
+        has_uvs = self.piece_has_uvs[obj]
+        export_obj(obj, path, has_uvs)
 
-        guide_path = self._create_guide_file(obj, path, props)
+        guide_path = self._create_guide_file(obj, path, props, has_uvs)
 
         materials, material_indices, vertex_groups, shade_smooth, auto_smooth = (
             self._get_mesh_metadata(obj)
@@ -225,7 +233,7 @@ class InputExporter:
                 self.jobs[obj]["preserve"] = Preserve(1)
                 old_edges = set(bm.edges)
 
-            bmesh.ops.triangulate(bm, faces=bm.faces, quad_method="BEAUTY")
+            triangulate(bm)
 
             if untriangulate:
                 # write added edges to file
@@ -253,28 +261,34 @@ class InputExporter:
 
         return edge_path, new_edges
 
-    def _create_guide_file(self, obj, path, props):
-        """Create seam restriction guide file if guided mode is active."""
-        guide_path = None
+    def _create_guide_file(self, obj, path, props, has_uvs):
+        """Write the per-vertex seam weight file from the painted guide.
+        Higher weight repels seams."""
+        weights = {}
         if (
             self.engine.supports_guided
             and props.use_guided_mode
             and SEAM_RESTRICTIONS_GROUP in obj.vertex_groups
         ):
-            # get seam guide
-            guide = ""
             group_idx = obj.vertex_groups[SEAM_RESTRICTIONS_GROUP].index
             for v in obj.data.vertices:
                 for g in v.groups:
                     if g.group == group_idx:
-                        guide += f"{v.index},{g.weight},"
+                        weights[v.index] = g.weight
                         break
-            # remove last comma
-            guide = guide[:-1]
 
-            guide_path = path.parent / f"{path.stem}_weights"
-            with guide_path.open("w") as f:
-                f.write(f"{guide}\n")
+        if not weights:
+            return None
+
+        if has_uvs:
+            # optcuts rebuilds a UV-carrying obj with one vertex per vt, so
+            # vertex-indexed weights would land on the wrong vertices
+            weights = remap_weights_to_vt(path, weights)
+
+        guide = ",".join(f"{index},{weight}" for index, weight in weights.items())
+        guide_path = path.parent / f"{path.stem}_weights"
+        with guide_path.open("w") as f:
+            f.write(f"{guide}\n")
 
         return guide_path
 
@@ -338,6 +352,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         self.separated_objects = None
         self.jobs = None
+        self.piece_has_uvs = None
         self.temp_collection = None
 
     def execute(self, context):
@@ -368,6 +383,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 input_path=self.input_path,
                 names=self.names,
                 jobs=self.jobs,
+                piece_has_uvs=self.piece_has_uvs,
                 separated_objects=self.separated_objects,
                 old_active=self.old_active,
                 old_mode=self.old_mode,
@@ -387,10 +403,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
             # show the progress bar now instead of after every piece exports
             if get_preferences().show_progress_bar:
                 progress_bar.start()
-                # force redraw of view3D
-                bpy.context.view_layer.objects.active = (
-                    bpy.context.view_layer.objects.active
-                )
+            tag_redraw()
 
             if self.report_msg == "Input contain":
                 self.report({"INFO"}, "UV unwrap in progress")
@@ -425,7 +438,9 @@ class UVGAMI_OT_start(bpy.types.Operator):
             return {"CANCELLED"}
 
         self.input_path, _ = self.prepare_io_folders()
-        self.jobs, self.separated_objects = self.create_jobs(context)
+        self.jobs, self.separated_objects, self.piece_has_uvs = self.create_jobs(
+            context
+        )
         deselect_all()
 
         # stash pieces in a collection not linked to the scene so they don't flash
@@ -490,6 +505,8 @@ class UVGAMI_OT_start(bpy.types.Operator):
             object_collection.objects.link(copy_object)
 
             self._apply_modifiers(context, copy_object)
+            if props.use_proxy:
+                make_proxy(copy_object, props.proxy_faces)
             self._apply_cuts_if_needed(copy_object, obj, props)
 
             # save name, format: input name, unwrap name
@@ -574,11 +591,20 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         return input_path, output_path
 
+    def _input_job(self, props, count):
+        """The job that finishes an unwrap against the original input mesh."""
+        if props.use_proxy:
+            return ProxyUVs(count)
+        if props.transfer_uvs:
+            return TransferUVs(count)
+        return None
+
     def create_jobs(self, context):
         props = context.scene.uvgami
 
         jobs = {}
         separated_objects = []
+        piece_has_uvs = {}
 
         # objects can't be in edit mode
         context.view_layer.objects.active = self.old_active
@@ -598,6 +624,13 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 symmetrize_job = Symmetrise(1, axes, obj_center, props.sym_merge)
                 cut_on_axes(obj, obj_center, axes)
 
+            # seams and uvs are built on the whole mesh before separation:
+            # strips.py reads region widths off the full model, and a small
+            # loose part run alone shatters (auto width tunes to the piece)
+            has_uvs = self.engine.prepare_uvs(obj, props)
+            deselect_all()
+            obj.select_set(True)
+
             # separate objects
             bpy.ops.mesh.separate(type="LOOSE")
             s = context.selected_objects
@@ -606,10 +639,9 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 unwrap_name = self.names[obj.name][0]
                 join_job = Join(len(s))
                 hide_job = None
-                transfer_uvs_job = None
+                transfer_uvs_job = self._input_job(props, len(s))
 
-                if props.transfer_uvs:
-                    transfer_uvs_job = TransferUVs(len(s))
+                if transfer_uvs_job is not None:
                     manager.input[transfer_uvs_job] = self.input_objs[object_idx]
                 else:
                     # the hide job can come after join because it doesn't depend
@@ -641,6 +673,9 @@ class UVGAMI_OT_start(bpy.types.Operator):
                             "symmetrize": symmetrize_job,
                             "transfer_uvs": transfer_uvs_job,
                         }
+                        piece_has_uvs[o] = self.engine.piece_uses_uvs(
+                            o, props, has_uvs
+                        )
                         separated_objects.append(o)
                         self.names[o.name] = [
                             unwrap_name,
@@ -655,14 +690,15 @@ class UVGAMI_OT_start(bpy.types.Operator):
                     "symmetrize": symmetrize_job,
                     "transfer_uvs": None,
                 }
-                if props.transfer_uvs:
-                    transfer_uvs_job = TransferUVs(1)
+                transfer_uvs_job = self._input_job(props, 1)
+                if transfer_uvs_job is not None:
                     jobs[obj]["transfer_uvs"] = transfer_uvs_job
                     manager.input[transfer_uvs_job] = self.input_objs[object_idx]
                 else:
                     hide_job = HideInput(1)
                     jobs[obj]["hide"] = hide_job
                     manager.input[hide_job] = self.input_objs[object_idx]
+                piece_has_uvs[obj] = self.engine.piece_uses_uvs(obj, props, has_uvs)
                 separated_objects.append(obj)
 
-        return jobs, separated_objects
+        return jobs, separated_objects, piece_has_uvs

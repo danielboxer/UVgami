@@ -1,5 +1,17 @@
 import bpy
+
 from ..logger import logger
+from ..manager import manager
+
+
+class UVGAMI_OT_clear_result(bpy.types.Operator):
+    bl_idname = "uvgami.clear_result"
+    bl_label = "Dismiss"
+    bl_description = "Hide the result of the last unwrap"
+
+    def execute(self, context):
+        manager.clear_result()
+        return {"FINISHED"}
 
 
 class UVGAMI_OT_clear_logs(bpy.types.Operator):

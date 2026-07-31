@@ -42,6 +42,9 @@ def _add_optcuts_args(group):
         help="seam weight level, default: 3",
     )
     group.add_argument("--optcuts-path", type=Path, help="default: bundled binary")
+    group.add_argument(
+        "--timeout", type=float, help="kill the engine after this many seconds per mesh"
+    )
 
 
 # flags that only apply to optcuts, so the other engine can reject them
@@ -51,6 +54,7 @@ OPTCUTS_FLAGS = {
     "--seam-weights": "seam_weights",
     "--seam-weight": "seam_weight",
     "--optcuts-path": "optcuts_path",
+    "--timeout": "timeout",
 }
 
 
@@ -76,28 +80,34 @@ def run_optcuts(args, pairs):
             args.seam_weights,
             args.seam_weight,
             args.optcuts_path,
+            args.timeout,
         )
 
     return unwrap_all(pairs, unwrap_one)
 
 
 def _add_xatlas_args(group):
+    group.add_argument(
+        "--max-cost",
+        type=float,
+        help="chart growth cost ceiling, lower means more charts, default: 2.0",
+    )
     group.add_argument("--xatlas-path", type=Path, help="default: bundled binary")
 
 
-# xatlas has no tunables, so the binary path is its only flag
-XATLAS_FLAGS = {"--xatlas-path": "xatlas_path"}
+XATLAS_FLAGS = {"--max-cost": "max_cost", "--xatlas-path": "xatlas_path"}
 
 
 def _validate_xatlas(args):
-    pass
+    if args.max_cost is not None and args.max_cost <= 0:
+        raise UnwrapError(EXIT_INVALID_INPUT, "--max-cost must be positive")
 
 
 def run_xatlas(args, pairs):
     from . import xatlas
 
     def unwrap_one(input_path, output_path):
-        xatlas.run(input_path, output_path, args.xatlas_path)
+        xatlas.run(input_path, output_path, args.xatlas_path, args.max_cost)
 
     return unwrap_all(pairs, unwrap_one)
 
@@ -158,7 +168,7 @@ def run_partuv(args, pairs):
                 # the editable install serves partuv from site-packages, so its
                 # package-relative default checkpoint misses the source tree
                 repo_checkpoint = (
-                    Path(__file__).parents[1]
+                    Path(__file__).parents[2]
                     / "engine"
                     / "partuv"
                     / "model_objaverse.ckpt"

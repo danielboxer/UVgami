@@ -25,6 +25,7 @@ extern std::vector<Eigen::MatrixXd> newVertPoses_bSplit, newVertPoses_iSplit,
     newVertPoses_merge;
 extern double filterExp_in;
 extern int inSplitTotalAmt;
+extern bool pinnedMode;
 
 namespace uvgami {
 
@@ -484,6 +485,59 @@ void TriMesh::buildCohEfromRecord(const Eigen::MatrixXi &cohERecord) {
     computeFeatures();
 }
 
+// a cut whose path runs boundary to boundary splits the chart in two. in
+// pinned mode a piece without a pinned vert floats away from the held
+// border, so such split candidates are vetoed in querySplit
+bool TriMesh::cutLeavesPinlessPiece(const std::vector<int> &path) const {
+    if (path.size() < 2 || !isBoundaryVert(path.front()) ||
+        !isBoundaryVert(path.back()))
+        return false;
+
+    std::set<std::pair<int, int>> cut;
+    for (int i = 0; i + 1 < static_cast<int>(path.size()); ++i) {
+        cut.insert(std::pair<int, int>(path[i], path[i + 1]));
+        cut.insert(std::pair<int, int>(path[i + 1], path[i]));
+    }
+
+    // flood faces over shared edges without crossing the cut
+    auto seed = edge2Tri.find(*cut.begin());
+    if (seed == edge2Tri.end())
+        return false;
+    std::vector<bool> visited(F.rows(), false);
+    std::vector<int> stack = {seed->second};
+    visited[seed->second] = true;
+    while (!stack.empty()) {
+        int triI = stack.back();
+        stack.pop_back();
+        for (int i = 0; i < 3; ++i) {
+            int a = F(triI, i), b = F(triI, (i + 1) % 3);
+            if (cut.count(std::pair<int, int>(a, b)))
+                continue;
+            const auto nb = edge2Tri.find(std::pair<int, int>(b, a));
+            if (nb != edge2Tri.end() && !visited[nb->second]) {
+                visited[nb->second] = true;
+                stack.push_back(nb->second);
+            }
+        }
+    }
+
+    bool unvisited = false;
+    bool pinned[2] = {false, false};
+    for (int triI = 0; triI < F.rows(); ++triI) {
+        if (!visited[triI])
+            unvisited = true;
+        for (int i = 0; i < 3; ++i) {
+            if (fixedVert.count(F(triI, i))) {
+                pinned[visited[triI] ? 0 : 1] = true;
+                break;
+            }
+        }
+    }
+    if (!unvisited)
+        return false;
+    return !pinned[0] || !pinned[1];
+}
+
 void TriMesh::querySplit(double lambda_t, bool propagate, bool splitInterior,
                          double &EwDec_max, std::vector<int> &path_max,
                          Eigen::MatrixXd &newVertPos_max,
@@ -500,6 +554,10 @@ void TriMesh::querySplit(double lambda_t, bool propagate, bool splitInterior,
         std::map<double, int> sortedCandVerts_b, sortedCandVerts_in;
         if (splitInterior) {
             for (int vI = 0; vI < V_rest.rows(); vI++) {
+                if (fixedVert.count(vI)) {
+                    // pinned verts must not be duplicated
+                    continue;
+                }
                 if (vNeighbor[vI].size() <= 2) {
                     // this vertex is impossible to be split further
                     continue;
@@ -523,6 +581,10 @@ void TriMesh::querySplit(double lambda_t, bool propagate, bool splitInterior,
             inSplitTotalAmt = sortedCandVerts_in.size();
         } else {
             for (int vI = 0; vI < V_rest.rows(); vI++) {
+                if (fixedVert.count(vI)) {
+                    // pinned verts must not be duplicated
+                    continue;
+                }
                 if (vNeighbor[vI].size() <= 2) {
                     // this vertex is impossible to be split further
                     continue;
@@ -597,6 +659,25 @@ void TriMesh::querySplit(double lambda_t, bool propagate, bool splitInterior,
 
     assert(!bestCandVerts.empty());
 
+    // a split path through a pinned vert would duplicate it, invalidate
+    // those, and in pinned mode also cuts that would strand a pinless piece
+    auto invalidateFixed = [this](const std::vector<int> &path, double &EwDec,
+                                  std::pair<double, double> &energyChange) {
+        for (const auto &vI : path) {
+            if (fixedVert.count(vI)) {
+                EwDec = -DBL_MAX;
+                energyChange.first = DBL_MAX;
+                energyChange.second = DBL_MAX;
+                return;
+            }
+        }
+        if (pinnedMode && cutLeavesPinlessPiece(path)) {
+            EwDec = -DBL_MAX;
+            energyChange.first = DBL_MAX;
+            energyChange.second = DBL_MAX;
+        }
+    };
+
     // evaluate local energy decrease
     // DISABLE std::cout << "evaluate vertex splits, " << bestCandVerts.size()
     // << " candidate verts" << std::endl; run in parallel:
@@ -617,6 +698,8 @@ void TriMesh::querySplit(double lambda_t, bool propagate, bool splitInterior,
                 EwDecs[candI] = computeLocalLDec(
                     bestCandVerts[candI], lambda_t, paths_p[candI],
                     newVertPoses_p[candI], energyChanges_p[candI]);
+                invalidateFixed(paths_p[candI], EwDecs[candI],
+                                energyChanges_p[candI]);
             });
         } else {
             operationType = 0;
@@ -628,6 +711,8 @@ void TriMesh::querySplit(double lambda_t, bool propagate, bool splitInterior,
                 EwDecs[candI] = computeLocalLDec(
                     bestCandVerts[candI], lambda_t, paths_bSplit[candI],
                     newVertPoses_bSplit[candI], energyChanges_bSplit[candI]);
+                invalidateFixed(paths_bSplit[candI], EwDecs[candI],
+                                energyChanges_bSplit[candI]);
             });
         }
     } else {
@@ -642,6 +727,8 @@ void TriMesh::querySplit(double lambda_t, bool propagate, bool splitInterior,
             EwDecs[candI] = computeLocalLDec(
                 bestCandVerts[candI], lambda_t, paths_iSplit[candI],
                 newVertPoses_iSplit[candI], energyChanges_iSplit[candI]);
+            invalidateFixed(paths_iSplit[candI], EwDecs[candI],
+                            energyChanges_iSplit[candI]);
             if (EwDecs[candI] != -DBL_MAX)
                 EwDecs[candI] *= 0.5;
         });
@@ -748,6 +835,11 @@ void TriMesh::queryMerge(double lambda, bool propagate, double &localEwDec_max,
             if (cohE(cohI, forkVI) != curFracTail)
                 continue;
         }
+
+        // merging moves both verts, pinned ones must stay put
+        if (fixedVert.count(cohE(cohI, 1 - forkVI)) ||
+            fixedVert.count(cohE(cohI, 3 - forkVI)))
+            continue;
 
         // find incident triangles for inversion check and local energy decrease
         // evaluation
@@ -2140,7 +2232,10 @@ double TriMesh::computeLocalEdDec_inSplit(const std::vector<int> &triangles,
         const double eps_sep =
             (V.row(path[1]) - V.row(path[0])).squaredNorm() * 1.0e-4;
         double curSqDist = (splittedV[0] - splittedV[1]).squaredNorm();
-        while (curSqDist < eps_sep) {
+        // the step size can collapse to zero with coincident copies, and the
+        // relative-progress break below is NaN when lastSqDist is zero, so cap
+        int sepIter = 0;
+        while (curSqDist < eps_sep && ++sepIter <= 100) {
             for (int i = 0; i < 2; i++) {
                 double stepSize_sep = 1.0;
                 SD.initStepSize(localMesh, sepDir[i], stepSize_sep);
@@ -2163,6 +2258,11 @@ double TriMesh::computeLocalEdDec_inSplit(const std::vector<int> &triangles,
             //                    1) = sepDir_oneV[0].transpose();
             //                    sepDir[1].bottomRows(2) =
             //                    sepDir_oneV[1].transpose();
+        }
+        if (curSqDist < eps_sep * 1.0e-6) {
+            // the copies would not separate, a degenerate air mesh here
+            // crashes the scaffold, reject the candidate instead
+            return -DBL_MAX;
         }
 
         // establish air mesh information
@@ -2413,7 +2513,10 @@ double TriMesh::computeLocalEdDec_bSplit(const std::vector<int> &triangles,
                 (V.row(splitPath[1]) - V.row(splitPath[0])).squaredNorm() *
                 1.0e-4;
             double curSqDist = (splittedV[0] - splittedV[1]).squaredNorm();
-            while (curSqDist < eps_sep) {
+            // capped for the same zero-step / NaN-break reason as in
+            // computeLocalEdDec_inSplit
+            int sepIter = 0;
+            while (curSqDist < eps_sep && ++sepIter <= 100) {
                 for (int i = 0; i < 2; i++) {
                     double stepSize_sep = 1.0;
                     SD.initStepSize(localMesh, sepDir[i], stepSize_sep);
@@ -2453,7 +2556,9 @@ double TriMesh::computeLocalEdDec_bSplit(const std::vector<int> &triangles,
                     sepDir_oneV[0].transpose();
                 sepDir[1].bottomRows(2) = sepDir_oneV[1].transpose();
                 double curSqDist = (splittedV[0] - splittedV[1]).squaredNorm();
-                while (curSqDist < eps_sep) {
+                // capped for the same zero-step / NaN-break reason as above
+                int sepIter2 = 0;
+                while (curSqDist < eps_sep && ++sepIter2 <= 100) {
                     for (int i = 0; i < 2; i++) {
                         double stepSize_sep = 1.0;
                         SD.initStepSize(localMesh, sepDir[i], stepSize_sep);

@@ -1,7 +1,14 @@
+UVgami OptCuts engine
+Copyright (c) 2022-2026 Daniel Boxer
+Licensed under GPL-3.0-or-later, provided with no warranty. See the
+accompanying GNU General Public License.
+
+Derived from OptCuts (https://github.com/liminchen/OptCuts) by Minchen Li.
+The upstream MIT terms below still cover the upstream code.
+
 MIT License
 
 Copyright (c) 2018 Minchen Li (OptCuts)
-Copyright (c) 2022-2026 Daniel Boxer (UVgami modifications)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

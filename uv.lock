@@ -17,7 +17,7 @@ exclude-newer-span = "P7D"
 [manifest]
 members = [
     "partuv",
-    "uvgami-cli",
+    "uvgami-dev",
 ]
 
 [[package]]
@@ -562,7 +562,7 @@ wheels = [
 ]
 
 [[package]]
-name = "uvgami-cli"
+name = "uvgami-dev"
 version = "0.1.0"
 source = { editable = "." }
 

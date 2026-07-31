@@ -9,6 +9,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <set>
 #include <vector>
 
 namespace uvgami {
@@ -43,12 +44,8 @@ class IglUtils {
                                        const Eigen::VectorXi &bnd,
                                        Eigen::MatrixXd &UV);
 
-    static void mapScalarToColor_bin(const Eigen::VectorXd &scalar,
-                                     Eigen::MatrixXd &color, double thres);
-    static void mapScalarToColor(const std::string &meshName,
-                                 const Eigen::VectorXd &scalar,
-                                 Eigen::MatrixXd &color, double lowerBound,
-                                 double upperBound, int opt = 0);
+    static void reportDistortion(const Eigen::VectorXd &scalar,
+                                 double lowerBound, double upperBound);
 
     static void addBlockToMatrix(Eigen::SparseMatrix<double> &mtr,
                                  Eigen::Ref<const Eigen::MatrixXd> block,
@@ -109,16 +106,12 @@ class IglUtils {
     // true if any two non-adjacent UV boundary edges cross, i.e. the input UV
     // islands self-intersect or overlap each other. spatial-hash broad phase,
     // Test2DSegmentSegment narrow phase. does not catch full containment.
+    // with crossingVerts, every crossing is reported through it instead of
+    // returning at the first one, so a caller can tell which charts are at fault
     static bool checkUVBoundaryOverlap(
         const Eigen::MatrixXd &UV,
-        const std::vector<std::vector<int>> &bnd_all);
-
-    static void
-    addThickEdge(Eigen::MatrixXd &V, Eigen::MatrixXi &F, Eigen::MatrixXd &UV,
-                 Eigen::MatrixXd &seamColor, const Eigen::RowVector3d &color,
-                 const Eigen::RowVector3d &v0, const Eigen::RowVector3d &v1,
-                 double halfWidth, double texScale, bool UVorSurface = false,
-                 const Eigen::RowVector3d &normal = Eigen::RowVector3d());
+        const std::vector<std::vector<int>> &bnd_all,
+        std::set<int> *crossingVerts = nullptr);
 
     static void smoothVertField(const TriMesh &mesh, Eigen::VectorXd &field);
 };

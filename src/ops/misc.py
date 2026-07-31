@@ -1,12 +1,19 @@
-import math
-
 import bpy
+import gpu
+from gpu_extras.batch import batch_for_shader
+from mathutils import Vector
 
 from ..manager import manager
 from ..utils.geometry import calc_center
-from ..utils.mesh import check_exists, deselect_all, validate_obj
 
-sym_planes = {}
+_sym_handler = None
+_sym_shader = None
+
+_AXIS_COLORS = {
+    "X": (1.0, 0.23, 0.33),
+    "Y": (0.54, 0.83, 0.0),
+    "Z": (0.16, 0.56, 0.9),
+}
 
 
 def reset_group(group):
@@ -57,49 +64,67 @@ class UVGAMI_OT_open_preferences(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class UVGAMI_OT_preview_symmetry(bpy.types.Operator):
-    bl_idname = "uvgami.preview_symmetry"
-    bl_label = "Preview"
-    bl_description = (
-        "Add plane meshes to verify symmetry of selected meshes."
-        " Press again to delete the planes"
+def _plane_batches(axis, center, dims):
+    # half-extents of the in-plane axes, floored so flat meshes still show
+    floor = 0.1 * max(dims)
+    he = Vector(max(d, floor) for d in dims)
+    if axis == "X":
+        u, v = Vector((0, he.y, 0)), Vector((0, 0, he.z))
+    elif axis == "Y":
+        u, v = Vector((he.x, 0, 0)), Vector((0, 0, he.z))
+    else:
+        u, v = Vector((he.x, 0, 0)), Vector((0, he.y, 0))
+    corners = [center - u - v, center + u - v, center + u + v, center - u + v]
+    fill = batch_for_shader(
+        _sym_shader, "TRIS", {"pos": corners}, indices=((0, 1, 2), (0, 2, 3))
     )
-    bl_options = {"UNDO"}
+    wire = batch_for_shader(
+        _sym_shader, "LINES", {"pos": corners}, indices=((0, 1), (1, 2), (2, 3), (3, 0))
+    )
+    return fill, wire
 
-    def execute(self, context):
-        sym = context.scene.uvgami.sym_axes
-        old_select = context.selected_objects
-        old_active = context.view_layer.objects.active
-        for obj in context.selected_objects:
-            if obj not in sym_planes:
-                if validate_obj(self, obj):
-                    center = calc_center(obj)
-                    before = set(context.scene.objects)
-                    if "X" in sym:
-                        bpy.ops.mesh.primitive_plane_add(
-                            size=obj.dimensions.y * 2,
-                            location=center,
-                            rotation=(0, math.radians(90), 0),
-                        )
-                    if "Y" in sym:
-                        bpy.ops.mesh.primitive_plane_add(
-                            size=obj.dimensions.x * 2,
-                            location=center,
-                            rotation=(math.radians(90), 0, 0),
-                        )
-                    if "Z" in sym:
-                        bpy.ops.mesh.primitive_plane_add(
-                            size=obj.dimensions.z * 2, location=center
-                        )
-                    sym_planes[obj] = set(context.scene.objects).difference(before)
-            else:
-                for plane in sym_planes[obj]:
-                    if check_exists(plane):
-                        bpy.data.objects.remove(plane, do_unlink=True)
-                del sym_planes[obj]
 
-        deselect_all()
-        for obj in old_select:
-            obj.select_set(True)
-        context.view_layer.objects.active = old_active
-        return {"FINISHED"}
+def _draw_sym_planes():
+    global _sym_shader
+    props = bpy.context.scene.uvgami
+    axes = props.sym_axes
+    if not (props.use_symmetry and props.sym_preview and axes):
+        return
+    objects = [obj for obj in bpy.context.selected_objects if obj.type == "MESH"]
+    if not objects:
+        return
+    if _sym_shader is None:
+        _sym_shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    gpu.state.blend_set("ALPHA")
+    # depth tested so the mesh cuts through the plane at the symmetry line
+    gpu.state.depth_test_set("LESS_EQUAL")
+    gpu.state.line_width_set(2)
+    _sym_shader.bind()
+    for obj in objects:
+        center = calc_center(obj)
+        dims = obj.dimensions
+        for axis in axes:
+            fill, wire = _plane_batches(axis, center, dims)
+            r, g, b = _AXIS_COLORS[axis]
+            _sym_shader.uniform_float("color", (r, g, b, 0.25))
+            fill.draw(_sym_shader)
+            _sym_shader.uniform_float("color", (r, g, b, 0.9))
+            wire.draw(_sym_shader)
+    gpu.state.line_width_set(1)
+    gpu.state.depth_test_set("NONE")
+    gpu.state.blend_set("NONE")
+
+
+def start_symmetry_draw():
+    global _sym_handler
+    if _sym_handler is None:
+        _sym_handler = bpy.types.SpaceView3D.draw_handler_add(
+            _draw_sym_planes, (), "WINDOW", "POST_VIEW"
+        )
+
+
+def stop_symmetry_draw():
+    global _sym_handler
+    if _sym_handler is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_sym_handler, "WINDOW")
+        _sym_handler = None

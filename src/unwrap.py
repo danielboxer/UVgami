@@ -4,15 +4,15 @@ import subprocess
 import threading
 import time
 
-import bmesh
 import bpy
 import mathutils
 
 from .batch import EngineOutput, read_stderr_tail
 from .logger import logger
 from .manager import manager
-from .utils.mesh import check_exists
+from .ops.viewer import set_snapshot
 from .utils.paths import get_extension_dir_path
+from .utils.ui import tag_redraw
 
 
 class Unwrap:
@@ -77,10 +77,7 @@ class Unwrap:
         # unwrap process, shared with other unwraps when part of a batch process
         self.process = None
         self.batch_process = None
-        # copy of input obj used for viewing
-        self.viewer_obj = None
         self.viewing = False
-        self.view_update_count = 0
         self.progress_data = collections.deque()
         self.uv_co = collections.deque()
         self.uv_indices = collections.deque()
@@ -138,7 +135,10 @@ class Unwrap:
             return self.process.poll()
         # the engine reports when it reaches each mesh, the timeout clock
         # starts then
-        if not hasattr(self, "started_at") and self.path.stem in self.batch_process.started:
+        if (
+            not hasattr(self, "started_at")
+            and self.path.stem in self.batch_process.started
+        ):
             self.started_at = time.monotonic()
         return self.batch_process.poll_result(self.path.stem)
 
@@ -187,23 +187,12 @@ class Unwrap:
             uvs = list(self.uv_co)
             uv_idcs = list(self.uv_indices)
             self.is_uv_data_ready = False
-
-            # need to use from_edit_mesh here so mesh is updated in edit mode
-            bm = bmesh.from_edit_mesh(self.viewer_obj.data)
-            uv_map = bm.loops.layers.uv.verify()
-
-            for face in bm.faces:
-                # set uvs
-                uv_idx_triple = uv_idcs[face.index]
-                face.loops[0][uv_map].uv = uvs[uv_idx_triple[0]]
-                face.loops[1][uv_map].uv = uvs[uv_idx_triple[1]]
-                face.loops[2][uv_map].uv = uvs[uv_idx_triple[2]]
-
-            # need to use update_edit_mesh, don't call bm.free(), it will crash
-            bmesh.update_edit_mesh(self.viewer_obj.data)
+            if uvs and uv_idcs:
+                set_snapshot(uvs, uv_idcs)
+                tag_redraw()
 
     def cleanup(self):
-        """Clean up files and viewer objects."""
+        """Clean up input files."""
         try:
             if self.path.is_file():
                 self.path.unlink()
@@ -211,5 +200,3 @@ class Unwrap:
                 self.guide_path.unlink()
         except PermissionError:
             logger.add_data("errors", "Error deleting file")
-        if self.viewer_obj is not None and check_exists(self.viewer_obj):
-            bpy.data.objects.remove(self.viewer_obj, do_unlink=True)

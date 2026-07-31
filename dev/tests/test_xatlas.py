@@ -51,6 +51,23 @@ def test_build_args(fake_engine):
     assert args[args.index("-o") + 1] == "out.obj"
 
 
+def test_build_args_omits_max_cost_by_default(fake_engine):
+    args = xatlas.build_args(fake_engine, Path("in.obj"), Path("out.obj"))
+    assert "--max-cost" not in args
+
+
+def test_build_args_max_cost(fake_engine):
+    args = xatlas.build_args(fake_engine, Path("in.obj"), Path("out.obj"), 0.75)
+    assert float(args[args.index("--max-cost") + 1]) == 0.75
+
+
+def test_run_passes_max_cost(triangle, tmp_path, fake_engine, monkeypatch):
+    calls = popen_recorder(monkeypatch)
+    xatlas.run(triangle, tmp_path / "out.obj", fake_engine, 3.5)
+    argv = calls[0].argv
+    assert float(argv[argv.index("--max-cost") + 1]) == 3.5
+
+
 def test_run_success(triangle, tmp_path, fake_engine, monkeypatch):
     popen_recorder(monkeypatch)
     output = tmp_path / "result.obj"

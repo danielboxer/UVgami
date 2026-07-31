@@ -6,6 +6,142 @@ from ..manager import manager
 from ..utils.ui import newline_label
 
 
+def draw_result(layout):
+    """Banner with the last session's summary, until dismissed or the next run."""
+    if not manager.result:
+        return
+    box = layout.box()
+    row = box.row()
+    row.label(
+        text=manager.result[0],
+        icon="ERROR" if manager.result_failed else "CHECKMARK",
+    )
+    row.operator("uvgami.clear_result", text="", icon="X", emboss=False)
+    newline_label(manager.result[1:], box.column())
+
+
+def draw_queue(box):
+    """The running and queued unwraps, with their stop and cancel buttons."""
+    active_unwraps = manager.active
+    if not active_unwraps:
+        return
+    row = box.box().row()
+    row.alignment = "CENTER"
+    row.label(text="UV unwrap in progress")
+
+    if manager.is_viewer_active:
+        viewer_ui = box.box().row()
+        viewer_ui.alignment = "CENTER"
+        viewer_ui.label(text="Press ESC to exit viewer")
+
+    groups, active_groups = _build_unwrap_groups(active_unwraps)
+    _draw_unwrap_groups(box, groups, active_groups)
+    box.separator()
+
+
+def _build_unwrap_groups(active_unwraps):
+    """Group unwraps by their join jobs."""
+    groups = {}
+    active_groups = []
+    for unwrap_idx, unwrap in enumerate(active_unwraps):
+        # check for join jobs
+        # meshes with matching join jobs will be grouped together
+        found = False
+        if unwrap.join_job is not None:
+            job = unwrap.join_job
+            if job not in groups:
+                groups[job] = []
+            groups[job].append(unwrap)
+            found = True
+            if unwrap.is_active and job not in active_groups:
+                active_groups.append(job)
+        if not found:
+            # add to dictionary with unique int key
+            groups[unwrap_idx] = [unwrap]
+    return groups, active_groups
+
+
+def _draw_unwrap_groups(box, groups, active_groups):
+    """Draw all unwrap groups with their buttons."""
+    cancel_index = 0
+    for group_id, group in groups.items():
+        display_box = box.box()
+        row = display_box.row()
+        label_text = ""
+        # if the key isn't an int, it's part of a group, and can be expanded
+        expand_layout = not isinstance(group_id, int)
+
+        # draw active icon and name
+        is_active = False
+        if expand_layout:
+            row.operator(
+                "uvgami.expand",
+                text="",
+                icon=f"DISCLOSURE_TRI_{'DOWN' if group_id.is_expanded else 'RIGHT'}",
+                emboss=False,
+            ).index = manager.active.index(group[0])
+            label_text = group[0].input_name
+            is_active = group_id in active_groups
+        else:
+            label_text = group[0].name
+            is_active = group[0].is_active
+        row.label(
+            text=label_text,
+            icon=f"RADIOBUT_{'ON' if is_active else 'OFF'}",
+        )
+
+        # group stop and cancel button
+        if expand_layout:
+            # pieces the exporter hasn't written yet have no input file, so
+            # stop couldn't put them in the not unwrapped collection
+            is_exporting = group_id.count - len(group_id.unwrapped) - len(group) > 0
+            if is_active and not is_exporting:
+                stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
+                stop_op.start_idx = cancel_index
+                stop_op.end_idx = cancel_index + len(group)
+                stop_op.whole_group = True
+            cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
+            cancel_op.start_idx = cancel_index
+            cancel_op.end_idx = cancel_index + len(group)
+            cancel_op.whole_group = True
+
+        # draw buttons
+        if not expand_layout or group_id.is_expanded:
+            # if the group is expanded, show all items
+
+            for item in group:
+                if expand_layout:
+                    row = display_box.row()
+                    row.label(
+                        text=item.name,
+                        icon=f"LAYER_{'ACTIVE' if item.is_active else 'USED'}",
+                    )
+
+                # viewer button, only once the unwrap has started producing
+                if item.progress != (0, 0, 1) and manager.engine.supports_viewer:
+                    view_op = row.operator("uvgami.view_unwrap", text="", icon="HIDE_OFF")
+                    view_op.index = manager.active.index(item)
+                # stop button, only a running mesh on an engine that can
+                # finish early with a result
+                if manager.engine.supports_early_stop and item.is_active:
+                    stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
+                    stop_op.start_idx = cancel_index
+                    stop_op.end_idx = cancel_index + 1
+                # cancel button
+                cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
+                cancel_op.start_idx = cancel_index
+                cancel_op.end_idx = cancel_index + 1
+
+                cancel_index += 1
+        elif expand_layout and not group_id.is_expanded:
+            # the length of the group needs to be added
+            cancel_index += len(group)
+
+    if len(groups) > 1:
+        row = box.row()
+        row.operator("uvgami.cancel_all", icon="TRASH")
+
+
 class UVGAMI_PT_main(bpy.types.Panel):
     bl_label = "UVgami"
     bl_space_type = "VIEW_3D"
@@ -20,20 +156,33 @@ class UVGAMI_PT_main(bpy.types.Panel):
         row.scale_y = 2
         row.operator("uvgami.start", icon="UV")
 
-        active_unwraps = manager.active
-        if active_unwraps:
-            row = box.box().row()
+        if not manager.in_uv_editor:
+            draw_result(box)
+
+        # options that change the result but sit in collapsed sub-panels, so
+        # what the button will do is visible without opening them
+        hidden_on = [
+            name
+            for name, on in (
+                (
+                    "Hard Surface",
+                    props.engine == "OPTCUTS" and props.optcuts.hard_surface != "OFF",
+                ),
+                ("Proxy", props.use_proxy),
+                ("Cuts", props.use_cuts),
+                ("Symmetry", props.use_symmetry),
+                ("Seam Restrictions", props.use_guided_mode),
+                ("Timeout", props.unwrap_timeout > 0),
+            )
+            if on
+        ]
+        if hidden_on:
+            row = box.row()
             row.alignment = "CENTER"
-            row.label(text="UV unwrap in progress")
+            row.label(text=", ".join(hidden_on), icon="OPTIONS")
 
-            if manager.is_viewer_active:
-                viewer_ui = box.box().row()
-                viewer_ui.alignment = "CENTER"
-                viewer_ui.label(text="Press ESC to exit viewer")
-
-            groups, active_groups = self._build_unwrap_groups(active_unwraps)
-            self._draw_unwrap_groups(box, groups, active_groups)
-            box.separator()
+        if not manager.in_uv_editor:
+            draw_queue(box)
 
         row = box.row()
         row.label(icon="TOOL_SETTINGS", text="Engine")
@@ -59,111 +208,6 @@ class UVGAMI_PT_main(bpy.types.Panel):
         split = box.split(factor=0.7)
         split.label(icon="UV_DATA", text="Transfer UVs")
         split.prop(props, "transfer_uvs")
-
-    def _build_unwrap_groups(self, active_unwraps):
-        """Group unwraps by their join jobs."""
-        groups = {}
-        active_groups = []
-        for unwrap_idx, unwrap in enumerate(active_unwraps):
-            # check for join jobs
-            # meshes with matching join jobs will be grouped together
-            found = False
-            if unwrap.join_job is not None:
-                job = unwrap.join_job
-                if job not in groups:
-                    groups[job] = []
-                groups[job].append(unwrap)
-                found = True
-                if unwrap.is_active and job not in active_groups:
-                    active_groups.append(job)
-            if not found:
-                # add to dictionary with unique int key
-                groups[unwrap_idx] = [unwrap]
-        return groups, active_groups
-
-    def _draw_unwrap_groups(self, box, groups, active_groups):
-        """Draw all unwrap groups with their buttons."""
-        cancel_index = 0
-        for group_id, group in groups.items():
-            display_box = box.box()
-            row = display_box.row()
-            label_text = ""
-            # if the key isn't an int, it's part of a group, and can be expanded
-            expand_layout = not isinstance(group_id, int)
-
-            # draw active icon and name
-            is_active = False
-            if expand_layout:
-                row.operator(
-                    "uvgami.expand",
-                    text="",
-                    icon=f"DISCLOSURE_TRI_{'DOWN' if group_id.is_expanded else 'RIGHT'}",
-                    emboss=False,
-                ).index = manager.active.index(group[0])
-                label_text = group[0].input_name
-                is_active = group_id in active_groups
-            else:
-                label_text = group[0].name
-                is_active = group[0].is_active
-            row.label(
-                text=label_text,
-                icon=f"RADIOBUT_{'ON' if is_active else 'OFF'}",
-            )
-
-            # group stop and cancel button
-            if expand_layout:
-                # pieces the exporter hasn't written yet have no input file, so
-                # stop couldn't put them in the not unwrapped collection
-                is_exporting = (
-                    group_id.count - len(group_id.unwrapped) - len(group) > 0
-                )
-                if is_active and not is_exporting:
-                    stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
-                    stop_op.start_idx = cancel_index
-                    stop_op.end_idx = cancel_index + len(group)
-                    stop_op.whole_group = True
-                cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
-                cancel_op.start_idx = cancel_index
-                cancel_op.end_idx = cancel_index + len(group)
-                cancel_op.whole_group = True
-
-            # draw buttons
-            if not expand_layout or group_id.is_expanded:
-                # if the group is expanded, show all items
-
-                for item in group:
-                    if expand_layout:
-                        row = display_box.row()
-                        row.label(
-                            text=item.name,
-                            icon=f"LAYER_{'ACTIVE' if item.is_active else 'USED'}",
-                        )
-
-                    # viewer button, only once the unwrap has started producing
-                    if item.progress != (0, 0, 1) and manager.engine.supports_viewer:
-                        view_op = row.operator(
-                            "uvgami.view_unwrap", text="", icon="HIDE_OFF"
-                        )
-                        view_op.index = manager.active.index(item)
-                    # stop button, only a running mesh on an engine that can
-                    # finish early with a result
-                    if manager.engine.supports_early_stop and item.is_active:
-                        stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
-                        stop_op.start_idx = cancel_index
-                        stop_op.end_idx = cancel_index + 1
-                    # cancel button
-                    cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
-                    cancel_op.start_idx = cancel_index
-                    cancel_op.end_idx = cancel_index + 1
-
-                    cancel_index += 1
-            elif expand_layout and not group_id.is_expanded:
-                # the length of the group needs to be added
-                cancel_index += len(group)
-
-        if len(groups) > 1:
-            row = box.row()
-            row.operator("uvgami.cancel_all", icon="TRASH")
 
 
 class UVGAMI_PT_speed(bpy.types.Panel):
@@ -202,6 +246,15 @@ class UVGAMI_PT_speed(bpy.types.Panel):
         row = box.row()
         row.label(text="Timeout", icon="TIME")
         row.prop(props, "unwrap_timeout")
+
+        split = box.split(factor=0.7)
+        split.label(text="Proxy", icon="MOD_DECIM")
+        split.prop(props, "use_proxy")
+
+        if props.use_proxy:
+            row = box.row()
+            row.label(text="Proxy Faces", icon="MESH_DATA")
+            row.prop(props, "proxy_faces")
 
         split = box.split(factor=0.7)
         if props.use_symmetry:
@@ -289,7 +342,7 @@ class UVGAMI_PT_symmetry(bpy.types.Panel):
         row.prop(props, "sym_axes")
 
         row = box.row()
-        row.operator("uvgami.preview_symmetry", icon="EMPTY_AXIS")
+        row.prop(props, "sym_preview", icon="EMPTY_AXIS")
         row.prop(props, "sym_merge")
 
 
@@ -321,6 +374,33 @@ class UVGAMI_PT_grid(bpy.types.Panel):
         row.prop(props, "grid_type", expand=True)
         box.prop(props, "grid_res")
         box.prop(props, "auto_grid")
+
+
+class UVGAMI_PT_island_uv(bpy.types.Panel):
+    bl_label = "UVgami"
+    bl_space_type = "IMAGE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "UVgami"
+
+    def draw(self, context):
+        box = self.layout.box()
+
+        col = box.column()
+        col.scale_y = 1.5
+        col.operator("uvgami.unwrap_island", icon="UV")
+        col.operator("uvgami.recut_area", icon="UV_FACESEL")
+        col.operator("uvgami.relax_area", icon="UV_VERTEXSEL")
+
+        if manager.in_uv_editor:
+            draw_result(box)
+            draw_queue(box)
+
+        row = box.row()
+        row.label(icon="PROP_ON", text="Expand Area")
+        row.prop(context.scene.uvgami, "area_expand", text="")
+
+        if context.mode != "EDIT_MESH":
+            box.label(text="Select faces in Edit Mode", icon="INFO")
 
 
 class UVGAMI_PT_pack(bpy.types.Panel):

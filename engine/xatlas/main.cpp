@@ -63,6 +63,21 @@ bool progress_callback(xatlas::ProgressCategory category, int progress,
     return true;
 }
 
+// finite positive float from an argument value, false on anything else
+bool parse_positive_float(const std::string &text, float &out) {
+    try {
+        size_t consumed = 0;
+        float value = std::stof(text, &consumed);
+        if (consumed != text.size() || !std::isfinite(value) || value <= 0.0f) {
+            return false;
+        }
+        out = value;
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
 // one input vertex index from an f-token: "v", "v/vt", "v//vn", "v/vt/vn".
 // negative indices are relative to the vertices seen so far. returns false on
 // parse failure or out-of-range.
@@ -184,12 +199,18 @@ void emit_failed(const std::string &stem, int code) {
 int main(int argc, char **argv) {
     std::string input;
     std::string output;
+    xatlas::ChartOptions chart_options;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "-i" && i + 1 < argc) {
             input = argv[++i];
         } else if (arg == "-o" && i + 1 < argc) {
             output = argv[++i];
+        } else if (arg == "--max-cost" && i + 1 < argc) {
+            if (!parse_positive_float(argv[++i], chart_options.maxCost)) {
+                std::fprintf(stderr, "--max-cost must be a positive number\n");
+                return CODE_BAD_ARGS;
+            }
         } else {
             std::fprintf(stderr, "unknown or malformed argument: %s\n",
                          arg.c_str());
@@ -197,7 +218,9 @@ int main(int argc, char **argv) {
         }
     }
     if (input.empty() || output.empty()) {
-        std::fprintf(stderr, "usage: xatlas -i <input.obj> -o <output.obj>\n");
+        std::fprintf(stderr,
+                     "usage: xatlas -i <input.obj> -o <output.obj>"
+                     " [--max-cost <float>]\n");
         return CODE_BAD_ARGS;
     }
 
@@ -239,7 +262,7 @@ int main(int argc, char **argv) {
         return CODE_INVALID_GEOMETRY;
     }
 
-    xatlas::Generate(atlas);
+    xatlas::Generate(atlas, chart_options);
 
     if (atlas->meshCount == 0 || atlas->width == 0 || atlas->height == 0) {
         std::fprintf(stderr, "generate produced an empty atlas\n");

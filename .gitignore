@@ -1,6 +1,7 @@
 __pycache__/
 .venv*/
 .ruff_cache/
+.pytest_cache/
 
 .vscode/
 
@@ -13,10 +14,9 @@ output/
 # bundled engine binaries
 /engines/
 
-# benchmark artifacts
-bench/models/
-bench/out/
-bench/results.csv
+# benchmark artifacts. every model is committed
+dev/bench/out/
+dev/bench/results.csv
 
 build-perf/
 build-asan/

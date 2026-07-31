@@ -3,7 +3,7 @@ from pathlib import Path
 
 # loaded from file so importing doesn't touch the blender addon package
 spec = importlib.util.spec_from_file_location(
-    "addon_uv_transfer", Path(__file__).parents[1] / "src" / "uv_transfer.py"
+    "addon_uv_transfer", Path(__file__).parents[2] / "src" / "uv_transfer.py"
 )
 uv_transfer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(uv_transfer)

@@ -10,7 +10,7 @@ EXIT_MISSING_RUNTIME = 3
 EXIT_ENGINE_FAILURE = 4
 EXIT_BAD_OUTPUT = 5
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class UnwrapError(Exception):

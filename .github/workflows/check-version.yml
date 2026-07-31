@@ -1,7 +1,5 @@
 name: Check version bump
 
-# paths filters fire on any edit to the file; this gates on the version line
-# actually changing so only a real bump (or a manual run) releases
 on:
   workflow_call:
     inputs:
