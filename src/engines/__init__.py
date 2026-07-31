@@ -28,6 +28,16 @@ class Engine:
         """Draw this engine's settings rows in the main panel."""
         pass
 
+    def prepare_uvs(self, obj, props):
+        """Return whether to export obj's uv map, building one first if the
+        engine wants seams of its own. obj is a temp copy, safe to edit."""
+        return props.import_uvs and self.supports_import_uvs
+
+    def piece_uses_uvs(self, obj, props, has_uvs):
+        """Per separated piece, whether its uv map goes to the engine.
+        has_uvs is what prepare_uvs returned for the whole object."""
+        return has_uvs
+
     def draw_prefs(self, layout, prefs):
         """Draw this engine's section in the addon preferences."""
         pass

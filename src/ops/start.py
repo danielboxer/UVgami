@@ -39,6 +39,7 @@ class InputExporter:
         input_path,
         names,
         jobs,
+        piece_has_uvs,
         separated_objects,
         old_active,
         old_mode,
@@ -50,6 +51,7 @@ class InputExporter:
         self.input_path = input_path
         self.names = names
         self.jobs = jobs
+        self.piece_has_uvs = piece_has_uvs
         self.remaining = deque(separated_objects)
         self.old_active = old_active
         self.old_mode = old_mode
@@ -127,7 +129,9 @@ class InputExporter:
         # export uses selected-objects mode and the user can change selection between
         # ticks, deselect so only this object lands in the obj file
         deselect_all()
-        export_obj(obj, path, props.import_uvs and self.engine.supports_import_uvs)
+        # seams and uvs were built before separation, see create_jobs
+        has_uvs = self.piece_has_uvs[obj]
+        export_obj(obj, path, has_uvs)
 
         guide_path = self._create_guide_file(obj, path, props)
 
@@ -338,6 +342,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         self.separated_objects = None
         self.jobs = None
+        self.piece_has_uvs = None
         self.temp_collection = None
 
     def execute(self, context):
@@ -368,6 +373,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 input_path=self.input_path,
                 names=self.names,
                 jobs=self.jobs,
+                piece_has_uvs=self.piece_has_uvs,
                 separated_objects=self.separated_objects,
                 old_active=self.old_active,
                 old_mode=self.old_mode,
@@ -425,7 +431,9 @@ class UVGAMI_OT_start(bpy.types.Operator):
             return {"CANCELLED"}
 
         self.input_path, _ = self.prepare_io_folders()
-        self.jobs, self.separated_objects = self.create_jobs(context)
+        self.jobs, self.separated_objects, self.piece_has_uvs = self.create_jobs(
+            context
+        )
         deselect_all()
 
         # stash pieces in a collection not linked to the scene so they don't flash
@@ -579,6 +587,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         jobs = {}
         separated_objects = []
+        piece_has_uvs = {}
 
         # objects can't be in edit mode
         context.view_layer.objects.active = self.old_active
@@ -597,6 +606,13 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 obj_center = calc_center(obj)
                 symmetrize_job = Symmetrise(1, axes, obj_center, props.sym_merge)
                 cut_on_axes(obj, obj_center, axes)
+
+            # seams and uvs are built on the whole mesh before separation:
+            # strips.py reads region widths off the full model, and a small
+            # loose part run alone shatters (auto width tunes to the piece)
+            has_uvs = self.engine.prepare_uvs(obj, props)
+            deselect_all()
+            obj.select_set(True)
 
             # separate objects
             bpy.ops.mesh.separate(type="LOOSE")
@@ -641,6 +657,9 @@ class UVGAMI_OT_start(bpy.types.Operator):
                             "symmetrize": symmetrize_job,
                             "transfer_uvs": transfer_uvs_job,
                         }
+                        piece_has_uvs[o] = self.engine.piece_uses_uvs(
+                            o, props, has_uvs
+                        )
                         separated_objects.append(o)
                         self.names[o.name] = [
                             unwrap_name,
@@ -663,6 +682,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
                     hide_job = HideInput(1)
                     jobs[obj]["hide"] = hide_job
                     manager.input[hide_job] = self.input_objs[object_idx]
+                piece_has_uvs[obj] = self.engine.piece_uses_uvs(obj, props, has_uvs)
                 separated_objects.append(obj)
 
-        return jobs, separated_objects
+        return jobs, separated_objects, piece_has_uvs
