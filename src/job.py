@@ -5,8 +5,9 @@ import bpy
 
 from .logger import logger
 from .objfile import merge_obj_files
+from .proxy import transfer_cuts
 from .uv_transfer import plan_transfer
-from .utils.mesh import check_exists, new_bmesh, set_bmesh
+from .utils.mesh import check_exists, deselect_all, new_bmesh, set_bmesh
 
 TransferOutcome = namedtuple("TransferOutcome", ["applied", "split_count", "detail"])
 
@@ -301,6 +302,45 @@ class TransferUVs(Job):
             edge.seam = ((a, b) if a < b else (b, a)) in plan.seam_edges
 
         set_bmesh(bm, input_mesh)
+
+
+class ProxyUVs(Job):
+    """Cut the original along the unwrapped proxy's seams and unwrap it.
+
+    Rides the transfer uvs slot: the engine ran on a decimated copy, so the
+    original is the mesh that needs a uv map and the copy is thrown away."""
+
+    repack_input = True
+
+    def finish(self, input_mesh, output):
+        if not check_exists(input_mesh) or not check_exists(output):
+            return TransferOutcome(False, 0, "input or output object missing")
+        if output.data.uv_layers.active is None:
+            return TransferOutcome(False, 0, "output mesh has no uv layer")
+
+        old_active = bpy.context.view_layer.objects.active
+        old_selected = list(bpy.context.selected_objects)
+        old_mode = old_active.mode if old_active is not None else "OBJECT"
+        if old_mode != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
+        # the unwrap goes through bpy.ops, which would take every other
+        # selected mesh into edit mode along with this one
+        deselect_all()
+        try:
+            transfer_cuts(input_mesh, output)
+        finally:
+            deselect_all()
+            for obj in old_selected:
+                if check_exists(obj):
+                    obj.select_set(True)
+            if old_active is not None and check_exists(old_active):
+                bpy.context.view_layer.objects.active = old_active
+                if old_mode != "OBJECT":
+                    bpy.ops.object.mode_set(mode=old_mode)
+
+        bpy.data.objects.remove(output, do_unlink=True)
+        input_mesh.hide_set(False)
+        return TransferOutcome(True, 0, "")
 
 
 class Symmetrise(Job):

@@ -112,6 +112,22 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         ),
         options={"ENUM_FLAG"},
     )
+    use_proxy: bpy.props.BoolProperty(
+        name="",
+        description=(
+            "Unwrap a decimated copy of the mesh, then cut the original along"
+            " its seams and unwrap it in Blender. Much faster on dense meshes."
+            " The UV map lands on the original object, which must be unchanged"
+            " since starting the unwrap"
+        ),
+    )
+    proxy_faces: bpy.props.IntProperty(
+        name="",
+        description="How many triangles the decimated copy keeps",
+        min=100,
+        max=100000,
+        default=2000,
+    )
     # seam restrictions
     use_guided_mode: bpy.props.BoolProperty(
         name="", description="Avoid placing seams on parts of the mesh"

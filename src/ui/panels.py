@@ -204,6 +204,15 @@ class UVGAMI_PT_speed(bpy.types.Panel):
         row.prop(props, "unwrap_timeout")
 
         split = box.split(factor=0.7)
+        split.label(text="Proxy", icon="MOD_DECIM")
+        split.prop(props, "use_proxy")
+
+        if props.use_proxy:
+            row = box.row()
+            row.label(text="Proxy Faces", icon="MESH_DATA")
+            row.prop(props, "proxy_faces")
+
+        split = box.split(factor=0.7)
         if props.use_symmetry:
             split.active = False
         split.label(text="Cuts", icon="MESH_GRID")

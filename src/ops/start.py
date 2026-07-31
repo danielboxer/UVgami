@@ -7,11 +7,12 @@ import numpy
 
 from ..engines import get_engine
 from ..handler import handle_error
-from ..job import HideInput, Join, Preserve, Symmetrise, TransferUVs
+from ..job import HideInput, Join, Preserve, ProxyUVs, Symmetrise, TransferUVs
 from ..logger import logger
 from ..manager import manager
 from ..objfile import remap_weights_to_vt
 from ..progress_bar import progress_bar
+from ..proxy import make_proxy
 from ..unwrap import Unwrap
 from ..utils.geometry import apply_transforms, calc_center, cut, cut_on_axes
 from ..utils.io import export_obj
@@ -505,6 +506,8 @@ class UVGAMI_OT_start(bpy.types.Operator):
             object_collection.objects.link(copy_object)
 
             self._apply_modifiers(context, copy_object)
+            if props.use_proxy:
+                make_proxy(copy_object, props.proxy_faces)
             self._apply_cuts_if_needed(copy_object, obj, props)
 
             # save name, format: input name, unwrap name
@@ -589,6 +592,14 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         return input_path, output_path
 
+    def _input_job(self, props, count):
+        """The job that finishes an unwrap against the original input mesh."""
+        if props.use_proxy:
+            return ProxyUVs(count)
+        if props.transfer_uvs:
+            return TransferUVs(count)
+        return None
+
     def create_jobs(self, context):
         props = context.scene.uvgami
 
@@ -629,10 +640,9 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 unwrap_name = self.names[obj.name][0]
                 join_job = Join(len(s))
                 hide_job = None
-                transfer_uvs_job = None
+                transfer_uvs_job = self._input_job(props, len(s))
 
-                if props.transfer_uvs:
-                    transfer_uvs_job = TransferUVs(len(s))
+                if transfer_uvs_job is not None:
                     manager.input[transfer_uvs_job] = self.input_objs[object_idx]
                 else:
                     # the hide job can come after join because it doesn't depend
@@ -681,8 +691,8 @@ class UVGAMI_OT_start(bpy.types.Operator):
                     "symmetrize": symmetrize_job,
                     "transfer_uvs": None,
                 }
-                if props.transfer_uvs:
-                    transfer_uvs_job = TransferUVs(1)
+                transfer_uvs_job = self._input_job(props, 1)
+                if transfer_uvs_job is not None:
                     jobs[obj]["transfer_uvs"] = transfer_uvs_job
                     manager.input[transfer_uvs_job] = self.input_objs[object_idx]
                 else:
