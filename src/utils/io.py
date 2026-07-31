@@ -110,9 +110,6 @@ def import_obj(path, name=""):
             axis_forward="Y",
             axis_up="Z",
         )
-    # push to undo stack
-    bpy.ops.ed.undo_push()
-
     after = set(bpy.context.scene.objects)
 
     # get imported object
