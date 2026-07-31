@@ -24,10 +24,12 @@ class TransferFailure:
 
 
 def _default_tol(positions):
+    # the obj round trip snaps positions to 6 decimals, an absolute error the
+    # relative term misses on a small mesh, so keep a floor well above it
     if len(positions) == 0:
-        return 1e-6
+        return 1e-5
     diag = float(np.linalg.norm(positions.max(axis=0) - positions.min(axis=0)))
-    return max(diag * 1e-5, 1e-9)
+    return max(diag * 1e-5, 1e-5)
 
 
 def _grid_key(p, inv):
