@@ -11,6 +11,8 @@ class Engine:
     supports_early_stop = False
     supports_preserve = False
     supports_import_uvs = False
+    # whether the engine honours a _fixed sidecar of pinned uv verts
+    supports_pinned = False
     # engines whose raw uvs overlap must be packed, so pack-after-unwrap is
     # forced on rather than left to the user
     requires_pack = False
