@@ -9,7 +9,7 @@ from ..manager import manager
 from ..seams import face_edges, pair, signed_area, uv_island_groups
 from ..unwrap import Unwrap
 from ..utils.io import export_obj
-from ..utils.mesh import deselect_all, new_bmesh, set_bmesh, triangulate
+from ..utils.mesh import new_bmesh, set_bmesh, triangulate
 from ..utils.paths import get_extension_dir_path, get_preferences
 
 
@@ -105,7 +105,6 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
     path = input_path / f"{bpy.path.clean_name(name)}.obj"
     while path.is_file():
         path = path.parent / f"{path.stem}1.obj"
-    deselect_all()
     export_obj(temp, path, False)
     vertex_count = len(temp.data.vertices)
     bpy.data.objects.remove(temp, do_unlink=True)
