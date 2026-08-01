@@ -55,8 +55,12 @@ def run(
 
         work_input = in_dir / input_path.name
         shutil.copyfile(input_path, work_input)
+        # optcuts reads "<stem>_weights" and "<stem>_fixed" next to the input, so
+        # any sidecar sitting beside the source has to come along to the temp dir
+        for sidecar in input_path.parent.glob(f"{input_path.stem}_*"):
+            if sidecar.is_file():
+                shutil.copyfile(sidecar, in_dir / sidecar.name)
         if seam_weights is not None:
-            # optcuts reads the "<stem>_weights" sidecar next to the input
             shutil.copyfile(seam_weights, in_dir / f"{input_path.stem}_weights")
 
         args = build_args(engine, work_input, out_dir, quality, seam_weight, import_uvs)

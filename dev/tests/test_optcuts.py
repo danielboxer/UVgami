@@ -96,6 +96,26 @@ def test_run_copies_weights_sidecar(triangle, tmp_path, fake_engine, monkeypatch
     assert calls[0].sidecar_existed
 
 
+def test_run_copies_sidecars_next_to_the_input(
+    triangle, tmp_path, fake_engine, monkeypatch
+):
+    """A bench mesh keeps its sidecars beside the obj, and run() copies the obj
+    to a workdir. Losing the sidecar there is silent: the engine just unwraps
+    unguided."""
+    seen = []
+
+    def fake_popen(argv, **kwargs):
+        input_path = Path(argv[argv.index("-i") + 1])
+        seen.append(sorted(p.name for p in input_path.parent.iterdir()))
+        return FakeProcess(argv)
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    (tmp_path / "triangle_fixed").write_text("0,1")
+
+    optcuts.run(triangle, tmp_path / "out.obj", "medium", False, None, 3, fake_engine)
+    assert "triangle_fixed" in seen[0]
+
+
 def test_run_engine_failure(triangle, tmp_path, fake_engine, monkeypatch):
     popen_recorder(monkeypatch, returncode=7)
     with pytest.raises(UnwrapError) as error:
