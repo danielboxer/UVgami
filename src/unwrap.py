@@ -187,5 +187,8 @@ class Unwrap:
                 self.path.unlink()
             if self.guide_path is not None and self.guide_path.is_file():
                 self.guide_path.unlink()
+            importance_path = self.path.parent / f"{self.path.stem}_importance"
+            if importance_path.is_file():
+                importance_path.unlink()
         except PermissionError:
             logger.add_data("errors", "Error deleting file")

@@ -306,6 +306,10 @@ class UVGAMI_PT_guides(bpy.types.Panel):
         row.label(text="Weight", icon="MOD_VERTEX_WEIGHT")
         row.prop(context.scene.uvgami, "weight_value", slider=True)
 
+        row = box.row()
+        row.label(text="Protect From Stretching", icon="MOD_MESHDEFORM")
+        row.prop(context.scene.uvgami, "use_importance_weights", text="")
+
 
 class UVGAMI_PT_symmetry(bpy.types.Panel):
     bl_label = "Symmetry"
