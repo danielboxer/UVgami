@@ -22,7 +22,6 @@ from .utils.mesh import (
     edit_restore,
     move_to_collection,
     new_bmesh,
-    set_active_any,
     set_bmesh,
 )
 from .utils.paths import get_extension_dir_path, get_preferences
@@ -339,12 +338,7 @@ class UnwrapManager:
         if unwrap.preserve_job is not None and unwrap.maintain_mode == "FULL":
             reroute_seams(path, edge_path)
 
-        old_active = bpy.context.view_layer.objects.active
-        if old_active is None:
-            old_active = set_active_any()
         output = import_obj(path, f"{unwrap.input_name}_unwrapped")
-        # the obj importer changes the active object
-        bpy.context.view_layer.objects.active = old_active
 
         set_origin(output, unwrap.origin)
 
@@ -491,12 +485,7 @@ class UnwrapManager:
 
         if move_to_invalid:
             if prefs.invalid_collection:
-                old_active = bpy.context.view_layer.objects.active
                 invalid_obj = import_obj(unwrap.path)
-                # the importer makes its object active, which would pull the uv
-                # editor off whatever the user is editing
-                if old_active is not None and check_exists(old_active):
-                    bpy.context.view_layer.objects.active = old_active
                 collection = check_collection(
                     "UVgami Not Unwrapped", bpy.context.scene.collection
                 )

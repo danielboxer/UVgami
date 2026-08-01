@@ -125,14 +125,11 @@ class InputExporter:
 
         edge_path, new_edges = self._triangulate_mesh(obj, path, props)
 
-        # relink to the scene so select_set works, objects not in the view layer
-        # can't be selected, all within one tick so no redraw shows the object
+        # relink to the scene so matrix_world is evaluated for the world-space
+        # export, all within one tick so no redraw shows the object
         bpy.context.scene.collection.objects.link(obj)
         bpy.context.view_layer.update()
 
-        # export uses selected-objects mode and the user can change selection between
-        # ticks, deselect so only this object lands in the obj file
-        deselect_all()
         # seams and uvs were built before separation, see create_jobs
         has_uvs = self.piece_has_uvs[obj]
         export_obj(obj, path, has_uvs)

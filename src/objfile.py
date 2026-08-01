@@ -34,7 +34,7 @@ def remap_weights_to_vt(path, weights):
 
     optcuts rebuilds a UV-carrying mesh with one vertex per vt, so the weights
     sidecar must be indexed by vt or the weights land on arbitrary vertices.
-    Each vt has one source vertex (export splits shared UVs first)."""
+    Each vt has one source vertex (export writes one vt per vertex, uv pair)."""
     vt_to_v = {}
     with path.open() as f:
         for line in f:
