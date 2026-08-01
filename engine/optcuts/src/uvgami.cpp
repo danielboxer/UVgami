@@ -623,6 +623,15 @@ bool preDrawFunc(void) {
             return false;
         }
 
+        // a pinned run is done at the first feasible stationary state. the
+        // full search only tightens distortion up to the bound by merging
+        // cuts back, and a pinned border leaves no productive merge, so it
+        // spins on an unchanged map until the no-progress cap
+        if (pinnedMode && measure_bound <= upperBound) {
+            converge_preDrawFunc();
+            return false;
+        }
+
         double E_se;
         triSoup[channel_result]->computeSeamSparsity(E_se);
         E_se /= triSoup[channel_result]->virtualRadius;
@@ -647,7 +656,9 @@ bool preDrawFunc(void) {
         if (std::abs(E_se - E_se_last) <= 1.0e-9 * std::abs(E_se_last) &&
             std::abs(E_SD - E_SD_last) <= 1.0e-9 * std::abs(E_SD_last) &&
             triSoup[channel_result]->V_rest.rows() == V_last) {
-            if (++noProgressCount >= 50) {
+            // lambda creep is ~1e-6 per frozen round, far too small to flip
+            // a pick the pins already blocked, so pinned runs get 3 rounds
+            if (++noProgressCount >= (pinnedMode ? 3 : 50)) {
                 converge_preDrawFunc();
                 return false;
             }
