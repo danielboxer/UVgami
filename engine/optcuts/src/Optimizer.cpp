@@ -299,6 +299,35 @@ bool Optimizer::createFracture(int opType, const std::vector<int> &path,
     return true;
 }
 
+bool Optimizer::stitchIslands(void) {
+    topoIter++;
+    data_findExtrema = result;
+    if (!result.stitchIsland())
+        return false;
+    if (scaffolding) {
+        scaffold = Scaffold(result, UV_bnds_scaffold, E_scaffold, bnd_scaffold);
+        result.scaffold = &scaffold;
+        scaffold.mergeVNeighbor(result.vNeighbor, vNeighbor_withScaf);
+        scaffold.mergeFixedV(result.fixedVert, fixedV_withScaf);
+    }
+    updateEnergyData(true, false, true);
+    fractureInitiated = true;
+    return true;
+}
+
+bool Optimizer::zipStitched(void) {
+    if (!result.zipStitchedSeam())
+        return false;
+    if (scaffolding) {
+        scaffold = Scaffold(result, UV_bnds_scaffold, E_scaffold, bnd_scaffold);
+        result.scaffold = &scaffold;
+        scaffold.mergeVNeighbor(result.vNeighbor, vNeighbor_withScaf);
+        scaffold.mergeFixedV(result.fixedVert, fixedV_withScaf);
+    }
+    updateEnergyData(true, false, true);
+    return true;
+}
+
 bool Optimizer::createFracture(double stressThres, int propType,
                                bool allowPropagate, bool allowInSplit) {
     if (propType == 0) {

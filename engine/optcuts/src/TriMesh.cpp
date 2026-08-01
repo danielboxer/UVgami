@@ -14,6 +14,7 @@
 #include "SymDirichletEnergy.hpp"
 #include "Optimizer.hpp"
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <streambuf>
@@ -995,6 +996,329 @@ bool TriMesh::mergeEdge(double lambda, double EDecThres, bool propagate) {
         // << EDecThres << std::endl;
         return false;
     }
+}
+
+// after a weld swap-deletes vertex removed into kept and renames the last
+// vertex backI into the freed slot, map an index to its new name. every
+// vertex-indexed structure must go through this after a stitch weld
+static int renameAfterWeld(int vI, int removed, int kept, int backI) {
+    if (vI == removed)
+        return kept;
+    if (vI == backI)
+        return removed;
+    return vI;
+}
+
+static void renameSetAfterWeld(std::set<int> &verts, int removed, int kept,
+                               int backI) {
+    std::set<int> renamed;
+    for (const int vI : verts)
+        renamed.insert(renameAfterWeld(vI, removed, kept, backI));
+    verts.swap(renamed);
+}
+
+bool TriMesh::stitchIsland(void) {
+    // island id per vertex
+    std::vector<int> vertComp(V.rows(), -1);
+    int compAmt = 0;
+    for (int seedVI = 0; seedVI < V.rows(); seedVI++) {
+        if (vertComp[seedVI] >= 0)
+            continue;
+        std::vector<int> stack = {seedVI};
+        vertComp[seedVI] = compAmt;
+        while (!stack.empty()) {
+            int vI = stack.back();
+            stack.pop_back();
+            for (const auto &nbVI : vNeighbor[vI]) {
+                if (vertComp[nbVI] < 0) {
+                    vertComp[nbVI] = compAmt;
+                    stack.emplace_back(nbVI);
+                }
+            }
+        }
+        compAmt++;
+    }
+    if (compAmt < 2)
+        return false;
+
+    std::vector<int> compSize(compAmt, 0);
+    std::vector<bool> compFixed(compAmt, false);
+    for (int vI = 0; vI < V.rows(); vI++)
+        compSize[vertComp[vI]]++;
+    for (const auto &vI : fixedVert)
+        compFixed[vertComp[vI]] = true;
+
+    // rank island pairs by total shared rest length, the strongest link is
+    // the most seam removed per stitch
+    auto compKey = [&](int cohI) -> std::pair<int, int> {
+        return std::minmax(vertComp[cohE(cohI, 0)], vertComp[cohE(cohI, 2)]);
+    };
+    std::map<std::pair<int, int>, double> sharedLen;
+    std::vector<int> candidates;
+    for (int cohI = 0; cohI < cohE.rows(); cohI++) {
+        if (cohE.row(cohI).minCoeff() < 0)
+            continue;
+        if (vertComp[cohE(cohI, 0)] == vertComp[cohE(cohI, 2)])
+            continue;
+        if (fixedVert.count(cohE(cohI, 0)) || fixedVert.count(cohE(cohI, 1)) ||
+            fixedVert.count(cohE(cohI, 2)) || fixedVert.count(cohE(cohI, 3)))
+            continue;
+        candidates.emplace_back(cohI);
+        sharedLen[compKey(cohI)] += edgeLen[cohI];
+    }
+    std::sort(candidates.begin(), candidates.end(), [&](int cohA, int cohB) {
+        double lenA = sharedLen[compKey(cohA)], lenB = sharedLen[compKey(cohB)];
+        if (lenA != lenB)
+            return lenA > lenB;
+        return edgeLen[cohA] > edgeLen[cohB];
+    });
+
+    for (const auto &cohI : candidates) {
+        int a0 = cohE(cohI, 0), a1 = cohE(cohI, 1);
+        int b0 = cohE(cohI, 2), b1 = cohE(cohI, 3);
+
+        // move the smaller island, but never one holding a fixed vertex
+        int movingComp = vertComp[b0];
+        int from0 = b0, from1 = b1, to0 = a0, to1 = a1;
+        if (compFixed[movingComp] ||
+            (!compFixed[vertComp[a0]] &&
+             compSize[vertComp[a0]] < compSize[movingComp])) {
+            movingComp = vertComp[a0];
+            from0 = a0, from1 = a1, to0 = b0, to1 = b1;
+        }
+        if (compFixed[movingComp])
+            continue;
+
+        // rigid transform mapping from0 exactly onto to0 and the shared edge
+        // directions together. the two uv edge lengths can differ, the slack
+        // stays at the far endpoint pair for the merge machinery to close
+        const Eigen::RowVector2d eF = V.row(from1) - V.row(from0);
+        const Eigen::RowVector2d eT = V.row(to1) - V.row(to0);
+        const double nF = eF.norm(), nT = eT.norm();
+        if ((nF == 0.0) || (nT == 0.0))
+            continue;
+        const double cosR = eF.dot(eT) / (nF * nT);
+        const double sinR = (eF[0] * eT[1] - eF[1] * eT[0]) / (nF * nT);
+        Eigen::Matrix2d rotT; // transposed, for row vectors
+        rotT << cosR, sinR, -sinR, cosR;
+        const Eigen::RowVector2d pFrom = V.row(from0);
+        const Eigen::RowVector2d pTo = V.row(to0);
+
+        // test the placement on a scratch copy with every endpoint pair the
+        // zip will weld already identified, spreading from the stitched edge
+        // through shared endpoints. the whole shared run then reads interior
+        // and only real crossings remain, a run continuation landing exactly
+        // collinear would otherwise read as an overlap
+        Eigen::MatrixXd V_test = V;
+        for (int vI = 0; vI < V.rows(); vI++) {
+            if (vertComp[vI] == movingComp)
+                V_test.row(vI) = (V.row(vI) - pFrom) * rotT + pTo;
+        }
+        std::map<int, int> parent;
+        auto findRep = [&parent](int vI) {
+            while (true) {
+                auto it = parent.find(vI);
+                if ((it == parent.end()) || (it->second == vI))
+                    return vI;
+                vI = it->second;
+            }
+        };
+        auto unite = [&](int vA, int vB) {
+            int repA = findRep(vA), repB = findRep(vB);
+            if (repA != repB)
+                parent[std::max(repA, repB)] = std::min(repA, repB);
+        };
+        unite(a0, b0);
+        unite(a1, b1);
+        const std::pair<int, int> stitchKey = compKey(cohI);
+        bool grew = true;
+        while (grew) {
+            grew = false;
+            for (const auto &cohI2 : candidates) {
+                if (compKey(cohI2) != stitchKey)
+                    continue;
+                bool weld0 = findRep(cohE(cohI2, 0)) == findRep(cohE(cohI2, 2));
+                bool weld1 = findRep(cohE(cohI2, 1)) == findRep(cohE(cohI2, 3));
+                if (weld0 != weld1) {
+                    unite(cohE(cohI2, 0), cohE(cohI2, 2));
+                    unite(cohE(cohI2, 1), cohE(cohI2, 3));
+                    grew = true;
+                }
+            }
+        }
+        Eigen::MatrixXi F_test = F;
+        for (int triI = 0; triI < F_test.rows(); triI++) {
+            for (int vI = 0; vI < 3; vI++)
+                F_test(triI, vI) = findRep(F_test(triI, vI));
+        }
+        std::vector<std::vector<int>> bnd_all;
+        igl::boundary_loop(F_test, bnd_all);
+        if (IglUtils::checkUVBoundaryOverlap(V_test, bnd_all, NULL))
+            continue;
+
+        // crossing-free placement can still bury one island inside another,
+        // test a representative point of each island against the material of
+        // every other (even-odd over all its loops, so holes stay legal)
+        const int mergedComp = vertComp[a0];
+        auto compOf = [&](int vI) {
+            return (vertComp[vI] == vertComp[b0]) ? mergedComp : vertComp[vI];
+        };
+        auto insideComp = [&](const Eigen::RowVector2d &p, int compI) {
+            bool inside = false;
+            for (const auto &loop : bnd_all) {
+                if (compOf(loop[0]) != compI)
+                    continue;
+                for (int i = 0; i < loop.size(); i++) {
+                    const Eigen::RowVector2d &s = V_test.row(loop[i]);
+                    const Eigen::RowVector2d &e =
+                        V_test.row(loop[(i + 1) % loop.size()]);
+                    if (((s[1] > p[1]) != (e[1] > p[1])) &&
+                        (p[0] < s[0] + (e[0] - s[0]) * (p[1] - s[1]) /
+                                           (e[1] - s[1])))
+                        inside = !inside;
+                }
+            }
+            return inside;
+        };
+        std::map<int, int> compRepr;
+        for (const auto &loop : bnd_all)
+            compRepr.emplace(compOf(loop[0]), loop[0]);
+        bool buried = false;
+        for (const auto &reprI : compRepr) {
+            for (const auto &reprJ : compRepr) {
+                if (reprI.first == reprJ.first)
+                    continue;
+                if (insideComp(V_test.row(reprJ.second), reprI.first)) {
+                    buried = true;
+                    break;
+                }
+            }
+            if (buried)
+                break;
+        }
+        if (buried)
+            continue;
+
+        // apply the placement
+        for (int vI = 0; vI < V.rows(); vI++) {
+            if (vertComp[vI] == movingComp)
+                V.row(vI) = (V.row(vI) - pFrom) * rotT + pTo;
+        }
+
+        // weld b0 into a0, turning this pair into a zipper bottom. same
+        // swap-delete scheme as mergeBoundaryEdges
+        int vBackI = static_cast<int>(V.rows()) - 1;
+        const int keepVI = ((a0 == vBackI) && (b0 < vBackI)) ? b0 : a0;
+        if (b0 < vBackI) {
+            V_rest.row(b0) = V_rest.row(vBackI);
+            vertWeight[b0] = vertWeight[vBackI];
+            V.row(b0) = V.row(vBackI);
+        }
+        V_rest.conservativeResize(vBackI, 3);
+        vertWeight.conservativeResize(vBackI);
+        V.conservativeResize(vBackI, 2);
+
+        for (int triI = 0; triI < F.rows(); triI++) {
+            for (int vI = 0; vI < 3; vI++)
+                F(triI, vI) = renameAfterWeld(F(triI, vI), b0, keepVI, vBackI);
+        }
+        for (int cohI2 = 0; cohI2 < cohE.rows(); cohI2++) {
+            for (int pI = 0; pI < 4; pI++)
+                cohE(cohI2, pI) =
+                    renameAfterWeld(cohE(cohI2, pI), b0, keepVI, vBackI);
+        }
+        renameSetAfterWeld(stitchFronts, b0, keepVI, vBackI);
+        stitchFronts.insert(keepVI);
+
+        computeFeatures(); // rebuilds fracTail from the new zipper bottom
+        curFracTail = keepVI;
+        zipStitchedSeam();
+        return true;
+    }
+    return false;
+}
+
+bool TriMesh::zipStitchedSeam(void) {
+    bool changed = false;
+    std::set<int> active = stitchFronts;
+    while (!active.empty()) {
+        const int fork = *active.begin();
+        active.erase(active.begin());
+
+        // a zipper bottom hinged at this front
+        int zipI = -1, forkVI = -1;
+        for (int cohI = 0; cohI < cohE.rows(); cohI++) {
+            if (cohE.row(cohI).minCoeff() < 0)
+                continue;
+            if ((cohE(cohI, 0) == cohE(cohI, 2)) && (cohE(cohI, 0) == fork) &&
+                (cohE(cohI, 1) != cohE(cohI, 3))) {
+                zipI = cohI;
+                forkVI = 0;
+                break;
+            }
+            if ((cohE(cohI, 1) == cohE(cohI, 3)) && (cohE(cohI, 1) == fork) &&
+                (cohE(cohI, 0) != cohE(cohI, 2))) {
+                zipI = cohI;
+                forkVI = 1;
+                break;
+            }
+        }
+        if (zipI < 0) {
+            // zipped past or blocked for good, either way not a front anymore
+            stitchFronts.erase(fork);
+            continue;
+        }
+
+        const int u = cohE(zipI, 1 - forkVI), w = cohE(zipI, 3 - forkVI);
+        if (fixedVert.count(u) || fixedVert.count(w))
+            continue;
+
+        std::vector<int> triangles;
+        for (const auto &nbVI : vNeighbor[u]) {
+            auto finder = edge2Tri.find(std::pair<int, int>(u, nbVI));
+            if (finder != edge2Tri.end())
+                triangles.emplace_back(finder->second);
+        }
+        for (const auto &nbVI : vNeighbor[w]) {
+            auto finder = edge2Tri.find(std::pair<int, int>(w, nbVI));
+            if (finder != edge2Tri.end())
+                triangles.emplace_back(finder->second);
+        }
+        const Eigen::RowVector2d mergedPos = (V.row(u) + V.row(w)) / 2.0;
+        const Eigen::RowVector2d backupU = V.row(u), backupW = V.row(w);
+        V.row(u) = mergedPos;
+        V.row(w) = mergedPos;
+        const bool feasible = checkInversion(true, triangles);
+        V.row(u) = backupU;
+        V.row(w) = backupW;
+        if (!feasible)
+            // the front stays, relaxation may make room for a later attempt
+            continue;
+
+        std::vector<int> path;
+        if (forkVI) {
+            path = {cohE(zipI, 0), cohE(zipI, 1), cohE(zipI, 2)};
+        } else {
+            path = {cohE(zipI, 3), cohE(zipI, 2), cohE(zipI, 1)};
+        }
+        const int vBackI = static_cast<int>(V.rows()) - 1;
+        // path[2] is welded away and the last vertex takes its index, the
+        // merged vertex ends up at path[0] unless that rename moved it
+        const int mergedVI =
+            ((path[0] == vBackI) && (path[2] < vBackI)) ? path[2] : path[0];
+        mergeBoundaryEdges(std::pair<int, int>(path[0], path[1]),
+                           std::pair<int, int>(path[1], path[2]), mergedPos);
+        computeFeatures();
+        changed = true;
+
+        renameSetAfterWeld(stitchFronts, path[2], mergedVI, vBackI);
+        renameSetAfterWeld(active, path[2], mergedVI, vBackI);
+        stitchFronts.insert(mergedVI);
+        // the same front can hinge another zipper, a stitch lands mid-run
+        active.insert(mergedVI);
+        active.insert(renameAfterWeld(fork, path[2], mergedVI, vBackI));
+    }
+    return changed;
 }
 
 bool TriMesh::splitOrMerge(double lambda_t, double EDecThres, bool propagate,

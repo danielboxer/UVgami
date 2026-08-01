@@ -39,6 +39,10 @@ class Optimizer {
                         bool allowPropagate = true, bool allowInSplit = false);
     bool createFracture(int opType, const std::vector<int> &path,
                         const Eigen::MatrixXd &newVertPos, bool allowPropagate);
+    // stitch two islands along a shared cohesive edge and zip the seam
+    bool stitchIslands(void);
+    // retry the stitch fronts a relax may have made room for
+    bool zipStitched(void);
     void setConfig(const TriMesh &config, int iterNum, int p_topoIter);
     void setScaffolding(bool p_scaffolding);
     void getGradientVisual(Eigen::MatrixXd &arrowVec) const;

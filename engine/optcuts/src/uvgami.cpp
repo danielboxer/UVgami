@@ -47,6 +47,8 @@ bool rand1PInitCut = false;
 bool pinnedMode = false;
 // relax the kept map without any split/merge, stops at the first stationary point
 bool noCutMode = false;
+// greedily merge islands along shared mesh edges, no splits ever
+bool stitchMode = false;
 int stationaryCount = 0;
 double lambda_init = 0.999;
 bool optimization_on = false;
@@ -623,6 +625,21 @@ bool preDrawFunc(void) {
             return false;
         }
 
+        // a stitch run merges two islands at a time, re-converging in between
+        // so the zip and relaxation settle before the next placement. no
+        // cuts are ever queried, done when nothing fits and no blocked
+        // front loosened up
+        if (stitchMode) {
+            bool changed = optimizer->zipStitched();
+            if (optimizer->stitchIslands())
+                changed = true;
+            if (changed)
+                converged = 0;
+            else
+                converge_preDrawFunc();
+            return false;
+        }
+
         // a pinned run is done at the first feasible stationary state. the
         // full search only tightens distortion up to the bound by merging
         // cuts back, and a pinned border leaves no productive merge, so it
@@ -1008,6 +1025,16 @@ int main(int argc, char *argv[]) {
     if (!fixedVerts.empty() && !keepInputUV) {
         std::cerr << "pinned vertices need the input UV map kept" << std::endl;
         return UVGAMI_RC_PINNED_UV_NOT_KEPT;
+    }
+
+    // stitch mode: a <mesh>_stitch sidecar asks for greedy island merging on
+    // the kept map, a redone layout has no island placement worth stitching
+    std::string stitchFileName = std::string(inputFolderPath.u8string()) +
+                                 pathSeparator() + meshName + "_stitch";
+    stitchMode = std::ifstream(stitchFileName).is_open();
+    if (stitchMode && !keepInputUV) {
+        std::cerr << "stitching needs the input UV map kept" << std::endl;
+        return UVGAMI_RC_STITCH_UV_NOT_KEPT;
     }
     if (!fixedVerts.empty()) {
         // the distortion energy is scale-sensitive and pins block the global

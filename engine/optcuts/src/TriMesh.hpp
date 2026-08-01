@@ -59,6 +59,8 @@ class TriMesh {
     int curFracTail;
     std::pair<int, int> curInteriorFracTails;
     double initSeamLen;
+    // weld vertices left by stitchIsland whose seam may still zip further
+    std::set<int> stitchFronts;
 
   public: // constructor
     // default constructor that doesn't do anything
@@ -88,6 +90,13 @@ class TriMesh {
                     std::vector<int> &path_max, Eigen::MatrixXd &newVertPos_max,
                     std::pair<double, double> &energyChanges_max);
     bool mergeEdge(double lambda, double EDecThres, bool propagate);
+    // rigid-align two separate islands along a shared cohesive edge and weld
+    // one endpoint pair, then zip the seam from there
+    bool stitchIsland(void);
+    // weld the zipper bottoms at the stitch fronts while inversion free. the
+    // standard merge machinery cannot run here, its corner air loop has no
+    // representation for the pinched vertex a fresh stitch makes
+    bool zipStitchedSeam(void);
     bool splitOrMerge(double lambda_t, double EDecThres, bool propagate,
                       bool splitInterior, bool &isMerge);
 
