@@ -113,6 +113,75 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
     queue_fix(obj, IslandUVs(list(group), bbox, area), name, path, vertex_count, props)
 
 
+def queue_stitch(obj, targets, input_path, props):
+    """Export the selected islands as one mesh with their uvs and a _stitch
+    sidecar, and queue it with an IslandUVs job over all their faces so the
+    merged result comes back into the islands' combined uv bounds."""
+    mesh = obj.data
+    layer = mesh.uv_layers.active
+    faces = [fi for group, _, _ in targets for fi in group]
+    used = sorted({v for fi in faces for v in mesh.polygons[fi].vertices})
+    local = {v: i for i, v in enumerate(used)}
+    stitch_mesh = bpy.data.meshes.new("uvgami_stitch")
+    stitch_mesh.from_pydata(
+        [mesh.vertices[v].co.copy() for v in used],
+        [],
+        [[local[v] for v in mesh.polygons[fi].vertices] for fi in faces],
+    )
+    uv = stitch_mesh.uv_layers.new()
+    # optcuts treats a mirrored island as inverted and re-cuts it, which stitch
+    # mode forbids, so mirror those back within their own bounds before export
+    flip = {}
+    for group, (min_u, _, max_u, _), _ in targets:
+        total = 0.0
+        for fi in group:
+            poly = mesh.polygons[fi]
+            pts = [
+                tuple(layer.uv[poly.loop_start + c].vector)
+                for c in range(poly.loop_total)
+            ]
+            total += signed_area(pts)
+        if total < 0:
+            for fi in group:
+                flip[fi] = min_u + max_u
+    loop = 0
+    for fi in faces:
+        poly = mesh.polygons[fi]
+        for c in range(poly.loop_total):
+            u, v = layer.uv[poly.loop_start + c].vector
+            uv.uv[loop].vector = (flip[fi] - u, v) if fi in flip else (u, v)
+            loop += 1
+    temp = bpy.data.objects.new("uvgami_stitch", stitch_mesh)
+    bpy.context.scene.collection.objects.link(temp)
+    temp.matrix_world = obj.matrix_world.copy()
+
+    bm = new_bmesh(temp)
+    if any(len(f.verts) > 3 for f in bm.faces):
+        triangulate(bm)
+        set_bmesh(bm, temp)
+    else:
+        bm.free()
+
+    name = f"{obj.name}_stitch"
+    path = input_path / f"{bpy.path.clean_name(name)}.obj"
+    while path.is_file():
+        path = path.parent / f"{path.stem}1.obj"
+    export_obj(temp, path, True)
+    (path.parent / f"{path.stem}_stitch").touch()
+    vertex_count = len(temp.data.vertices)
+    bpy.data.objects.remove(temp, do_unlink=True)
+    bpy.data.meshes.remove(stitch_mesh)
+
+    bbox = (
+        min(b[0] for _, b, _ in targets),
+        min(b[1] for _, b, _ in targets),
+        max(b[2] for _, b, _ in targets),
+        max(b[3] for _, b, _ in targets),
+    )
+    area = sum(a for _, _, a in targets)
+    queue_fix(obj, IslandUVs(faces, bbox, area), name, path, vertex_count, props)
+
+
 def target_areas(obj, rings):
     """Selected areas per island, grown by face rings inside the island, each
     with the border verts that must stay pinned. A disconnected selection
@@ -399,6 +468,53 @@ class UVGAMI_OT_unwrap_island(bpy.types.Operator):
             bpy.ops.object.mode_set(mode="EDIT")
 
         self.report({"INFO"}, f"Unwrapping {len(targets)} island(s)")
+        return {"FINISHED"}
+
+
+class UVGAMI_OT_stitch_islands(bpy.types.Operator):
+    bl_idname = "uvgami.stitch_islands"
+    bl_label = "Stitch Islands"
+    bl_description = (
+        "Merge the uv islands under the selected faces with the engine."
+        " Islands sharing a mesh edge are moved together, welded along it"
+        " and relaxed, so fewer islands cover the same faces. Islands with"
+        " no shared edge stay separate"
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == "EDIT_MESH"
+
+    def execute(self, context):
+        props = context.scene.uvgami
+        engine, engine_ctx = validate_engine(self, props)
+        if engine is None:
+            return {"CANCELLED"}
+        if not engine.supports_stitch:
+            self.report({"ERROR"}, f"{engine.label} can't stitch islands")
+            return {"CANCELLED"}
+
+        obj = context.view_layer.objects.active
+        bpy.ops.object.mode_set(mode="OBJECT")
+        try:
+            targets, error = target_islands(obj)
+            if error:
+                self.report({"ERROR"}, error)
+                return {"CANCELLED"}
+            if len(targets) < 2:
+                self.report({"ERROR"}, "Select faces on at least two islands")
+                return {"CANCELLED"}
+
+            def queue_one(k, input_path):
+                queue_stitch(obj, targets, input_path, props)
+
+            queue_targets(engine, engine_ctx, 1, queue_one)
+        finally:
+            obj.select_set(True)
+            context.view_layer.objects.active = obj
+            bpy.ops.object.mode_set(mode="EDIT")
+
+        self.report({"INFO"}, f"Stitching {len(targets)} islands")
         return {"FINISHED"}
 
 

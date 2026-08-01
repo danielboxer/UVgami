@@ -32,6 +32,7 @@ from .src.ops.uv import UVGAMI_OT_pack
 from .src.ops.island import (
     UVGAMI_OT_recut_area,
     UVGAMI_OT_relax_area,
+    UVGAMI_OT_stitch_islands,
     UVGAMI_OT_unwrap_island,
 )
 from .src.ops.misc import (
@@ -85,6 +86,7 @@ classes = (
     UVGAMI_OT_clear_draw,
     UVGAMI_OT_pack,
     UVGAMI_OT_unwrap_island,
+    UVGAMI_OT_stitch_islands,
     UVGAMI_OT_recut_area,
     UVGAMI_OT_relax_area,
     UVGAMI_OT_cancel,
