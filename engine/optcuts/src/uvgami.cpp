@@ -8,6 +8,7 @@
 #include <thread>
 
 #include "uvgami.h"
+#include "Flatten.hpp"
 #include "IglUtils.hpp"
 #include "Optimizer.hpp"
 #include "SymDirichletEnergy.hpp"
@@ -817,6 +818,9 @@ int main(int argc, char *argv[]) {
     std::filesystem::path inputFolderPath;
     bool hasUV = false;
     bool ignoreUV = false;
+    bool flattenMode = false;
+    bool packOnlyMode = false;
+    int flattenIters = 10;
 
     try {
         TCLAP::CmdLine cmd("uvgami command line", ' ', "1.1.2");
@@ -836,7 +840,20 @@ int main(int argc, char *argv[]) {
             "w", "max_face_weight", "Maximum face importance weight", false, 0,
             "uint32_t", cmd);
         TCLAP::SwitchArg ignoreUVArg("g", "ignore_uv", "Ignore UV map", cmd);
+        TCLAP::SwitchArg flattenArg(
+            "", "flatten",
+            "Flatten and pack along the _seams sidecar, no optimization", cmd);
+        TCLAP::ValueArg<int> flattenItersArg(
+            "", "flatten_iters", "SLIM iterations in flatten mode", false, 10,
+            "int", cmd);
+        TCLAP::SwitchArg packOnlyArg(
+            "", "pack_only", "Repack the input UV map without solving", cmd);
         cmd.parse(argc, argv);
+
+        flattenMode = flattenArg.getValue() || packOnlyArg.getValue();
+        packOnlyMode = packOnlyArg.getValue();
+        if (flattenItersArg.getValue() > 0)
+            flattenIters = flattenItersArg.getValue();
 
         if (maxSeamWeightArg.isSet())
             maxSeamWeight = maxSeamWeightArg.getValue();
@@ -872,6 +889,10 @@ int main(int argc, char *argv[]) {
                outputFolderPath.c_str());
         return -1;
     }
+    if (flattenMode)
+        return uvgami::runFlatten(meshFileName, outputFolderPath, flattenIters,
+                                  packOnlyMode);
+
     // Load mesh
     std::string meshFilePath = meshFileName;
     meshFileName =

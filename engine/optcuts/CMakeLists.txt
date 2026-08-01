@@ -87,6 +87,7 @@ add_subdirectory(ext/libigl EXCLUDE_FROM_ALL)
 
 file(GLOB SRCFILES
   src/uvgami.cpp
+  src/Flatten.cpp
   src/Optimizer.cpp
   src/TriMesh.cpp
   src/Scaffold.cpp

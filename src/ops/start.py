@@ -1,4 +1,5 @@
 import contextlib
+import threading
 import time
 from collections import deque
 
@@ -317,6 +318,220 @@ class InputExporter:
         return materials, material_indices, vertex_groups, shade_smooth
 
 
+def input_job(props, count):
+    """The job that finishes an unwrap against the original input mesh."""
+    if props.use_proxy:
+        return ProxyUVs(count)
+    if props.transfer_uvs:
+        return TransferUVs(count)
+    return None
+
+
+class SessionBuilder:
+    """Runs each object's preseed in a worker thread, then separates it and
+    hands every piece to an InputExporter, all across timer ticks so the UI
+    stays live through the slow part."""
+
+    def __init__(
+        self,
+        engine,
+        engine_ctx,
+        input_path,
+        names,
+        input_objs,
+        objects,
+        old_active,
+        old_mode,
+        start_objects,
+        temp_collection,
+    ):
+        self.engine = engine
+        self.engine_ctx = engine_ctx
+        self.input_path = input_path
+        self.names = names
+        self.input_objs = input_objs
+        self.remaining = deque(enumerate(objects))
+        self.old_active = old_active
+        self.old_mode = old_mode
+        self.start_objects = start_objects
+        self.temp_collection = temp_collection
+        self.jobs = {}
+        self.separated_objects = []
+        self.piece_has_uvs = {}
+        self.pending = None
+
+    def tick(self):
+        # separation and uv writes need object mode
+        if bpy.context.mode != "OBJECT":
+            return 0.2
+        try:
+            return self._advance()
+        except Exception as e:
+            handle_error(e, "START", objects=self.start_objects)
+            bpy.data.collections.remove(self.temp_collection)
+            manager.hold_count -= 1
+            # pieces already counted but never handed to the exporter
+            manager.pending_count -= len(self.separated_objects)
+            if manager.is_active:
+                manager.starting_count -= len(self.separated_objects)
+            else:
+                progress_bar.remove()
+            return None
+
+    def _advance(self):
+        if self.pending is not None:
+            thread, box, apply, obj, index, symmetrize_job = self.pending
+            if thread.is_alive():
+                return 0.1
+            self.pending = None
+            if "error" in box:
+                raise box["error"]
+            self._separate(obj, index, apply(box.get("result")), symmetrize_job)
+            return 0.0
+        if not self.remaining:
+            return self._finish()
+
+        index, obj = self.remaining.popleft()
+        props = bpy.context.scene.uvgami
+        symmetrize_job = None
+        if props.use_symmetry:
+            axes = props.sym_axes
+            apply_transforms(obj)
+            obj_center = calc_center(obj)
+            symmetrize_job = Symmetrise(1, axes, obj_center, props.sym_merge)
+            cut_on_axes(obj, obj_center, axes)
+
+        # seams and uvs are built on the whole mesh before separation:
+        # the seams package reads region widths off the full model, and a small
+        # loose part run alone shatters (auto width tunes to the piece)
+        work = self.engine.preseed_work(obj, props)
+        if work is None:
+            has_uvs = self.engine.prepare_uvs(obj, props)
+            self._separate(obj, index, has_uvs, symmetrize_job)
+            return 0.0
+        compute, apply = work
+        box = {}
+
+        def run():
+            try:
+                box["result"] = compute()
+            except BaseException as error:  # rethrown on the main thread
+                box["error"] = error
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        self.pending = (thread, box, apply, obj, index, symmetrize_job)
+        return 0.1
+
+    def _separate(self, obj, index, has_uvs, symmetrize_job):
+        props = bpy.context.scene.uvgami
+        # relink for the ops selection, all within one tick so nothing shows
+        bpy.context.scene.collection.objects.link(obj)
+        self.temp_collection.objects.unlink(obj)
+        bpy.context.view_layer.update()
+        deselect_all()
+        obj.select_set(True)
+
+        bpy.ops.mesh.separate(type="LOOSE")
+        s = bpy.context.selected_objects
+        added = []
+        if len(s) > 1:
+            unwrap_name = self.names[obj.name][0]
+            join_job = Join(len(s))
+            hide_job = None
+            transfer_uvs_job = input_job(props, len(s))
+
+            if transfer_uvs_job is not None:
+                manager.input[transfer_uvs_job] = self.input_objs[index]
+            else:
+                # the hide job can come after join because it doesn't depend
+                # on the unwrapped objects
+                # the count is > 1 because all the separated objs need to
+                # finish before hiding the original
+                hide_job = HideInput(len(s))
+                manager.input[hide_job] = self.input_objs[index]
+
+            for obj_idx, o in enumerate(s):
+                # check for 0 polygons again
+                if len(o.data.polygons) == 0:
+                    join_job.count -= 1
+                    if hide_job is not None:
+                        hide_job.count -= 1
+                    if transfer_uvs_job is not None:
+                        transfer_uvs_job.count -= 1
+                    collection = check_collection(
+                        "UVgami Not Unwrapped", bpy.context.scene.collection
+                    )
+                    move_to_collection(o, collection)
+                    o.name = f"{unwrap_name}: No Polygons"
+                else:
+                    # add ids to separated objects
+                    self.jobs[o] = {
+                        "join": join_job,
+                        "preserve": None,
+                        "hide": hide_job,
+                        "symmetrize": symmetrize_job,
+                        "transfer_uvs": transfer_uvs_job,
+                    }
+                    self.piece_has_uvs[o] = self.engine.piece_uses_uvs(
+                        o, props, has_uvs
+                    )
+                    added.append(o)
+                    self.names[o.name] = [
+                        unwrap_name,
+                        f"{unwrap_name}_{obj_idx + 1}",
+                    ]
+        else:
+            # object didn't need to be separated
+            self.jobs[obj] = {
+                "join": None,
+                "preserve": None,
+                "hide": None,
+                "symmetrize": symmetrize_job,
+                "transfer_uvs": None,
+            }
+            transfer_uvs_job = input_job(props, 1)
+            if transfer_uvs_job is not None:
+                self.jobs[obj]["transfer_uvs"] = transfer_uvs_job
+                manager.input[transfer_uvs_job] = self.input_objs[index]
+            else:
+                hide_job = HideInput(1)
+                self.jobs[obj]["hide"] = hide_job
+                manager.input[hide_job] = self.input_objs[index]
+            self.piece_has_uvs[obj] = self.engine.piece_uses_uvs(obj, props, has_uvs)
+            added.append(obj)
+
+        deselect_all()
+        for piece in added:
+            self.separated_objects.append(piece)
+            for coll in piece.users_collection:
+                coll.objects.unlink(piece)
+            self.temp_collection.objects.link(piece)
+        # count pieces into the bar as they become known, so the finished
+        # ratio doesn't shrink as pieces get added
+        manager.pending_count += len(added)
+        if manager.is_active:
+            manager.starting_count += len(added)
+
+    def _finish(self):
+        exporter = InputExporter(
+            engine=self.engine,
+            engine_ctx=self.engine_ctx,
+            input_path=self.input_path,
+            names=self.names,
+            jobs=self.jobs,
+            piece_has_uvs=self.piece_has_uvs,
+            separated_objects=self.separated_objects,
+            old_active=self.old_active,
+            old_mode=self.old_mode,
+            start_objects=self.start_objects,
+            temp_collection=self.temp_collection,
+        )
+        # the exporter takes over the session hold this builder was carrying
+        bpy.app.timers.register(exporter.tick)
+        return None
+
+
 class UVGAMI_OT_start(bpy.types.Operator):
     bl_idname = "uvgami.start"
     bl_label = "Unwrap"
@@ -339,14 +554,11 @@ class UVGAMI_OT_start(bpy.types.Operator):
         self.names = None
         self.report_msg = None
 
-        self.separated_objects = None
-        self.jobs = None
-        self.piece_has_uvs = None
         self.temp_collection = None
 
     def execute(self, context):
         start_objects = set(bpy.data.objects)
-        exporter_registered = False
+        builder_registered = False
 
         try:
             logger.new_info()
@@ -366,28 +578,23 @@ class UVGAMI_OT_start(bpy.types.Operator):
             if self._prepare_unwrap_session(context) is not None:
                 return {"CANCELLED"}
 
-            exporter = InputExporter(
+            builder = SessionBuilder(
                 engine=self.engine,
                 engine_ctx=self.engine_ctx,
                 input_path=self.input_path,
                 names=self.names,
-                jobs=self.jobs,
-                piece_has_uvs=self.piece_has_uvs,
-                separated_objects=self.separated_objects,
+                input_objs=self.input_objs,
+                objects=self.objects,
                 old_active=self.old_active,
                 old_mode=self.old_mode,
                 start_objects=start_objects,
                 temp_collection=self.temp_collection,
             )
-            bpy.app.timers.register(exporter.tick)
-            exporter_registered = True
-            # the exporter holds the session open until it finishes adding pieces
+            bpy.app.timers.register(builder.tick)
+            builder_registered = True
+            # the builder, then the exporter it hands off to, hold the session
+            # open until every piece is added
             manager.hold_count += 1
-            # count every piece in the bar total upfront so the finished
-            # ratio doesn't shrink as pieces get added
-            manager.pending_count += len(self.separated_objects)
-            if manager.is_active:
-                manager.starting_count += len(self.separated_objects)
 
             # show the progress bar now instead of after every piece exports
             if get_preferences().show_progress_bar:
@@ -402,8 +609,8 @@ class UVGAMI_OT_start(bpy.types.Operator):
         except Exception as e:
             handle_error(e, "START", objects=start_objects)
             # tick() owns the collection once registered; only remove it here
-            # if the exporter never started ticking
-            if not exporter_registered and self.temp_collection is not None:
+            # if the builder never started ticking
+            if not builder_registered and self.temp_collection is not None:
                 bpy.data.collections.remove(self.temp_collection)
 
         # these variables should only be used while operator is running
@@ -427,15 +634,17 @@ class UVGAMI_OT_start(bpy.types.Operator):
             return {"CANCELLED"}
 
         self.input_path, _ = self.prepare_io_folders()
-        self.jobs, self.separated_objects, self.piece_has_uvs = self.create_jobs(
-            context
-        )
+
+        # the builder's separation ops need object mode
+        context.view_layer.objects.active = self.old_active
+        if self.old_mode == "EDIT":
+            bpy.ops.object.mode_set(mode="OBJECT")
         deselect_all()
 
-        # stash pieces in a collection not linked to the scene so they don't flash
-        # in the viewport or outliner between export ticks
+        # stash the copies in a collection not linked to the scene so they
+        # don't flash in the viewport or outliner between builder ticks
         self.temp_collection = bpy.data.collections.new("UVgami Temp")
-        for obj in self.separated_objects:
+        for obj in self.objects:
             for coll in obj.users_collection:
                 coll.objects.unlink(obj)
             self.temp_collection.objects.link(obj)
@@ -570,113 +779,3 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 file.unlink()
 
         return input_path, output_path
-
-    def _input_job(self, props, count):
-        """The job that finishes an unwrap against the original input mesh."""
-        if props.use_proxy:
-            return ProxyUVs(count)
-        if props.transfer_uvs:
-            return TransferUVs(count)
-        return None
-
-    def create_jobs(self, context):
-        props = context.scene.uvgami
-
-        jobs = {}
-        separated_objects = []
-        piece_has_uvs = {}
-
-        # objects can't be in edit mode
-        context.view_layer.objects.active = self.old_active
-        if self.old_mode == "EDIT":
-            bpy.ops.object.mode_set(mode="OBJECT")
-
-        for object_idx, obj in enumerate(self.objects):
-            deselect_all()
-            obj.select_set(True)
-
-            symmetrize_job = None
-            if props.use_symmetry:
-                # bisect if symmetry on
-                axes = props.sym_axes
-                apply_transforms(obj)
-                obj_center = calc_center(obj)
-                symmetrize_job = Symmetrise(1, axes, obj_center, props.sym_merge)
-                cut_on_axes(obj, obj_center, axes)
-
-            # seams and uvs are built on the whole mesh before separation:
-            # the seams package reads region widths off the full model, and a small
-            # loose part run alone shatters (auto width tunes to the piece)
-            has_uvs = self.engine.prepare_uvs(obj, props)
-            deselect_all()
-            obj.select_set(True)
-
-            # separate objects
-            bpy.ops.mesh.separate(type="LOOSE")
-            s = context.selected_objects
-            if len(s) > 1:
-                # get input name
-                unwrap_name = self.names[obj.name][0]
-                join_job = Join(len(s))
-                hide_job = None
-                transfer_uvs_job = self._input_job(props, len(s))
-
-                if transfer_uvs_job is not None:
-                    manager.input[transfer_uvs_job] = self.input_objs[object_idx]
-                else:
-                    # the hide job can come after join because it doesn't depend
-                    # on the unwrapped objects
-                    # the count is > 1 because all the separated objs need to
-                    # finish before hiding the original
-                    hide_job = HideInput(len(s))
-                    manager.input[hide_job] = self.input_objs[object_idx]
-
-                for obj_idx, o in enumerate(s):
-                    # check for 0 polygons again
-                    if len(o.data.polygons) == 0:
-                        join_job.count -= 1
-                        if hide_job is not None:
-                            hide_job.count -= 1
-                        if transfer_uvs_job is not None:
-                            transfer_uvs_job.count -= 1
-                        collection = check_collection(
-                            "UVgami Not Unwrapped", context.scene.collection
-                        )
-                        move_to_collection(o, collection)
-                        o.name = f"{unwrap_name}: No Polygons"
-                    else:
-                        # add ids to separated objects
-                        jobs[o] = {
-                            "join": join_job,
-                            "preserve": None,
-                            "hide": hide_job,
-                            "symmetrize": symmetrize_job,
-                            "transfer_uvs": transfer_uvs_job,
-                        }
-                        piece_has_uvs[o] = self.engine.piece_uses_uvs(o, props, has_uvs)
-                        separated_objects.append(o)
-                        self.names[o.name] = [
-                            unwrap_name,
-                            f"{unwrap_name}_{obj_idx + 1}",
-                        ]
-            else:
-                # object didn't need to be separated
-                jobs[obj] = {
-                    "join": None,
-                    "preserve": None,
-                    "hide": None,
-                    "symmetrize": symmetrize_job,
-                    "transfer_uvs": None,
-                }
-                transfer_uvs_job = self._input_job(props, 1)
-                if transfer_uvs_job is not None:
-                    jobs[obj]["transfer_uvs"] = transfer_uvs_job
-                    manager.input[transfer_uvs_job] = self.input_objs[object_idx]
-                else:
-                    hide_job = HideInput(1)
-                    jobs[obj]["hide"] = hide_job
-                    manager.input[hide_job] = self.input_objs[object_idx]
-                piece_has_uvs[obj] = self.engine.piece_uses_uvs(obj, props, has_uvs)
-                separated_objects.append(obj)
-
-        return jobs, separated_objects, piece_has_uvs

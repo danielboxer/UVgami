@@ -18,15 +18,15 @@ import bpy
 from mathutils.kdtree import KDTree
 
 from .hard_surface import (
+    apply_face_uvs,
     apply_seams,
     build_seam_uvs,
+    flatten_engine,
     marked_seams,
-    normalize_islands,
     seam_restrictions,
-    unwrap,
 )
 from .seams import face_edges, snap_paths
-from .utils.mesh import deselect_all, new_bmesh, set_bmesh
+from .utils.mesh import new_bmesh, set_bmesh
 
 # candidates to pick a facing match from when snapping a cut vertex
 NEAREST_VERTS = 8
@@ -148,6 +148,6 @@ def transfer_cuts(input_mesh, output):
         data.uv_layers.new()
     # the proxy already settled which cuts the shape needs, so the dense mesh
     # only has to flatten and pack once
-    deselect_all()
-    unwrap(input_mesh)
-    normalize_islands(input_mesh)
+    faces = [tuple(poly.vertices) for poly in data.polygons]
+    uvs = flatten_engine().flatten(verts, faces, seams)
+    apply_face_uvs(data, uvs)

@@ -8,7 +8,7 @@ from .objfile import merge_obj_files
 from .proxy import transfer_cuts
 from .seams import uv_area_fit
 from .uv_transfer import plan_transfer
-from .utils.mesh import check_exists, deselect_all, new_bmesh, set_bmesh
+from .utils.mesh import check_exists, new_bmesh, set_bmesh
 
 TransferOutcome = namedtuple("TransferOutcome", ["applied", "split_count", "detail"])
 
@@ -521,24 +521,20 @@ class ProxyUVs(Job):
             return TransferOutcome(False, 0, "output mesh has no uv layer")
 
         old_active = bpy.context.view_layer.objects.active
-        old_selected = list(bpy.context.selected_objects)
         old_mode = old_active.mode if old_active is not None else "OBJECT"
+        # mesh writes need object mode, the flatten itself runs outside blender
         if old_mode != "OBJECT":
             bpy.ops.object.mode_set(mode="OBJECT")
-        # the unwrap goes through bpy.ops, which would take every other
-        # selected mesh into edit mode along with this one
-        deselect_all()
         try:
             transfer_cuts(input_mesh, output)
         finally:
-            deselect_all()
-            for obj in old_selected:
-                if check_exists(obj):
-                    obj.select_set(True)
-            if old_active is not None and check_exists(old_active):
+            if (
+                old_active is not None
+                and check_exists(old_active)
+                and (old_mode != "OBJECT")
+            ):
                 bpy.context.view_layer.objects.active = old_active
-                if old_mode != "OBJECT":
-                    bpy.ops.object.mode_set(mode=old_mode)
+                bpy.ops.object.mode_set(mode=old_mode)
 
         bpy.data.objects.remove(output, do_unlink=True)
         input_mesh.hide_set(False)
