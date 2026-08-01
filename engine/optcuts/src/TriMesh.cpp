@@ -284,6 +284,10 @@ void TriMesh::computeFeatures(bool multiComp, bool resetFixedV) {
             (V_rest.row(cohE(cohI, 0)) - V_rest.row(cohE(cohI, 1))).norm();
     }
 
+    // triangle count never changes after construction, so only initialize
+    if (faceWeight.size() != F.rows())
+        faceWeight = Eigen::VectorXd::Ones(F.rows());
+
     triNormal.resize(F.rows(), 3);
     triArea.resize(F.rows());
     surfaceArea = 0.0;
@@ -2510,6 +2514,9 @@ double TriMesh::computeLocalEdDec_inSplit(const std::vector<int> &triangles,
     }
     TriMesh localMesh(localV_rest, localF, localV, Eigen::MatrixXi(), false);
     localMesh.resetFixedVert(fixedVert);
+    // keep the local energy estimate consistent with the weighted global one
+    for (int fwI = 0; fwI < static_cast<int>(triangles.size()); fwI++)
+        localMesh.faceWeight[fwI] = faceWeight[triangles[fwI]];
 
     SymDirichletEnergy SD;
     double initE = 0.0;
@@ -2688,6 +2695,9 @@ double TriMesh::computeLocalEdDec_merge(
     }
     TriMesh localMesh(localV_rest, localF, localV, Eigen::MatrixXi(), false);
     localMesh.resetFixedVert(fixedVert);
+    // keep the local energy estimate consistent with the weighted global one
+    for (int fwI = 0; fwI < static_cast<int>(triangles.size()); fwI++)
+        localMesh.faceWeight[fwI] = faceWeight[triangles[fwI]];
 
     SymDirichletEnergy SD;
     double initE = 0.0;
@@ -2776,6 +2786,9 @@ double TriMesh::computeLocalEdDec_bSplit(const std::vector<int> &triangles,
     }
     TriMesh localMesh(localV_rest, localF, localV, Eigen::MatrixXi(), false);
     localMesh.resetFixedVert(fixedVert);
+    // keep the local energy estimate consistent with the weighted global one
+    for (int fwI = 0; fwI < static_cast<int>(triangles.size()); fwI++)
+        localMesh.faceWeight[fwI] = faceWeight[triangles[fwI]];
 
     // compute initial symmetric Dirichlet Energy value
     SymDirichletEnergy SD;

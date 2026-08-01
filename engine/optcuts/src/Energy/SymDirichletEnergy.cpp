@@ -34,7 +34,9 @@ void SymDirichletEnergy::getEnergyValPerElem(const TriMesh &data,
         const double area_U = 0.5 * (U2m1[0] * U3m1[1] - U2m1[1] * U3m1[0]);
 
         const double w =
-            (uniformWeight ? 1.0 : (data.triArea[triI] / normalizer_div));
+            (uniformWeight ? 1.0
+                           : (data.faceWeight[triI] * data.triArea[triI] /
+                              normalizer_div));
         energyValPerElem[triI] =
             w * (1.0 + data.triAreaSq[triI] / area_U / area_U) *
             ((U3m1.squaredNorm() * data.e0SqLen[triI] +
@@ -62,7 +64,9 @@ void SymDirichletEnergy::getEnergyValByElemID(const TriMesh &data, int elemI,
     const double area_U = 0.5 * (U2m1[0] * U3m1[1] - U2m1[1] * U3m1[0]);
 
     const double w =
-        (uniformWeight ? 1.0 : (data.triArea[triI] / normalizer_div));
+        (uniformWeight
+             ? 1.0
+             : (data.faceWeight[triI] * data.triArea[triI] / normalizer_div));
     energyVal =
         w * (1.0 + data.triAreaSq[triI] / area_U / area_U) *
         ((U3m1.squaredNorm() * data.e0SqLen[triI] +
@@ -196,7 +200,8 @@ void SymDirichletEnergy::computeLocalGradient(
 
         const double areaRatio =
             data.triAreaSq[triI] / area_U / area_U / area_U;
-        const double w = data.triArea[triI] / normalizer_div;
+        const double w =
+            data.faceWeight[triI] * data.triArea[triI] / normalizer_div;
         const int startRowI = triI * 3;
 
         const Eigen::Vector2d edge_oppo1 = U3 - U2;
@@ -260,7 +265,9 @@ void SymDirichletEnergy::computeGradient(const TriMesh &data,
         const double areaRatio =
             data.triAreaSq[triI] / area_U / area_U / area_U;
         const double w =
-            (uniformWeight ? 1.0 : (data.triArea[triI] / normalizer_div));
+            (uniformWeight ? 1.0
+                           : (data.faceWeight[triI] * data.triArea[triI] /
+                              normalizer_div));
 
         Eigen::Matrix<double, 6, 1> &triGrad = triGrads[triI];
 
@@ -335,7 +342,9 @@ void SymDirichletEnergy::computeHessian(const TriMesh &data,
         const double dAreaRatio_div_dArea_mult = 3.0 / 2.0 * areaRatio / area_U;
 
         const double w =
-            (uniformWeight ? 1.0 : (data.triArea[triI] / normalizer_div));
+            (uniformWeight ? 1.0
+                           : (data.faceWeight[triI] * data.triArea[triI] /
+                              normalizer_div));
 
         const double e0SqLen_div_dbAreaSq = data.e0SqLen_div_dbAreaSq[triI];
         const double e1SqLen_div_dbAreaSq = data.e1SqLen_div_dbAreaSq[triI];
@@ -500,7 +509,9 @@ void SymDirichletEnergy::computeHessian(const TriMesh &data, Eigen::VectorXd *V,
         const double dAreaRatio_div_dArea_mult = 3.0 / 2.0 * areaRatio / area_U;
 
         const double w =
-            (uniformWeight ? 1.0 : (data.triArea[triI] / normalizer_div));
+            (uniformWeight ? 1.0
+                           : (data.faceWeight[triI] * data.triArea[triI] /
+                              normalizer_div));
 
         const double e0SqLen_div_dbAreaSq = data.e0SqLen_div_dbAreaSq[triI];
         const double e1SqLen_div_dbAreaSq = data.e1SqLen_div_dbAreaSq[triI];

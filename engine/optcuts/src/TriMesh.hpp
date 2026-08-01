@@ -49,6 +49,7 @@ class TriMesh {
     std::set<int> fixedVert; // for linear solve
     Eigen::Matrix<double, 2, 3> bbox;
     Eigen::VectorXd vertWeight; // for regional seam placement
+    Eigen::VectorXd faceWeight; // distortion importance, area-weighted mean 1
 
     // indices for fast access
     std::map<std::pair<int, int>, int> edge2Tri;

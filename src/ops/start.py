@@ -258,12 +258,12 @@ class InputExporter:
         return edge_path, new_edges
 
     def _create_guide_file(self, obj, path, props, has_uvs):
-        """Write the per-vertex seam weight file from the painted guide.
-        Higher weight repels seams."""
+        """Write the per-vertex weight sidecars from the restriction group.
+        _weights repels seams, _importance protects faces from stretching."""
         weights = {}
         if (
             self.engine.supports_guided
-            and props.use_guided_mode
+            and (props.use_guided_mode or props.use_importance_weights)
             and SEAM_RESTRICTIONS_GROUP in obj.vertex_groups
         ):
             group_idx = obj.vertex_groups[SEAM_RESTRICTIONS_GROUP].index
@@ -282,9 +282,15 @@ class InputExporter:
             weights = remap_weights_to_vt(path, weights)
 
         guide = ",".join(f"{index},{weight}" for index, weight in weights.items())
-        guide_path = path.parent / f"{path.stem}_weights"
-        with guide_path.open("w") as f:
-            f.write(f"{guide}\n")
+        guide_path = None
+        if props.use_guided_mode:
+            guide_path = path.parent / f"{path.stem}_weights"
+            with guide_path.open("w") as f:
+                f.write(f"{guide}\n")
+        if props.use_importance_weights:
+            importance_path = path.parent / f"{path.stem}_importance"
+            with importance_path.open("w") as f:
+                f.write(f"{guide}\n")
 
         return guide_path
 

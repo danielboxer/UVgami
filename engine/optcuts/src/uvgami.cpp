@@ -86,6 +86,7 @@ std::atomic<bool> forceQuit = false;
 std::atomic<bool> forceQuitSave = false;
 std::atomic<bool> snapshot = false;
 int maxSeamWeight = 100;
+int maxFaceWeight = 10;
 
 const char *pathSeparator() {
 #ifdef _WIN32
@@ -766,6 +767,24 @@ static std::vector<float> split(const std::string &str, char sep) {
     return tokens;
 }
 
+// reads a one-line "index,weight,..." sidecar into out, skipping out-of-range
+// indices. returns false when the file doesn't exist
+static bool loadWeightSidecar(const std::string &filePath,
+                              Eigen::VectorXd &out) {
+    std::ifstream file(filePath);
+    if (!file.is_open())
+        return false;
+    std::string line;
+    getline(file, line);
+    std::vector<float> tokens = split(line, ',');
+    for (uint32_t i = 0; i + 1 < tokens.size(); i += 2) {
+        const int selected = (int)tokens[i];
+        if (selected >= 0 && selected < out.size())
+            out[selected] = tokens[i + 1];
+    }
+    return true;
+}
+
 // a chart is disk-topology when its euler characteristic is 1. imported UV
 // charts that aren't disks have to be cut before they can be flattened
 static std::vector<bool> chartDiskFlags(const Eigen::MatrixXi &F,
@@ -813,11 +832,16 @@ int main(int argc, char *argv[]) {
         TCLAP::ValueArg<uint32_t> maxSeamWeightArg("s", "max_seam_weight",
                                                    "Maximum seam weight", false,
                                                    0, "uint32_t", cmd);
+        TCLAP::ValueArg<uint32_t> maxFaceWeightArg(
+            "w", "max_face_weight", "Maximum face importance weight", false, 0,
+            "uint32_t", cmd);
         TCLAP::SwitchArg ignoreUVArg("g", "ignore_uv", "Ignore UV map", cmd);
         cmd.parse(argc, argv);
 
         if (maxSeamWeightArg.isSet())
             maxSeamWeight = maxSeamWeightArg.getValue();
+        if (maxFaceWeightArg.isSet())
+            maxFaceWeight = maxFaceWeightArg.getValue();
         if (ignoreUVArg.isSet())
             ignoreUV = ignoreUVArg.getValue();
         meshFileName = inputArg.getValue();
@@ -1330,6 +1354,36 @@ int main(int argc, char *argv[]) {
         pinnedMode = true;
     }
 
+    // per-face importance: sidecar vertex weights averaged onto faces scale
+    // the distortion energy. loaded before the optimizer copies the mesh so
+    // the initial energy is already weighted
+    if (maxFaceWeight > 1) {
+        const Eigen::MatrixXi &F_in = hasUV ? FUV : F;
+        const int nVW = hasUV ? (int)UV.rows() : (int)V.rows();
+        Eigen::VectorXd vW = Eigen::VectorXd::Zero(nVW);
+        if (loadWeightSidecar(std::string(inputFolderPath.u8string()) +
+                                  pathSeparator() + meshName + "_importance",
+                              vW)) {
+            // the initial mesh is heap-allocated above, triSoup only stores
+            // it as const
+            uvgami::TriMesh &mesh0 = *const_cast<uvgami::TriMesh *>(triSoup[0]);
+            if (F_in.rows() == mesh0.F.rows()) {
+                for (int triI = 0; triI < F_in.rows(); triI++) {
+                    const double avg = (vW[F_in(triI, 0)] + vW[F_in(triI, 1)] +
+                                        vW[F_in(triI, 2)]) /
+                                       3.0;
+                    mesh0.faceWeight[triI] = 1.0 + avg * (maxFaceWeight - 1);
+                }
+                // area-weighted mean 1 keeps the -u bound comparable
+                mesh0.faceWeight /=
+                    mesh0.faceWeight.dot(mesh0.triArea) / mesh0.surfaceArea;
+            } else {
+                std::cerr << "importance weights skipped, face count mismatch"
+                          << std::endl;
+            }
+        }
+    }
+
     outputFolderPath += meshName;
     energyParams.emplace_back(1.0 - lambda_init);
     energyTerms.emplace_back(new uvgami::SymDirichletEnergy());
@@ -1351,25 +1405,14 @@ int main(int argc, char *argv[]) {
                                             // finding extrema
 
     // regional seam placement
-    std::string weightsFileName = std::string(inputFolderPath.u8string()) +
-                                  std::string(pathSeparator()) + meshName;
-    weightsFileName += "_weights";
-    std::ifstream vWFile(weightsFileName);
-    if (vWFile.is_open()) {
-        std::string line;
-        getline(vWFile, line);
-        char sep = ',';
-        std::vector<float> tokens = split(line, sep);
-        for (uint32_t i = 0; i < tokens.size(); i += 2) {
-            uint32_t selected = (uint32_t)tokens[i];
-            float weight = tokens[i + 1];
-            if (selected < optimizer->getResult().vertWeight.size())
-                optimizer->getResult().vertWeight[selected] =
-                    1 + weight * (maxSeamWeight - 1);
-        }
-        vWFile.close();
-        uvgami::IglUtils::smoothVertField(optimizer->getResult(),
-                                          optimizer->getResult().vertWeight);
+    uvgami::TriMesh &result = optimizer->getResult();
+    Eigen::VectorXd sW = Eigen::VectorXd::Zero(result.vertWeight.size());
+    if (loadWeightSidecar(std::string(inputFolderPath.u8string()) +
+                              pathSeparator() + meshName + "_weights",
+                          sW)) {
+        result.vertWeight =
+            (1.0 + sW.array() * (maxSeamWeight - 1)).matrix();
+        uvgami::IglUtils::smoothVertField(result, result.vertWeight);
     }
 
     std::thread t(&stdin_listener);

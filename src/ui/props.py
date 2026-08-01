@@ -152,6 +152,13 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         max=5,
         default=3,
     )
+    use_importance_weights: bpy.props.BoolProperty(
+        name="",
+        description=(
+            "Let faces outside the seam restriction weights absorb the"
+            " stretching, so the weighted faces keep their shape"
+        ),
+    )
     # symmetry
     use_symmetry: bpy.props.BoolProperty(
         name="",
