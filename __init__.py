@@ -24,6 +24,7 @@ from .src.ops.stop import (
 )
 from .src.ops.guides import (
     UVGAMI_OT_draw_guides,
+    UVGAMI_OT_seed_restrictions,
     UVGAMI_OT_exit_draw,
     UVGAMI_OT_clear_draw,
 )
@@ -79,6 +80,7 @@ classes = (
     UVGAMI_OT_open_preferences,
     UVGAMI_OT_add_grid,
     UVGAMI_OT_draw_guides,
+    UVGAMI_OT_seed_restrictions,
     UVGAMI_OT_exit_draw,
     UVGAMI_OT_clear_draw,
     UVGAMI_OT_pack,
