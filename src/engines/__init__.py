@@ -37,6 +37,14 @@ class Engine:
         engine wants seams of its own. obj is a temp copy, safe to edit."""
         return props.import_uvs and self.supports_import_uvs
 
+    def preseed_work(self, obj, props):
+        """Split prepare_uvs for the start operator's worker thread: a
+        (compute, apply) pair where compute touches no bpy data and runs off
+        the main thread, and apply(compute()) writes the result back and
+        returns what prepare_uvs would have. None means there is no slow work
+        and prepare_uvs is used directly."""
+        return None
+
     def piece_uses_uvs(self, obj, props, has_uvs):
         """Per separated piece, whether its uv map goes to the engine.
         has_uvs is what prepare_uvs returned for the whole object."""

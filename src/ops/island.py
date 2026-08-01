@@ -2,15 +2,37 @@ import bmesh
 import bpy
 
 from ..engines import get_engine
-from ..hard_surface import REPAIR_ITERATIONS, face_uvs, unwrap
 from ..job import AreaUVs, IslandUVs
 from ..logger import logger
 from ..manager import manager
-from ..seams import face_edges, pair, signed_area, uv_island_groups
+from ..seams import REPAIR_ITERATIONS, face_edges, pair, signed_area, uv_island_groups
 from ..unwrap import Unwrap
 from ..utils.io import export_obj
 from ..utils.mesh import new_bmesh, set_bmesh, triangulate
 from ..utils.paths import get_extension_dir_path, get_preferences
+
+
+def face_uvs(mesh):
+    """Per-face loop uvs from the active layer, in face vertex order."""
+    uv = mesh.uv_layers.active.data
+    return [[tuple(uv[i].uv) for i in poly.loop_indices] for poly in mesh.polygons]
+
+
+def unwrap(obj, only, iterations):
+    """Blender's minimum stretch unwrap over just these faces. The area fixes
+    stay on bpy.ops because they pin uvs, which the engine's flatten mode has
+    no channel for."""
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_mode(type="FACE")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for fi in only:
+        obj.data.polygons[fi].select = True
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.uv.unwrap(method="MINIMUM_STRETCH", margin=0.001, iterations=iterations)
+    bpy.ops.object.mode_set(mode="OBJECT")
 
 
 def selected_faces(mesh):

@@ -4,7 +4,13 @@ import pathlib
 import bpy
 
 from . import Engine
-from ..hard_surface import auto_hard_faces, build_seam_uvs, seam_restrictions
+from ..hard_surface import (
+    auto_hard_faces,
+    build_seam_uvs,
+    preseed_work,
+    seam_restrictions,
+)
+from ..seams import FlattenError
 from ..utils.io import print_stdin
 from ..utils.mesh import deselect_all, validate_obj
 from ..utils.paths import get_bundled_engine_path
@@ -110,9 +116,6 @@ class UVGAMI_OT_preview_seams(bpy.types.Operator):
         for obj in selected:
             if not validate_obj(self, obj):
                 continue
-            # build_seam_uvs unwraps through bpy.ops, which takes every selected
-            # mesh into edit mode at once, so run it on one object alone
-            deselect_all()
             only = None
             if optcuts.hard_surface == "AUTO":
                 only = auto_hard_faces(obj, marked)
@@ -122,7 +125,11 @@ class UVGAMI_OT_preview_seams(bpy.types.Operator):
                 if len(only) == len(obj.data.polygons):
                     only = None
             weights = seam_restrictions(obj) if guided else None
-            build_seam_uvs(obj, angle, marked, weights, only)
+            try:
+                build_seam_uvs(obj, angle, marked, weights, only)
+            except FlattenError as error:
+                self.report({"ERROR"}, str(error))
+                return {"CANCELLED"}
             counts.append(str(sum(1 for edge in obj.data.edges if edge.use_seam)))
 
         deselect_all()
@@ -239,6 +246,20 @@ class OptcutsEngine(Engine):
             only,
         )
         return True
+
+    def preseed_work(self, obj, props):
+        optcuts = props.optcuts
+        if optcuts.hard_surface == "OFF":
+            return None
+        compute, apply = preseed_work(
+            obj,
+            math.degrees(optcuts.hard_surface_angle),
+            optcuts.hard_surface_marked,
+            seam_restrictions(obj) if props.use_guided_mode else None,
+            auto=optcuts.hard_surface == "AUTO",
+        )
+        # an auto run that finds nothing hard falls back to prepare_uvs' answer
+        return compute, lambda result: apply(result) or props.import_uvs
 
     def piece_uses_uvs(self, obj, props, has_uvs):
         # auto mode routes per loose part: a piece the preseed skipped has no
