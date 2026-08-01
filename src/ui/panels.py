@@ -292,6 +292,11 @@ class UVGAMI_PT_guides(bpy.types.Panel):
         row.operator("uvgami.draw_guides", icon="GREASEPENCIL")
 
         row = box.row()
+        row.operator("uvgami.seed_restrictions", text="From View").mode = "VIEW"
+        row.operator("uvgami.seed_restrictions", text="Crevices").mode = "CREVICES"
+        row.operator("uvgami.seed_restrictions", text="Both").mode = "BOTH"
+
+        row = box.row()
         row.active = guided
         row.operator("uvgami.clear_draw", icon="FILE_REFRESH")
         row.operator("uvgami.exit_draw", icon="PANEL_CLOSE")

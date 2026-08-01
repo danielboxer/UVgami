@@ -1,8 +1,43 @@
+import math
+
 import bpy
+from mathutils import Vector
+from mathutils.bvhtree import BVHTree
 
 from ..utils.mesh import validate_obj
 
 SEAM_RESTRICTIONS_GROUP = "UVgami_seam_restrictions"
+
+
+def _sphere_dirs(n=64):
+    # fibonacci sphere
+    dirs = []
+    golden = math.pi * (3 - math.sqrt(5))
+    for i in range(n):
+        z = 1 - 2 * (i + 0.5) / n
+        r = math.sqrt(1 - z * z)
+        dirs.append(Vector((r * math.cos(golden * i), r * math.sin(golden * i), z)))
+    return dirs
+
+
+SPHERE_DIRS = _sphere_dirs()
+
+
+def _set_group_weights(obj, weights):
+    vertex_groups = obj.vertex_groups
+    if SEAM_RESTRICTIONS_GROUP not in vertex_groups:
+        vertex_groups.new(name=SEAM_RESTRICTIONS_GROUP)
+    group = vertex_groups[SEAM_RESTRICTIONS_GROUP]
+
+    unweighted = []
+    for index, weight in weights.items():
+        if weight > 0:
+            group.add([index], weight, "REPLACE")
+        else:
+            unweighted.append(index)
+    if unweighted:
+        group.remove(unweighted)
+
 
 _old_mode = None
 _old_active_group = None
@@ -17,6 +52,23 @@ def is_draw_active():
         active_object.mode == "WEIGHT_PAINT"
         and vertex_groups.active_index == vertex_groups[SEAM_RESTRICTIONS_GROUP].index
     )
+
+
+def _enter_draw_mode(context, obj):
+    """Weight paint with the restrictions group active. Remembers what was
+    there first so Exit can put it back."""
+    vertex_groups = obj.vertex_groups
+    if not is_draw_active():
+        global _old_mode
+        _old_mode = obj.mode
+        global _old_active_group
+        _old_active_group = vertex_groups.active_index
+
+    bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
+    if SEAM_RESTRICTIONS_GROUP not in vertex_groups:
+        vertex_groups.new(name=SEAM_RESTRICTIONS_GROUP)
+    vertex_groups.active_index = vertex_groups[SEAM_RESTRICTIONS_GROUP].index
+    context.scene.uvgami.use_guided_mode = True
 
 
 class UVGAMI_OT_draw_guides(bpy.types.Operator):
@@ -35,18 +87,135 @@ class UVGAMI_OT_draw_guides(bpy.types.Operator):
         if not validate_obj(self, active_obj, report=True):
             return {"CANCELLED"}
 
-        vertex_groups = active_obj.vertex_groups
-        if not is_draw_active():
-            global _old_mode
-            _old_mode = active_obj.mode
-            global _old_active_group
-            _old_active_group = vertex_groups.active_index
+        _enter_draw_mode(context, active_obj)
+        return {"FINISHED"}
 
-        bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
-        if SEAM_RESTRICTIONS_GROUP not in vertex_groups:
-            vertex_groups.new(name=SEAM_RESTRICTIONS_GROUP)
-        vertex_groups.active_index = vertex_groups[SEAM_RESTRICTIONS_GROUP].index
-        context.scene.uvgami.use_guided_mode = True
+
+def _view_weights(obj, rv3d):
+    view_dir = rv3d.view_rotation @ Vector((0, 0, -1))
+    view_pos = rv3d.view_matrix.inverted().translation
+    matrix = obj.matrix_world
+    normal_matrix = matrix.to_3x3().inverted().transposed()
+
+    weights = {}
+    for v in obj.data.vertices:
+        normal = (normal_matrix @ v.normal).normalized()
+        if rv3d.is_perspective:
+            toward_viewer = (view_pos - matrix @ v.co).normalized()
+        else:
+            toward_viewer = -view_dir
+        facing = normal.dot(toward_viewer)
+        # fade past the silhouette so seams land on the true back
+        weights[v.index] = min(max((facing + 0.25) / 0.75, 0.0), 1.0) ** 2
+    return weights
+
+
+def _exposure_weights(obj):
+    mesh = obj.data
+    bvh = BVHTree.FromPolygons(
+        [v.co for v in mesh.vertices],
+        [p.vertices[:] for p in mesh.polygons],
+    )
+    corners = [Vector(c) for c in obj.bound_box]
+    offset = (corners[6] - corners[0]).length * 1e-3
+
+    weights = {}
+    for v in mesh.vertices:
+        origin = v.co + v.normal * offset
+        escaped = 0
+        total = 0
+        for direction in SPHERE_DIRS:
+            # skip grazing rays, they self-hit on curved surfaces
+            if direction.dot(v.normal) < 0.1:
+                continue
+            total += 1
+            if bvh.ray_cast(origin, direction)[0] is None:
+                escaped += 1
+        exposure = escaped / total if total else 1.0
+        # exposure is ~1 on flat surface, ~0.5 in an inside corner, so spread
+        # that band over 0..1
+        weights[v.index] = min(max((exposure - 0.45) / 0.5, 0.0), 1.0) ** 2
+    return weights
+
+
+FREE_FRACTION = 0.5
+
+
+def _rank_normalize(weights):
+    # a mostly-convex mesh gives a near-uniform high map, which slows the
+    # engine without expressing a preference. keep only the ordering and free
+    # the least exposed half so cost stays bounded on any shape. ties break by
+    # vertex index, measured faster than giving tied verts one shared weight
+    order = sorted(weights, key=weights.get)
+    n = len(order)
+    if n < 2:
+        return dict.fromkeys(weights, 0.0)
+    return {
+        index: max(0.0, (rank / (n - 1) - FREE_FRACTION) / (1 - FREE_FRACTION))
+        for rank, index in enumerate(order)
+    }
+
+
+class UVGAMI_OT_seed_restrictions(bpy.types.Operator):
+    bl_idname = "uvgami.seed_restrictions"
+    bl_label = "Seed Restrictions"
+    bl_options = {"UNDO"}
+
+    mode: bpy.props.EnumProperty(
+        items=[
+            ("VIEW", "From View", ""),
+            ("CREVICES", "Crevices", ""),
+            ("BOTH", "Both", ""),
+        ]
+    )
+
+    @classmethod
+    def description(cls, context, properties):
+        base = {
+            "VIEW": (
+                "Restrict the side of the mesh facing the current view"
+                " so seams are placed on the back"
+            ),
+            "CREVICES": (
+                "Restrict exposed areas so seams are placed in crevices"
+                " and hidden pockets"
+            ),
+            "BOTH": (
+                "Restrict areas that are facing the current view and exposed,"
+                " so seams are placed on the back and in crevices"
+            ),
+        }[properties.mode]
+        return base + ". Replaces existing restrictions"
+
+    def execute(self, context):
+        rv3d = context.region_data
+        if self.mode != "CREVICES" and rv3d is None:
+            self.report({"ERROR"}, "Only available in the 3D viewport")
+            return {"CANCELLED"}
+        if context.mode == "EDIT_MESH":
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+        for obj in context.selected_objects:
+            if not validate_obj(self, obj):
+                continue
+
+            if self.mode == "VIEW":
+                weights = _view_weights(obj, rv3d)
+            elif self.mode == "CREVICES":
+                weights = _rank_normalize(_exposure_weights(obj))
+            else:
+                view = _view_weights(obj, rv3d)
+                exposure = _exposure_weights(obj)
+                weights = _rank_normalize({i: view[i] * exposure[i] for i in view})
+            _set_group_weights(obj, weights)
+
+        # land in weight paint so the seeded map is visible and paintable, the
+        # same place the Draw button goes
+        active = context.active_object
+        if active is not None and validate_obj(self, active):
+            _enter_draw_mode(context, active)
+        else:
+            context.scene.uvgami.use_guided_mode = True
         return {"FINISHED"}
 
 
