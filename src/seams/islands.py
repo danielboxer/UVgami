@@ -346,6 +346,9 @@ def split_islands(verts, faces, seams, uvs, weights=None, groups=None):
                         adjacent[key[1]].add(key[0])
             extra |= connect_loops(verts, adjacent, loops, weights, cut_relief())
             continue
+        if length <= 0:
+            # every centroid projects to one point (doubled faces), no bin split
+            continue
         bins = math.ceil(aspect / SPLIT_ASPECT) if strip else 2
         bin_of = {f: min(bins - 1, int((ts[f] - lo) / length * bins)) for f in group}
         extra |= straighten_cut(

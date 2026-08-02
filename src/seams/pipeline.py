@@ -22,13 +22,18 @@ from .regions import (
 from .sweeps import split_sweeps
 
 
-def feature_labels(verts, faces, angle=CREASE_ANGLE, rims=True, forced=None):
+def feature_labels(
+    verts, faces, angle=CREASE_ANGLE, rims=True, forced=None, scale=None
+):
     """Region labels from the merge passes: partition at auto width, the three
     merges, sweep rims. What survives is the feature structure the seams will
-    trace, before the boundary cleanup passes move any edge."""
+    trace, before the boundary cleanup passes move any edge. scale is the
+    model size the width cap reads, the full diagonal of verts by default."""
     weighted, areas, edges = build(verts, faces)
     root = partition(faces, weighted, edges, LOW_ANGLE, forced)
-    min_width = detect_width(verts, faces, areas, edges, root, diagonal(verts))
+    if scale is None:
+        scale = diagonal(verts)
+    min_width = detect_width(verts, faces, areas, edges, root, scale)
     label, bounds = absorb(
         verts, faces, weighted, areas, edges, root, min_width, forced
     )
@@ -68,7 +73,13 @@ def is_hard_surface(verts, faces):
     unwrap, misreading hard costs seams on sculpt ridges, so ties fall
     organic.
     """
-    weighted, areas, edges, presweep = feature_labels(verts, faces, rims=False)
+    # verts can be the whole mesh with faces one loose part, so the width cap
+    # must read the part's own size or nearby geometry changes the label
+    used = {v for face in faces for v in face}
+    part_scale = diagonal([verts[v] for v in used])
+    weighted, areas, edges, presweep = feature_labels(
+        verts, faces, rims=False, scale=part_scale
+    )
     label = split_sweeps(weighted, areas, edges, presweep)
     total = sum(areas)
     if total <= 0:

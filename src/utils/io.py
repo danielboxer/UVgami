@@ -12,7 +12,11 @@ def export_obj(obj, path, export_uv):
     merges identical uvs into one vt, and optcuts rebuilds a uv-carrying
     mesh with one vertex per vt, so a uv shared by two 3D vertices welds
     them and degenerates the rebuilt mesh. Writing one vt per (vertex, uv)
-    pair rules that out."""
+    pair rules that out.
+
+    Returns the source vertex index per vt, in vt order, when uvs were
+    written, else None. Sidecars for a uv-carrying obj must be keyed by vt
+    (the engine's rebuilt vertices), this is the mapping."""
     mesh = obj.data
     matrix = numpy.array(obj.matrix_world)
     co = numpy.empty(len(mesh.vertices) * 3)
@@ -26,6 +30,7 @@ def export_obj(obj, path, export_uv):
 
     layer = mesh.uv_layers.active
     export_uv = export_uv and layer is not None
+    vt_verts = None
 
     with path.open("w") as f:
         f.write(f"o {obj.name}\n")
@@ -48,6 +53,7 @@ def export_obj(obj, path, export_uv):
             first[1:] = (sv[1:] != sv[:-1]) | (su[1:] != su[:-1]) | (sw[1:] != sw[:-1])
             loop_vts = numpy.empty(len(order), dtype=numpy.int64)
             loop_vts[order] = numpy.cumsum(first) - 1
+            vt_verts = sv[first]
             values = numpy.column_stack((su[first], sw[first])) / 1e9
             f.write(("vt %.9f %.9f\n" * len(values)) % tuple(values.ravel().tolist()))
             corners = numpy.column_stack((loop_verts + 1, loop_vts + 1))
@@ -71,6 +77,8 @@ def export_obj(obj, path, export_uv):
                 lines.append(fmt % tuple(flat[li : li + total * width]))
                 li += total * width
             f.writelines(lines)
+
+    return vt_verts
 
 
 def _block(text, prefix):

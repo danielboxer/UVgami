@@ -89,9 +89,10 @@ def apply_face_uvs(mesh, uvs, only=None):
 
 def preseed_work(obj, angle, marked, weights, auto=False):
     """build_seam_uvs split for a worker thread: compute is bpy-free and safe
-    off the main thread, apply(compute()) writes the result back. With auto,
-    compute also classifies the loose parts and returns None when no part
-    reads as hard, which apply passes through as False."""
+    off the main thread, apply(compute()) writes the result back. compute
+    returns None when there is nothing to preseed (no hard parts in auto, or
+    an empty seam set on a closed mesh), which apply passes through as
+    False."""
     mesh = obj.data
     verts = [tuple(v.co) for v in mesh.vertices]
     faces = [tuple(p.vertices) for p in mesh.polygons]
@@ -106,9 +107,10 @@ def preseed_work(obj, angle, marked, weights, auto=False):
                 return None
             if len(only) == len(faces):
                 only = None
-        seams, uvs = preseed_uvs(
-            engine, verts, faces, angle, marked, weights, only, marks
-        )
+        result = preseed_uvs(engine, verts, faces, angle, marked, weights, only, marks)
+        if result is None:
+            return None
+        seams, uvs = result
         return seams, uvs, only
 
     def apply(result):
@@ -145,11 +147,12 @@ def build_seam_uvs(obj, angle=CREASE_ANGLE, marked="NONE", weights=None, only=No
 
     The solve, the repair decisions and the pack all run outside Blender, in
     seams.preseed against the engine's flatten mode. This function only reads
-    the mesh into arrays and writes the result back."""
+    the mesh into arrays and writes the result back. Returns False when the
+    seam set came out empty on a closed mesh, leaving the mesh untouched."""
     mesh = obj.data
     verts = [tuple(v.co) for v in mesh.vertices]
     faces = [tuple(p.vertices) for p in mesh.polygons]
-    seams, uvs = preseed_uvs(
+    result = preseed_uvs(
         flatten_engine(),
         verts,
         faces,
@@ -159,7 +162,11 @@ def build_seam_uvs(obj, angle=CREASE_ANGLE, marked="NONE", weights=None, only=No
         only,
         marked_seams(mesh) if marked != "NONE" else frozenset(),
     )
+    if result is None:
+        return False
+    seams, uvs = result
     apply_seams(mesh, seams)
     if not mesh.uv_layers:
         mesh.uv_layers.new()
     apply_face_uvs(mesh, uvs, sorted(only) if only is not None else None)
+    return True

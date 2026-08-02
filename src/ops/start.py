@@ -12,7 +12,6 @@ from ..handler import handle_error
 from ..job import HideInput, Join, Preserve, ProxyUVs, Symmetrise, TransferUVs
 from ..logger import logger
 from ..manager import manager
-from ..objfile import remap_weights_to_vt
 from ..progress_bar import progress_bar
 from ..proxy import make_proxy
 from ..seams import (
@@ -27,6 +26,7 @@ from ..utils.geometry import apply_transforms, calc_center, cut, cut_on_axes
 from ..utils.io import export_obj
 from ..utils.mesh import (
     check_collection,
+    check_exists,
     deselect_all,
     move_to_collection,
     new_bmesh,
@@ -175,9 +175,9 @@ class InputExporter:
         has_uvs = self.piece_has_uvs[obj]
         if has_uvs:
             normalize_uvs(obj.data)
-        export_obj(obj, path, has_uvs)
+        vt_verts = export_obj(obj, path, has_uvs)
 
-        guide_path = self._create_guide_file(obj, path, props, has_uvs)
+        guide_path = self._create_guide_file(obj, path, props, vt_verts)
 
         materials, material_indices, vertex_groups, shade_smooth = (
             self._get_mesh_metadata(obj)
@@ -300,7 +300,7 @@ class InputExporter:
 
         return edge_path, new_edges
 
-    def _create_guide_file(self, obj, path, props, has_uvs):
+    def _create_guide_file(self, obj, path, props, vt_verts):
         """Write the per-vertex weight sidecars from the restriction group.
         _weights repels seams, _importance protects faces from stretching."""
         weights = {}
@@ -319,10 +319,12 @@ class InputExporter:
         if not weights:
             return None
 
-        if has_uvs:
+        if vt_verts is not None:
             # optcuts rebuilds a UV-carrying obj with one vertex per vt, so
             # vertex-indexed weights would land on the wrong vertices
-            weights = remap_weights_to_vt(path, weights)
+            weights = {
+                vt: weights[v] for vt, v in enumerate(vt_verts.tolist()) if v in weights
+            }
 
         guide = ",".join(f"{index},{weight}" for index, weight in weights.items())
         guide_path = None
@@ -410,7 +412,10 @@ class SessionBuilder:
             return self._advance()
         except Exception as e:
             handle_error(e, "START", objects=self.start_objects)
-            bpy.data.collections.remove(self.temp_collection)
+            # an undo past the session start kills the collection datablock,
+            # and a second ReferenceError here would wedge the hold count
+            if check_exists(self.temp_collection):
+                bpy.data.collections.remove(self.temp_collection)
             manager.hold_count -= 1
             # pieces already counted but never handed to the exporter
             manager.pending_count -= len(self.separated_objects)
@@ -428,6 +433,8 @@ class SessionBuilder:
             self.pending = None
             if "error" in box:
                 raise box["error"]
+            if not check_exists(obj):
+                raise RuntimeError("Undo removed the working copy mid unwrap")
             self._separate(obj, index, apply(box.get("result")), symmetrize_job)
             return 0.0
         if not self.remaining:

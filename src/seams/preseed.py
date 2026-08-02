@@ -7,7 +7,9 @@ the repair logic it drives stay unit-testable and can run off the main
 thread."""
 
 import math
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from .islands import island_ruined, split_islands
@@ -31,8 +33,9 @@ class FlattenError(RuntimeError):
 
 
 class FlattenEngine:
-    """Client for the engine's flatten mode. workdir holds the obj roundtrip
-    files and is reused call to call."""
+    """Client for the engine's flatten mode. Each call gets its own subdir of
+    workdir: the preview operator, a builder thread and transfer_cuts can all
+    flatten at once, and shared filenames would swap uvs between them."""
 
     def __init__(self, engine_path, workdir):
         self.engine_path = str(engine_path)
@@ -48,9 +51,16 @@ class FlattenEngine:
 
     def _run(self, verts, faces, seams=None, uvs=None, iterations=None):
         self.workdir.mkdir(parents=True, exist_ok=True)
-        obj_path = self.workdir / "flatten.obj"
-        seam_path = self.workdir / "flatten_seams"
-        out_dir = self.workdir / "flatten_out"
+        workdir = Path(tempfile.mkdtemp(dir=self.workdir))
+        try:
+            return self._run_in(workdir, verts, faces, seams, uvs, iterations)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def _run_in(self, workdir, verts, faces, seams, uvs, iterations):
+        obj_path = workdir / "flatten.obj"
+        seam_path = workdir / "flatten_seams"
+        out_dir = workdir / "flatten_out"
 
         with obj_path.open("w") as f:
             for x, y, z in verts:
@@ -75,8 +85,6 @@ class FlattenEngine:
 
         if seams:
             seam_path.write_text("".join(f"{a} {b}\n" for a, b in sorted(seams)))
-        elif seam_path.exists():
-            seam_path.unlink()
 
         args = [self.engine_path, "-i", str(obj_path), "-o", str(out_dir)]
         if uvs is None:
@@ -211,15 +219,28 @@ def preseed_uvs(
     (or anything with its flatten/pack signature), marked/weights/only mean
     what they do there, marked_seams are the mesh's own marked edges as
     vertex pairs. Returns (seams, uvs) where uvs is per-face corner lists,
-    None for faces outside only."""
+    None for faces outside only. Returns None when the subset is closed and
+    the seam set came out empty, which cannot flatten: the caller falls back
+    to a scratch unwrap."""
+    subset = list(range(len(faces))) if only is None else sorted(only)
+    in_subset = set(subset)
+    edges = face_edges(faces)
+    # the engine rejects non manifold meshes anyway, fail before the repair
+    # loop spends its rounds on edge counts a 3 owner edge skews
+    if any(len(owners) > 2 for owners in edges.values() if owners[0] in in_subset):
+        raise FlattenError("Non Manifold Edges")
+
     if marked == "ONLY":
         seams = set(marked_seams)
     else:
         forced = set(marked_seams) if marked == "ADD" else None
-        detect = faces if only is None else [faces[i] for i in sorted(only)]
+        detect = faces if only is None else [faces[i] for i in subset]
         seams = seam_edges(verts, detect, angle, weights=weights, forced=forced)
+    if not seams and all(
+        len(owners) != 1 for owners in edges.values() if owners[0] in in_subset
+    ):
+        return None
 
-    subset = list(range(len(faces))) if only is None else sorted(only)
     all_uvs = [None] * len(faces)
 
     def flatten_into(target_faces, iterations=10):
@@ -230,7 +251,6 @@ def preseed_uvs(
             all_uvs[f] = face_uv
 
     flatten_into(subset)
-    edges = face_edges(faces)
     density = uv_density(verts, faces, all_uvs, subset)
     repaired = False
 

@@ -931,6 +931,15 @@ int main(int argc, char *argv[]) {
         std::cerr << "failed to load mesh" << std::endl;
         return UVGAMI_RC_FAILED_TO_LOAD_MESH;
     }
+    // nan or absurd coordinates reach the overlap grid and the solver as
+    // hangs with no exit code, reject them at load
+    if (V.rows() != 0 &&
+        (!V.allFinite() || V.cwiseAbs().maxCoeff() > 1e15 ||
+         (UV.rows() != 0 &&
+          (!UV.allFinite() || UV.cwiseAbs().maxCoeff() > 1e15)))) {
+        std::cerr << "input has non-finite or extreme coordinates" << std::endl;
+        return UVGAMI_RC_INVALID_COORDS;
+    }
     //    //DEBUG
     //    uvgami::TriMesh squareMesh(uvgami::P_SQUARE, 1.0, 0.1, false);
     //    V = squareMesh.V_rest;

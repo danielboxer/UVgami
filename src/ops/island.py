@@ -355,6 +355,22 @@ def has_flipped(mesh, patch):
     return False
 
 
+def spans_own_seam(mesh, patch):
+    """A patch vert carrying two different uvs: the island wraps around and
+    borders its own cut edge here. queue_area's export mirrors vt indices to
+    v indices, one uv per vert, so such a patch can't be represented and
+    would weld the seam's two sides."""
+    layer = mesh.uv_layers.active
+    uv_of = {}
+    for fi in patch:
+        poly = mesh.polygons[fi]
+        for c, v in enumerate(poly.vertices):
+            uv = tuple(layer.uv[poly.loop_start + c].vector)
+            if uv_of.setdefault(v, uv) != uv:
+                return True
+    return False
+
+
 def repair_flipped(obj, patch, border):
     """Blender's minimum stretch unwrap over the patch with the border
     pinned, turning a flipped area into a valid map the engine can keep."""
@@ -472,8 +488,15 @@ def queue_targets(engine, engine_ctx, count, queue_one):
         for file in output_path.iterdir():
             file.unlink()
 
-    for k in range(count):
-        queue_one(k, input_path)
+    queued = len(manager._queue)
+    try:
+        for k in range(count):
+            queue_one(k, input_path)
+    except Exception:
+        # drop the partial batch or it silently runs with the next session
+        while len(manager._queue) > queued:
+            manager._queue.pop()
+        raise
 
     if not manager.is_active:
         logger.new_info()
@@ -489,6 +512,7 @@ class UVGAMI_OT_unwrap_island(bpy.types.Operator):
     bl_idname = "uvgami.unwrap_island"
     bl_label = "Unwrap Island"
     bl_description = "Re-unwrap the island under the selected face(s)"
+    bl_options = {"UNDO"}
 
     @classmethod
     def poll(cls, context):
@@ -528,6 +552,7 @@ class UVGAMI_OT_combine_islands(bpy.types.Operator):
     bl_description = (
         "Select a face on two islands to merge them. The islands have to share a seam"
     )
+    bl_options = {"UNDO"}
 
     @classmethod
     def poll(cls, context):
@@ -572,6 +597,7 @@ class AreaOperator:
     """Shared body of Recut Area and Relax Area. A plain mixin: registering a
     subclass of a registered operator unregisters the parent."""
 
+    bl_options = {"UNDO"}
     nocut = False
 
     @classmethod
@@ -591,9 +617,19 @@ class AreaOperator:
             if error:
                 self.report({"ERROR"}, error)
                 return {"CANCELLED"}
+            seam_skipped = 0
+            for target in list(targets):
+                if spans_own_seam(obj.data, target[0]):
+                    targets.remove(target)
+                    seam_skipped += 1
             if not targets:
                 if whole:
                     error = "The whole island is selected, use Unwrap Island instead"
+                elif seam_skipped:
+                    error = (
+                        "The area spans the island's own seam,"
+                        " deselect the faces on one side"
+                    )
                 else:
                     error = "The area rings a hole, deselect a face to break the ring"
                 self.report({"ERROR"}, error)
@@ -642,6 +678,8 @@ class AreaOperator:
             notes.append(f"{whole} whole island(s) skipped")
         if rings:
             notes.append(f"{rings} area(s) around holes skipped")
+        if seam_skipped:
+            notes.append(f"{seam_skipped} area(s) spanning their seam skipped")
         skipped = f", {', '.join(notes)}" if notes else ""
         self.report({"INFO"}, f"Fixing {len(targets)} area(s){skipped}")
         return {"FINISHED"}

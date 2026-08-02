@@ -199,7 +199,11 @@ class UnwrapManager:
                 if ret_code is not None:
                     if ret_code == 0 and unwrap.output_path.is_file():
                         completed.append(unwrap)
-                    elif ret_code != 0:
+                    elif ret_code == 0:
+                        # exit 0 with no output file, the unwrap would
+                        # otherwise stay running forever
+                        failed.append((unwrap, -4))
+                    else:
                         # a batched mesh that never started and still has its
                         # input goes back to the queue for a fresh batch instead
                         # of inheriting the dead process's exit code
@@ -226,6 +230,9 @@ class UnwrapManager:
                     for line in error_list:
                         logger.add_data("errors", line)
                         print(line)
+                    self.error_messages.append(
+                        f"Error finishing {unwrap.input_name}, see the console"
+                    )
                     # ensure unwrap is removed even on error
                     if unwrap in self._running:
                         self._running.remove(unwrap)
@@ -241,6 +248,9 @@ class UnwrapManager:
                     for line in error_list:
                         logger.add_data("errors", line)
                         print(line)
+                    self.error_messages.append(
+                        f"Error handling {unwrap.input_name} failure, see the console"
+                    )
                     if unwrap in self._running:
                         self._running.remove(unwrap)
                     unwrap.cleanup()
@@ -465,6 +475,9 @@ class UnwrapManager:
         elif ret_code == -3:
             msg = "Stop timed out (force killed)"
             move_to_invalid = True
+        elif ret_code == -4:
+            msg = "Engine produced no output"
+            move_to_invalid = True
         else:
             described = self.engine.describe_failure(ret_code)
             if described is not None:
@@ -621,6 +634,7 @@ class UnwrapManager:
         self._running.clear()
         self._queue.clear()
         self._pack_output_objects.clear()
+        self.input.clear()
 
         if bpy.context.scene.uvgami.auto_grid and self.finished_count > 0:
             switch_shading("MATERIAL")
@@ -658,6 +672,11 @@ class UnwrapManager:
         # late import: ops.viewer imports the manager
         from .ops.viewer import stop_viewer_draw
 
+        # a cancelled area fix keeps its old uvs, not the flipped pre-repair
+        for unwrap in self.active:
+            job = unwrap.transfer_uvs_job
+            if hasattr(job, "restore"):
+                job.restore(self.input[job])
         for unwrap in list(self._running):
             unwrap.stop_process()
             unwrap.cleanup()

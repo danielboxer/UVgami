@@ -564,6 +564,15 @@ int runFlatten(const std::string &inputPath, const std::string &outputDir,
         emitFailed(stem, UVGAMI_RC_FAILED_TO_LOAD_MESH);
         return UVGAMI_RC_FAILED_TO_LOAD_MESH;
     }
+    // a nan vertex flows through tutte init and the pack sort into a nan
+    // uv written under a success done:, reject it at load
+    for (const Eigen::Vector3d &v : mesh.verts) {
+        if (!v.allFinite() || v.cwiseAbs().maxCoeff() > 1e15) {
+            std::fprintf(stderr, "input has non-finite coordinates\n");
+            emitFailed(stem, UVGAMI_RC_INVALID_COORDS);
+            return UVGAMI_RC_INVALID_COORDS;
+        }
+    }
 
     if (packOnly) {
         if (!hasUV) {

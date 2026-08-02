@@ -90,6 +90,7 @@ class UVGAMI_OT_preview_seams(bpy.types.Operator):
             bpy.ops.object.mode_set(mode="OBJECT")
 
         counts = []
+        flatten_error = None
         for obj in selected:
             if not validate_obj(self, obj):
                 continue
@@ -103,10 +104,13 @@ class UVGAMI_OT_preview_seams(bpy.types.Operator):
                     only = None
             weights = seam_restrictions(obj) if guided else None
             try:
-                build_seam_uvs(obj, angle, marked, weights, only)
+                applied = build_seam_uvs(obj, angle, marked, weights, only)
             except FlattenError as error:
-                self.report({"ERROR"}, str(error))
-                return {"CANCELLED"}
+                flatten_error = str(error)
+                break
+            if not applied:
+                counts.append("no seams")
+                continue
             counts.append(str(sum(1 for edge in obj.data.edges if edge.use_seam)))
 
         deselect_all()
@@ -116,6 +120,10 @@ class UVGAMI_OT_preview_seams(bpy.types.Operator):
         if active is not None and mode != "OBJECT":
             bpy.ops.object.mode_set(mode=mode)
 
+        if flatten_error is not None:
+            self.report({"ERROR"}, flatten_error)
+            # FINISHED so the undo step covers meshes already written
+            return {"FINISHED"}
         if not counts:
             self.report({"ERROR"}, "Select a mesh with faces")
             return {"CANCELLED"}
@@ -214,14 +222,14 @@ class OptcutsEngine(Engine):
                 return props.import_uvs
             if len(only) == len(obj.data.polygons):
                 only = None
-        build_seam_uvs(
+        applied = build_seam_uvs(
             obj,
             math.degrees(optcuts.hard_surface_angle),
             optcuts.hard_surface_marked,
             seam_restrictions(obj) if props.avoid_seams else None,
             only,
         )
-        return True
+        return applied or props.import_uvs
 
     def preseed_work(self, obj, props):
         optcuts = props.optcuts
@@ -280,6 +288,7 @@ class OptcutsEngine(Engine):
             109: ("Initial Cut Failed", True),
             110: ("Area UVs Too Broken To Pin", True),
             111: ("Island UVs Too Broken To Combine", True),
+            113: ("Invalid Coordinates", True),
             # 90 (the engine's terminate handler) stays unmapped on purpose:
             # the unknown-code path surfaces the fatal line from stderr
         }.get(code) or super().describe_failure(code)
