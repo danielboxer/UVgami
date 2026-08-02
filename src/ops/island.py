@@ -135,7 +135,27 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
     queue_fix(obj, IslandUVs(list(group), bbox, area), name, path, vertex_count, props)
 
 
-def queue_stitch(obj, targets, input_path, props):
+def islands_connected(mesh, targets):
+    """True when the islands form one connected set through shared mesh edges,
+    the only places the engine can weld."""
+    parent = list(range(len(targets)))
+
+    def find(i):
+        while parent[i] != i:
+            i = parent[i]
+        return i
+
+    edge_owner = {}
+    for i, (group, _, _) in enumerate(targets):
+        for fi in group:
+            for key in mesh.polygons[fi].edge_keys:
+                j = edge_owner.setdefault(key, i)
+                if j != i:
+                    parent[find(i)] = find(j)
+    return len({find(i) for i in range(len(targets))}) == 1
+
+
+def queue_combine(obj, targets, input_path, props):
     """Export the selected islands as one mesh with their uvs and a _stitch
     sidecar, and queue it with an IslandUVs job over all their faces so the
     merged result comes back into the islands' combined uv bounds."""
@@ -144,13 +164,13 @@ def queue_stitch(obj, targets, input_path, props):
     faces = [fi for group, _, _ in targets for fi in group]
     used = sorted({v for fi in faces for v in mesh.polygons[fi].vertices})
     local = {v: i for i, v in enumerate(used)}
-    stitch_mesh = bpy.data.meshes.new("uvgami_stitch")
-    stitch_mesh.from_pydata(
+    combine_mesh = bpy.data.meshes.new("uvgami_combine")
+    combine_mesh.from_pydata(
         [mesh.vertices[v].co.copy() for v in used],
         [],
         [[local[v] for v in mesh.polygons[fi].vertices] for fi in faces],
     )
-    uv = stitch_mesh.uv_layers.new()
+    uv = combine_mesh.uv_layers.new()
     # optcuts treats a mirrored island as inverted and re-cuts it, which stitch
     # mode forbids, so mirror those back within their own bounds before export
     flip = {}
@@ -173,7 +193,7 @@ def queue_stitch(obj, targets, input_path, props):
             u, v = layer.uv[poly.loop_start + c].vector
             uv.uv[loop].vector = (flip[fi] - u, v) if fi in flip else (u, v)
             loop += 1
-    temp = bpy.data.objects.new("uvgami_stitch", stitch_mesh)
+    temp = bpy.data.objects.new("uvgami_combine", combine_mesh)
     bpy.context.scene.collection.objects.link(temp)
     temp.matrix_world = obj.matrix_world.copy()
 
@@ -184,7 +204,7 @@ def queue_stitch(obj, targets, input_path, props):
     else:
         bm.free()
 
-    name = f"{obj.name}_stitch"
+    name = f"{obj.name}_combine"
     path = input_path / f"{bpy.path.clean_name(name)}.obj"
     while path.is_file():
         path = path.parent / f"{path.stem}1.obj"
@@ -192,7 +212,7 @@ def queue_stitch(obj, targets, input_path, props):
     (path.parent / f"{path.stem}_stitch").touch()
     vertex_count = len(temp.data.vertices)
     bpy.data.objects.remove(temp, do_unlink=True)
-    bpy.data.meshes.remove(stitch_mesh)
+    bpy.data.meshes.remove(combine_mesh)
 
     bbox = (
         min(b[0] for _, b, _ in targets),
@@ -493,14 +513,14 @@ class UVGAMI_OT_unwrap_island(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class UVGAMI_OT_stitch_islands(bpy.types.Operator):
-    bl_idname = "uvgami.stitch_islands"
-    bl_label = "Stitch Islands"
+class UVGAMI_OT_combine_islands(bpy.types.Operator):
+    bl_idname = "uvgami.combine_islands"
+    bl_label = "Combine Islands"
     bl_description = (
         "Merge the uv islands under the selected faces with the engine."
         " Islands sharing a mesh edge are moved together, welded along it"
-        " and relaxed, so fewer islands cover the same faces. Islands with"
-        " no shared edge stay separate"
+        " and relaxed, so fewer islands cover the same faces. The islands"
+        " must be neighbours on the mesh"
     )
 
     @classmethod
@@ -512,8 +532,8 @@ class UVGAMI_OT_stitch_islands(bpy.types.Operator):
         engine, engine_ctx = validate_engine(self, props)
         if engine is None:
             return {"CANCELLED"}
-        if not engine.supports_stitch:
-            self.report({"ERROR"}, f"{engine.label} can't stitch islands")
+        if not engine.supports_combine:
+            self.report({"ERROR"}, f"{engine.label} can't combine islands")
             return {"CANCELLED"}
 
         obj = context.view_layer.objects.active
@@ -526,9 +546,14 @@ class UVGAMI_OT_stitch_islands(bpy.types.Operator):
             if len(targets) < 2:
                 self.report({"ERROR"}, "Select faces on at least two islands")
                 return {"CANCELLED"}
+            if not islands_connected(obj.data, targets):
+                self.report(
+                    {"ERROR"}, "The selected islands don't all share mesh edges"
+                )
+                return {"CANCELLED"}
 
             def queue_one(k, input_path):
-                queue_stitch(obj, targets, input_path, props)
+                queue_combine(obj, targets, input_path, props)
 
             queue_targets(engine, engine_ctx, 1, queue_one)
         finally:
@@ -536,7 +561,7 @@ class UVGAMI_OT_stitch_islands(bpy.types.Operator):
             context.view_layer.objects.active = obj
             bpy.ops.object.mode_set(mode="EDIT")
 
-        self.report({"INFO"}, f"Stitching {len(targets)} islands")
+        self.report({"INFO"}, f"Combining {len(targets)} islands")
         return {"FINISHED"}
 
 

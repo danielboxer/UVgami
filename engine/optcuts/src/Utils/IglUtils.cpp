@@ -495,10 +495,23 @@ bool IglUtils::Test2DSegmentSegment(const Eigen::RowVector2d &a,
     return false;
 }
 
+static bool transversalCross(const Eigen::RowVector2d &a,
+                             const Eigen::RowVector2d &b,
+                             const Eigen::RowVector2d &c,
+                             const Eigen::RowVector2d &d) {
+    const double a1 = Signed2DTriArea(a, b, d);
+    const double a2 = Signed2DTriArea(a, b, c);
+    if (a1 * a2 >= 0.0)
+        return false;
+    const double a3 = Signed2DTriArea(c, d, a);
+    const double a4 = a3 + a2 - a1;
+    return a3 * a4 < 0.0;
+}
+
 bool IglUtils::checkUVBoundaryOverlap(
     const Eigen::MatrixXd &UV,
     const std::vector<std::vector<int>> &bnd_all,
-    std::set<int> *crossingVerts) {
+    std::set<int> *crossingVerts, bool transversalOnly) {
     std::vector<std::pair<int, int>> edges;
     for (const auto &loop : bnd_all) {
         int n = loop.size();
@@ -570,7 +583,8 @@ bool IglUtils::checkUVBoundaryOverlap(
             }
             const Eigen::RowVector2d c = UV.row(edges[ej].first).head<2>();
             const Eigen::RowVector2d d = UV.row(edges[ej].second).head<2>();
-            if (Test2DSegmentSegment(a, b, c, d)) {
+            if (transversalOnly ? transversalCross(a, b, c, d)
+                                : Test2DSegmentSegment(a, b, c, d)) {
                 if (!crossingVerts) {
                     return true;
                 }

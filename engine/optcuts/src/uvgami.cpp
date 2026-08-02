@@ -812,7 +812,25 @@ static std::vector<bool> chartDiskFlags(const Eigen::MatrixXi &F,
     return isDisk;
 }
 
+// an escaped exception fast-fails with no message otherwise, name it on
+// stderr so a field crash is diagnosable from the addon's log
+static void reportTerminate() {
+    if (auto e = std::current_exception()) {
+        try {
+            std::rethrow_exception(e);
+        } catch (const std::exception &ex) {
+            std::cerr << "fatal: " << ex.what() << std::endl;
+        } catch (...) {
+            std::cerr << "fatal: non-std exception" << std::endl;
+        }
+    } else {
+        std::cerr << "fatal: terminate without exception" << std::endl;
+    }
+    std::_Exit(90);
+}
+
 int main(int argc, char *argv[]) {
+    std::set_terminate(reportTerminate);
     std::string meshFileName;
     lambda_init = 0.999;
     std::filesystem::path inputFolderPath;
@@ -946,6 +964,14 @@ int main(int argc, char *argv[]) {
               : uvgami::TriMesh(V, F, Eigen::MatrixXd(), Eigen::MatrixXi(),
                                 false);
 
+    // stitch mode: a <mesh>_stitch sidecar asks for greedy island merging on
+    // the kept map, a redone layout has no island placement worth stitching.
+    // detected before the keep decision because stitch runs relax the disk
+    // requirement below
+    std::string stitchFileName = std::string(inputFolderPath.u8string()) +
+                                 pathSeparator() + meshName + "_stitch";
+    stitchMode = std::ifstream(stitchFileName).is_open();
+
     // an input UV chart is kept when it is already a valid flattening: no
     // flipped or overlapping triangles, and disk topology. the rest are cut to
     // disks below and re-laid out, which keeps the input seams and adds only
@@ -1005,9 +1031,41 @@ int main(int argc, char *argv[]) {
             anyInversion = anyInversion || inverted[c];
             allDisks = allDisks && isDisk[c];
         }
+        // a stitch run can keep charts with holes: an interior split the
+        // engine never merged back leaves a slit, and the machinery is
+        // hole-safe. a pinched boundary is not, the scaffold's corner air
+        // loop cannot represent it, so those still re-cut
+        bool stitchKeepable = stitchMode;
+        if (stitchMode && !allDisks) {
+            std::map<std::pair<int, int>, int> edgeCount;
+            for (int triI = 0; triI < temp.F.rows(); ++triI) {
+                for (int i = 0; i < 3; ++i) {
+                    int a = temp.F(triI, i), b = temp.F(triI, (i + 1) % 3);
+                    edgeCount[{std::min(a, b), std::max(a, b)}]++;
+                }
+            }
+            std::vector<int> bndDeg(temp.V.rows(), 0);
+            for (const auto &ec : edgeCount) {
+                if (ec.second == 1) {
+                    bndDeg[ec.first.first]++;
+                    bndDeg[ec.first.second]++;
+                }
+            }
+            std::vector<bool> pinchFree(n_components, true);
+            for (int triI = 0; triI < temp.F.rows(); ++triI) {
+                for (int i = 0; i < 3; ++i) {
+                    if (bndDeg[temp.F(triI, i)] > 2)
+                        pinchFree[C[triI]] = false;
+                }
+            }
+            for (int c = 0; c < n_components; ++c)
+                stitchKeepable = stitchKeepable && pinchFree[c];
+        }
+
         // whole-map decision first, so a map that was kept before is still
         // kept byte for byte
-        keepInputUV = allDisks && !anyInversion && crossingVerts.empty();
+        keepInputUV = (allDisks || stitchKeepable) && !anyInversion &&
+                      crossingVerts.empty();
 
         int badInverted = 0, badOverlapping = 0, badNonDisk = 0;
         if (keepInputUV) {
@@ -1072,11 +1130,6 @@ int main(int argc, char *argv[]) {
         return UVGAMI_RC_PINNED_UV_NOT_KEPT;
     }
 
-    // stitch mode: a <mesh>_stitch sidecar asks for greedy island merging on
-    // the kept map, a redone layout has no island placement worth stitching
-    std::string stitchFileName = std::string(inputFolderPath.u8string()) +
-                                 pathSeparator() + meshName + "_stitch";
-    stitchMode = std::ifstream(stitchFileName).is_open();
     if (stitchMode && !keepInputUV) {
         std::cerr << "stitching needs the input UV map kept" << std::endl;
         return UVGAMI_RC_STITCH_UV_NOT_KEPT;

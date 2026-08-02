@@ -383,7 +383,7 @@ class UVGAMI_PT_island_uv(bpy.types.Panel):
         col = box.column()
         col.scale_y = 1.5
         col.operator("uvgami.unwrap_island", icon="UV")
-        col.operator("uvgami.stitch_islands", icon="UV_ISLANDSEL")
+        col.operator("uvgami.combine_islands", icon="UV_ISLANDSEL")
         col.operator("uvgami.recut_area", icon="UV_FACESEL")
         col.operator("uvgami.relax_area", icon="UV_VERTEXSEL")
 

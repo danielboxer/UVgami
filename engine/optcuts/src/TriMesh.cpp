@@ -1077,6 +1077,10 @@ bool TriMesh::stitchIsland(void) {
         return edgeLen[cohA] > edgeLen[cohB];
     });
 
+    // the raw boundary only depends on F, shared by every candidate's test
+    std::vector<std::vector<int>> bnd_raw;
+    igl::boundary_loop(F, bnd_raw);
+
     for (const auto &cohI : candidates) {
         int a0 = cohE(cohI, 0), a1 = cohE(cohI, 1);
         int b0 = cohE(cohI, 2), b1 = cohE(cohI, 3);
@@ -1158,6 +1162,14 @@ bool TriMesh::stitchIsland(void) {
         std::vector<std::vector<int>> bnd_all;
         igl::boundary_loop(F_test, bnd_all);
         if (IglUtils::checkUVBoundaryOverlap(V_test, bnd_all, NULL))
+            continue;
+
+        // the pre-welded test reads every open zipper as interior, but a
+        // zipper blocked mid-seam stays open, so also test the raw boundary
+        // for real crossings. the flush run reads as touching, not crossing,
+        // and a candidate whose slack would drag through anything is refused
+        // here rather than jamming the zip later
+        if (IglUtils::checkUVBoundaryOverlap(V_test, bnd_raw, NULL, true))
             continue;
 
         // crossing-free placement can still bury one island inside another,
@@ -1297,6 +1309,24 @@ bool TriMesh::zipStitchedSeam(void) {
         V.row(w) = backupW;
         if (!feasible)
             // the front stays, relaxation may make room for a later attempt
+            continue;
+
+        // inversion is only checked locally, but pulling u and w together can
+        // drag the outline across a thin section far away. transversal only,
+        // so the still-coincident runs of open zippers don't read as
+        // crossings while a real drag-through still blocks the weld
+        Eigen::MatrixXi F_test = F;
+        for (int triI = 0; triI < F_test.rows(); triI++) {
+            for (int vI = 0; vI < 3; vI++) {
+                if (F_test(triI, vI) == w)
+                    F_test(triI, vI) = u;
+            }
+        }
+        Eigen::MatrixXd V_test_zip = V;
+        V_test_zip.row(u) = mergedPos;
+        std::vector<std::vector<int>> bnd_zip;
+        igl::boundary_loop(F_test, bnd_zip);
+        if (IglUtils::checkUVBoundaryOverlap(V_test_zip, bnd_zip, NULL, true))
             continue;
 
         std::vector<int> path;

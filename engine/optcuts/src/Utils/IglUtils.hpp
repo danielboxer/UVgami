@@ -107,11 +107,13 @@ class IglUtils {
     // islands self-intersect or overlap each other. spatial-hash broad phase,
     // Test2DSegmentSegment narrow phase. does not catch full containment.
     // with crossingVerts, every crossing is reported through it instead of
-    // returning at the first one, so a caller can tell which charts are at fault
+    // returning at the first one, so a caller can tell which charts are at
+    // fault. transversalOnly skips touching and collinear overlap, so the
+    // exactly coincident runs of a mid-zip stitch don't count as crossings
     static bool checkUVBoundaryOverlap(
         const Eigen::MatrixXd &UV,
         const std::vector<std::vector<int>> &bnd_all,
-        std::set<int> *crossingVerts = nullptr);
+        std::set<int> *crossingVerts = nullptr, bool transversalOnly = false);
 
     static void smoothVertField(const TriMesh &mesh, Eigen::VectorXd &field);
 };
