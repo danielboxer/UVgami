@@ -144,6 +144,34 @@ def vertex_components(faces):
     return list(members.values())
 
 
+def islands_overlap(boxes):
+    """True when any two island bboxes intersect. Boxes can touch without the
+    boundaries crossing, which only costs an unneeded relayout."""
+    order = sorted(range(len(boxes)), key=lambda i: boxes[i][0])
+    for k, i in enumerate(order):
+        for j in order[k + 1 :]:
+            if boxes[j][0] >= boxes[i][2]:
+                break
+            if boxes[j][1] < boxes[i][3] and boxes[i][1] < boxes[j][3]:
+                return True
+    return False
+
+
+def island_layout(boxes, areas):
+    """Per-island uv transforms (flip, du, dv) that mirror negative-area
+    islands within their own bounds and lay all islands side by side, so the
+    exported map has no inverted or overlapping charts. Apply as u -> flip - u
+    when flip is not None, then add (du, dv)."""
+    gap = 0.05 * max(x1 - x0 for x0, _, x1, _ in boxes)
+    transforms = []
+    cursor = 0.0
+    for (x0, y0, x1, _), area in zip(boxes, areas):
+        flip = x0 + x1 if area < 0 else None
+        transforms.append((flip, cursor - x0, -y0))
+        cursor += x1 - x0 + gap
+    return transforms
+
+
 def uv_fit(points, bbox):
     """Mapping that scales the points uniformly into the bbox, centered.
     Keeps a repaired island inside the spot its old layout occupied."""

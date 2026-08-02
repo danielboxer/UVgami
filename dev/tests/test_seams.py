@@ -30,7 +30,9 @@ from seams import (  # noqa: E402
     flatten_teeth,
     is_hard_surface,
     island_groups,
+    island_layout,
     island_ruined,
+    islands_overlap,
     pair,
     partition,
     path_cost,
@@ -932,6 +934,26 @@ def test_uv_area_fit_falls_back_to_the_bbox_without_an_area():
     move = uv_area_fit(square, 0, (0, 0, 1, 1))
     assert move((0, 0)) == (0, 0)
     assert move((2, 2)) == (1, 1)
+
+
+def test_islands_overlap_detects_stacked_boxes():
+    apart = [(0, 0, 1, 1), (1.1, 0, 2, 1), (0, 1.2, 1, 2)]
+    assert not islands_overlap(apart)
+    assert islands_overlap([*apart, (0.5, 0.5, 1.5, 1.5)])
+
+
+def test_island_layout_separates_and_unmirrors():
+    boxes = [(0, 0, 1, 1), (0.2, 0.1, 0.8, 0.9)]
+    transforms = island_layout(boxes, [0.5, -0.3])
+    moved = []
+    for (x0, y0, x1, y1), (flip, du, dv) in zip(boxes, transforms):
+        us = [x0, x1] if flip is None else [flip - x0, flip - x1]
+        moved.append((min(us) + du, y0 + dv, max(us) + du, y1 + dv))
+    assert not islands_overlap(moved)
+    # only the negative-area island mirrors, within its own bounds
+    assert transforms[0][0] is None
+    assert transforms[1][0] == 1.0
+    assert moved[1][2] - moved[1][0] == boxes[1][2] - boxes[1][0]
 
 
 def grid_island(cols, rows):
