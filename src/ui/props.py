@@ -81,10 +81,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     area_expand: bpy.props.IntProperty(
         name="",
         description=(
-            "Grow the selected area by this many face rings before fixing."
-            " The border of the grown area is what stays in place, so"
-            " expanding lets the selection itself reshape and gives cuts"
-            " room to land"
+            "Grow the selected area by this many face rings to affect a larger area"
         ),
         min=0,
         max=10,
@@ -125,10 +122,8 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     use_proxy: bpy.props.BoolProperty(
         name="",
         description=(
-            "Unwrap a decimated copy of the mesh, then cut the original along"
-            " its seams and unwrap it in Blender. Much faster on dense meshes."
-            " The UV map lands on the original object, which must be unchanged"
-            " since starting the unwrap"
+            "Unwrap a low poly copy, then transfer the seams to the original."
+            " Much faster for high poly meshes"
         ),
     )
     proxy_faces: bpy.props.IntProperty(
@@ -138,9 +133,23 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         max=100000,
         default=2000,
     )
-    # seam restrictions
-    use_guided_mode: bpy.props.BoolProperty(
-        name="", description="Avoid placing seams on parts of the mesh"
+    # weights
+    use_weights: bpy.props.BoolProperty(
+        name="", description="Use the painted weights to change the unwrap"
+    )
+    weight_mode: bpy.props.EnumProperty(
+        name="Mode",
+        description="What the painted weights do",
+        items=(
+            ("SEAMS", "Avoid Seams", "Keep seams off the painted faces"),
+            (
+                "STRETCH",
+                "Reduce Stretching",
+                "Prioritize the painted faces to have less stretching",
+            ),
+            ("BOTH", "Both", "Avoid seams on the painted faces and stretch them less"),
+        ),
+        default="SEAMS",
     )
     weight_value: bpy.props.IntProperty(
         name="",
@@ -151,13 +160,6 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         min=1,
         max=5,
         default=3,
-    )
-    use_importance_weights: bpy.props.BoolProperty(
-        name="",
-        description=(
-            "Let faces outside the seam restriction weights absorb the"
-            " stretching, so the weighted faces keep their shape"
-        ),
     )
     # symmetry
     use_symmetry: bpy.props.BoolProperty(
@@ -241,6 +243,14 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         ),
     )
 
+    @property
+    def avoid_seams(self):
+        return self.use_weights and self.weight_mode in {"SEAMS", "BOTH"}
+
+    @property
+    def reduce_stretching(self):
+        return self.use_weights and self.weight_mode in {"STRETCH", "BOTH"}
+
 
 # each engine contributes a pointer to its own settings group, keyed by engine id
 for engine in ENGINES.values():
@@ -288,7 +298,7 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         name="Stop Timeout",
         description=(
             "Time in minutes to wait after requesting a stop before force killing the engine."
-            " Set to 0 to disable."
+            " Set to 0 to disable"
         ),
         min=0,
         max=60,

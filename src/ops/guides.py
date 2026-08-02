@@ -68,16 +68,13 @@ def _enter_draw_mode(context, obj):
     if SEAM_RESTRICTIONS_GROUP not in vertex_groups:
         vertex_groups.new(name=SEAM_RESTRICTIONS_GROUP)
     vertex_groups.active_index = vertex_groups[SEAM_RESTRICTIONS_GROUP].index
-    context.scene.uvgami.use_guided_mode = True
+    context.scene.uvgami.use_weights = True
 
 
 class UVGAMI_OT_draw_guides(bpy.types.Operator):
     bl_idname = "uvgami.draw_guides"
     bl_label = "Draw"
-    bl_description = (
-        "Draw seam restrictions to change the unwrap."
-        " Seams will not be placed on red areas"
-    )
+    bl_description = "Paint the weights that change the unwrap. Red is weighted"
     bl_options = {"UNDO"}
 
     def execute(self, context):
@@ -215,7 +212,7 @@ class UVGAMI_OT_seed_restrictions(bpy.types.Operator):
         if active is not None and validate_obj(self, active):
             _enter_draw_mode(context, active)
         else:
-            context.scene.uvgami.use_guided_mode = True
+            context.scene.uvgami.use_weights = True
         return {"FINISHED"}
 
 
@@ -240,7 +237,7 @@ class UVGAMI_OT_exit_draw(bpy.types.Operator):
 class UVGAMI_OT_clear_draw(bpy.types.Operator):
     bl_idname = "uvgami.clear_draw"
     bl_label = "Clear"
-    bl_description = "Clear current seam restrictions"
+    bl_description = "Clear the painted weights"
     bl_options = {"UNDO"}
 
     def execute(self, context):

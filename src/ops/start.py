@@ -264,7 +264,7 @@ class InputExporter:
         weights = {}
         if (
             self.engine.supports_guided
-            and (props.use_guided_mode or props.use_importance_weights)
+            and (props.avoid_seams or props.reduce_stretching)
             and SEAM_RESTRICTIONS_GROUP in obj.vertex_groups
         ):
             group_idx = obj.vertex_groups[SEAM_RESTRICTIONS_GROUP].index
@@ -284,11 +284,11 @@ class InputExporter:
 
         guide = ",".join(f"{index},{weight}" for index, weight in weights.items())
         guide_path = None
-        if props.use_guided_mode:
+        if props.avoid_seams:
             guide_path = path.parent / f"{path.stem}_weights"
             with guide_path.open("w") as f:
                 f.write(f"{guide}\n")
-        if props.use_importance_weights:
+        if props.reduce_stretching:
             importance_path = path.parent / f"{path.stem}_importance"
             with importance_path.open("w") as f:
                 f.write(f"{guide}\n")

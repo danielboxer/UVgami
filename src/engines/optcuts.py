@@ -17,59 +17,34 @@ from ..utils.paths import get_bundled_engine_path
 
 
 class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
-    hard_surface: bpy.props.EnumProperty(
+    use_hard_surface: bpy.props.BoolProperty(
         name="",
+        description="Cut seams on sharp features. Good for mechanical shapes",
+    )
+    hard_surface_auto: bpy.props.BoolProperty(
+        name="Auto",
         description=(
-            "Cut seams on sharp features first, then unwrap. "
-            "Best for mechanical shapes, uses more seams"
+            "Automatically unwrap sharp objects in hard surface mode and"
+            " otherwise in normal mode"
         ),
-        items=(
-            ("OFF", "Off", "No feature seams, every part unwraps from scratch"),
-            (
-                "ON",
-                "On",
-                "Cut feature seams on every part before the unwrap",
-            ),
-            (
-                "AUTO",
-                "Auto",
-                "Cut feature seams only on the loose parts that read as hard "
-                "surface. Organic parts unwrap from scratch, so a mixed model "
-                "gets both treatments",
-            ),
-        ),
-        default="OFF",
     )
     hard_surface_marked: bpy.props.EnumProperty(
         name="",
-        description=(
-            "What to do with the seams already marked on the mesh. Run Seams "
-            "Unwrap, edit the marks, then unwrap. Repair can still add cuts "
-            "where an island would otherwise fail"
-        ),
+        description="What to do with the seams already marked on the mesh",
         items=(
-            ("NONE", "Ignore", "Detect every seam, marked edges are replaced"),
-            (
-                "ADD",
-                "Add",
-                "Detect seams and cut the marked edges as well, keeping them "
-                "whatever the shape says",
-            ),
+            ("NONE", "Detect", "Detect every seam, marked edges are ignored"),
+            ("ADD", "Both", "Detect seams and cut the marked edges too"),
             (
                 "ONLY",
-                "Only",
+                "Marked",
                 "Marked edges are the whole seam set, nothing is detected",
             ),
         ),
         default="NONE",
     )
     hard_surface_angle: bpy.props.FloatProperty(
-        name="Feature Angle",
-        description=(
-            "What counts as a sharp feature. Boundaries that turn less than "
-            "this merge away, so lower keeps more seams like an artist "
-            "seaming every sharp edge"
-        ),
+        name="Angle",
+        description="What counts as a sharp feature. Lower keeps more seams",
         subtype="ANGLE",
         default=math.radians(66),
         min=math.radians(1),
@@ -89,14 +64,16 @@ class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
         default="MEDIUM",
     )
 
+    @property
+    def is_auto(self):
+        return self.use_hard_surface and self.hard_surface_auto
+
 
 class UVGAMI_OT_preview_seams(bpy.types.Operator):
     bl_idname = "uvgami.preview_seams"
-    bl_label = "Seams Unwrap"
+    bl_label = "Mark Seams (Dev)"
     bl_description = (
-        "Unwrap the selected meshes with the hard surface seams and"
-        " Blender's unwrap, no engine run. The result is exactly what Seams"
-        " mode would send to the engine, so it doubles as a seam preview"
+        "Preview the hard surface seams with Blender's unwrap, no engine run"
     )
     bl_options = {"UNDO"}
 
@@ -105,7 +82,7 @@ class UVGAMI_OT_preview_seams(bpy.types.Operator):
         optcuts = props.optcuts
         angle = math.degrees(optcuts.hard_surface_angle)
         marked = optcuts.hard_surface_marked
-        guided = props.use_guided_mode
+        guided = props.avoid_seams
         selected = list(context.selected_objects)
         active = context.view_layer.objects.active
         mode = active.mode if active is not None else "OBJECT"
@@ -117,7 +94,7 @@ class UVGAMI_OT_preview_seams(bpy.types.Operator):
             if not validate_obj(self, obj):
                 continue
             only = None
-            if optcuts.hard_surface == "AUTO":
+            if optcuts.is_auto:
                 only = auto_hard_faces(obj, marked)
                 if not only:
                     counts.append("organic")
@@ -153,36 +130,37 @@ class UVGAMI_PT_hard_surface(bpy.types.Panel):
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
+    bl_order = 1
 
     @classmethod
     def poll(cls, context):
         return context.scene.uvgami.engine == "OPTCUTS"
 
+    def draw_header(self, context):
+        self.layout.prop(context.scene.uvgami.optcuts, "use_hard_surface")
+
     def draw(self, context):
         optcuts = context.scene.uvgami.optcuts
-        on = optcuts.hard_surface != "OFF"
-        box = self.layout.box()
+        layout = self.layout
+        layout.active = optcuts.use_hard_surface
+        box = layout.box()
 
         row = box.row()
         row.alignment = "CENTER"
         row.label(text="Hard Surface", icon="MOD_BEVEL")
 
-        split = box.split(factor=0.7)
-        split.label(icon="OPTIONS", text="Mode")
-        split.prop(optcuts, "hard_surface", text="")
+        box.prop(optcuts, "hard_surface_auto")
 
         split = box.split(factor=0.7)
-        split.active = on
         split.label(icon="EDGESEL", text="Marked Seams")
         split.prop(optcuts, "hard_surface_marked", text="")
 
         row = box.row()
-        row.active = on and optcuts.hard_surface_marked != "ONLY"
-        row.label(icon="DRIVER_ROTATIONAL_DIFFERENCE", text="Feature Angle")
+        row.active = optcuts.hard_surface_marked != "ONLY"
+        row.label(icon="DRIVER_ROTATIONAL_DIFFERENCE", text="Angle")
         row.prop(optcuts, "hard_surface_angle", text="")
 
         row = box.row()
-        row.active = on
         row.scale_y = 1.5
         row.operator("uvgami.preview_seams", icon="UV_EDGESEL")
 
@@ -199,8 +177,6 @@ class OptcutsEngine(Engine):
     supports_early_stop = True
     supports_preserve = True
     supports_import_uvs = True
-    supports_pinned = True
-    supports_combine = True
 
     def validate(self, prefs):
         raw = pathlib.Path(prefs.engine_path)
@@ -229,10 +205,10 @@ class OptcutsEngine(Engine):
 
     def prepare_uvs(self, obj, props):
         optcuts = props.optcuts
-        if optcuts.hard_surface == "OFF":
+        if not optcuts.use_hard_surface:
             return props.import_uvs
         only = None
-        if optcuts.hard_surface == "AUTO":
+        if optcuts.is_auto:
             only = auto_hard_faces(obj, optcuts.hard_surface_marked)
             if not only:
                 return props.import_uvs
@@ -242,21 +218,21 @@ class OptcutsEngine(Engine):
             obj,
             math.degrees(optcuts.hard_surface_angle),
             optcuts.hard_surface_marked,
-            seam_restrictions(obj) if props.use_guided_mode else None,
+            seam_restrictions(obj) if props.avoid_seams else None,
             only,
         )
         return True
 
     def preseed_work(self, obj, props):
         optcuts = props.optcuts
-        if optcuts.hard_surface == "OFF":
+        if not optcuts.use_hard_surface:
             return None
         compute, apply = preseed_work(
             obj,
             math.degrees(optcuts.hard_surface_angle),
             optcuts.hard_surface_marked,
-            seam_restrictions(obj) if props.use_guided_mode else None,
-            auto=optcuts.hard_surface == "AUTO",
+            seam_restrictions(obj) if props.avoid_seams else None,
+            auto=optcuts.is_auto,
         )
         # an auto run that finds nothing hard falls back to prepare_uvs' answer
         return compute, lambda result: apply(result) or props.import_uvs
@@ -265,7 +241,7 @@ class OptcutsEngine(Engine):
         # auto mode routes per loose part: a piece the preseed skipped has no
         # seams and goes to the engine bare, to be cut from scratch. With
         # import uvs on, organic pieces keep the user's map instead
-        if props.optcuts.hard_surface != "AUTO" or props.import_uvs:
+        if not props.optcuts.is_auto or props.import_uvs:
             return has_uvs
         return has_uvs and any(e.use_seam for e in obj.data.edges)
 

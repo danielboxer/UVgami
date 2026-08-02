@@ -131,10 +131,7 @@ def stop_viewer_draw():
 class UVGAMI_OT_view_unwrap(bpy.types.Operator):
     bl_idname = "uvgami.view_unwrap"
     bl_label = "View Unwrap"
-    bl_description = (
-        "Show the unwrap's uv map live in the UV editor, which will be"
-        " opened automatically"
-    )
+    bl_description = "Show the unwrap live in the UV editor"
 
     index: bpy.props.IntProperty()
 

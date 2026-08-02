@@ -128,7 +128,7 @@ def build_seam_uvs(obj, angle=CREASE_ANGLE, marked="NONE", weights=None, only=No
     """Seam the strip-merged feature boundaries, then flatten into the uv map.
 
     marked says what the mesh's own seam marks do. ONLY takes them as the whole
-    starting set with no detection, for hand-edited marks after a Seams Unwrap.
+    starting set with no detection, for hand-edited marks after a Mark Seams.
     ADD detects as usual and forces the marks on top, cutting from the
     partition on so no merge pass can dissolve one: a detected seam running
     beside a marked one gives way instead of leaving a ribbon between the two.

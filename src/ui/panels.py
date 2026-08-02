@@ -3,7 +3,47 @@ import bpy
 from ..engines import get_engine
 from ..logger import logger
 from ..manager import manager
-from ..utils.ui import newline_label
+from ..utils.ui import draw_active, newline_label, toggle
+
+
+def unwrap_settings(props):
+    """The settings a full unwrap will apply. They sit in collapsed sub-panels,
+    so what the button will do stays visible without opening them."""
+    optcuts = props.optcuts
+    engine = get_engine(props.engine)
+    hard_surface = "Hard Surface" + (" (Auto)" if optcuts.hard_surface_auto else "")
+    return [
+        name
+        for name, on in (
+            (hard_surface, props.engine == "OPTCUTS" and optcuts.use_hard_surface),
+            ("Weights", props.use_weights),
+            ("Proxy", props.use_proxy),
+            ("Cuts", props.use_cuts),
+            ("Symmetry", props.use_symmetry),
+            ("Concurrent", props.concurrent and not engine.batches_queue(props)),
+            ("Finish", engine.supports_early_stop and props.early_stop != 100),
+            ("Timeout", props.unwrap_timeout > 0),
+        )
+        if on
+    ]
+
+
+def fix_settings(props):
+    """Same idea for the uv editor operators, which always run optcuts, so
+    this is a different set from the main panel's."""
+    return [
+        name
+        for name, on in (
+            (
+                f"Quality {props.optcuts.quality.title()}",
+                props.optcuts.quality != "MEDIUM",
+            ),
+            ("Concurrent", props.concurrent),
+            ("Finish", props.early_stop != 100),
+            ("Timeout", props.unwrap_timeout > 0),
+        )
+        if on
+    ]
 
 
 def draw_result(layout):
@@ -148,27 +188,7 @@ class UVGAMI_PT_main(bpy.types.Panel):
         if not manager.in_uv_editor:
             draw_result(box)
 
-        # options that change the result but sit in collapsed sub-panels, so
-        # what the button will do is visible without opening them
-        hidden_on = [
-            name
-            for name, on in (
-                (
-                    "Hard Surface",
-                    props.engine == "OPTCUTS" and props.optcuts.hard_surface != "OFF",
-                ),
-                ("Proxy", props.use_proxy),
-                ("Cuts", props.use_cuts),
-                ("Symmetry", props.use_symmetry),
-                ("Seam Restrictions", props.use_guided_mode),
-                ("Timeout", props.unwrap_timeout > 0),
-            )
-            if on
-        ]
-        if hidden_on:
-            row = box.row()
-            row.alignment = "CENTER"
-            row.label(text=", ".join(hidden_on), icon="OPTIONS")
+        draw_active(box, unwrap_settings(props))
 
         if not manager.in_uv_editor:
             draw_queue(box)
@@ -186,17 +206,39 @@ class UVGAMI_PT_main(bpy.types.Panel):
             split.prop(props, "import_uvs")
 
         if engine.supports_preserve:
-            split = box.split(factor=0.7)
-            split.label(icon="MOD_TRIANGULATE", text="Preserve Mesh")
-            split.prop(props, "untriangulate")
-
-            if props.untriangulate:
-                row = box.row()
-                row.prop(props, "maintain_mode", expand=True)
+            sub = toggle(
+                box, props, "untriangulate", "Preserve Mesh", "MOD_TRIANGULATE"
+            )
+            if sub is not None:
+                sub.row().prop(props, "maintain_mode", expand=True)
 
         split = box.split(factor=0.7)
         split.label(icon="UV_DATA", text="Transfer UVs")
         split.prop(props, "transfer_uvs")
+
+
+def draw_concurrent(layout, props, engine):
+    # hidden instead of grayed out: ai mode batches all meshes into one
+    # process, so concurrency doesn't apply
+    if engine.batches_queue(props):
+        return
+    sub = toggle(layout, props, "concurrent", "Concurrent", "CON_ROTLIKE")
+    if sub is not None:
+        split = sub.split()
+        split.label(icon="SYSTEM", text="Cores")
+        split.prop(props, "max_cores", slider=True)
+
+
+def draw_limits(layout, props, engine):
+    """The two ways to end a run early, shared with the uv editor settings."""
+    if engine.supports_early_stop:
+        row = layout.row()
+        row.label(text="Finish", icon="TEMP")
+        row.prop(props, "early_stop")
+
+    row = layout.row()
+    row.label(text="Timeout", icon="TIME")
+    row.prop(props, "unwrap_timeout")
 
 
 class UVGAMI_PT_speed(bpy.types.Panel):
@@ -206,6 +248,7 @@ class UVGAMI_PT_speed(bpy.types.Panel):
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
+    bl_order = 2
 
     def draw(self, context):
         box = self.layout.box()
@@ -215,100 +258,78 @@ class UVGAMI_PT_speed(bpy.types.Panel):
         row.alignment = "CENTER"
         row.label(text="Speed", icon="SORTTIME")
 
-        # hidden instead of grayed out: ai mode batches all meshes into one
-        # process, so concurrency doesn't apply
-        if not get_engine(props.engine).batches_queue(props):
-            split = box.split(factor=0.7)
-            split.label(icon="CON_ROTLIKE", text="Concurrent")
-            split.prop(props, "concurrent")
+        engine = get_engine(props.engine)
+        draw_concurrent(box, props, engine)
+        draw_limits(box, props, engine)
 
-            if props.concurrent:
-                split = box.split()
-                split.label(icon="SYSTEM", text="Cores")
-                split.prop(props, "max_cores", slider=True)
-
-        if get_engine(props.engine).supports_early_stop:
-            row = box.row()
-            row.label(text="Finish", icon="TEMP")
-            row.prop(props, "early_stop")
-
-        row = box.row()
-        row.label(text="Timeout", icon="TIME")
-        row.prop(props, "unwrap_timeout")
-
-        split = box.split(factor=0.7)
-        split.label(text="Proxy", icon="MOD_DECIM")
-        split.prop(props, "use_proxy")
-
-        if props.use_proxy:
-            row = box.row()
+        sub = toggle(box, props, "use_proxy", "Proxy", "MOD_DECIM")
+        if sub is not None:
+            row = sub.row()
             row.label(text="Proxy Faces", icon="MESH_DATA")
             row.prop(props, "proxy_faces")
 
-        split = box.split(factor=0.7)
-        if props.use_symmetry:
-            split.active = False
-        split.label(text="Cuts", icon="MESH_GRID")
-        split.prop(props, "use_cuts")
-
-        if props.use_cuts:
-            row = box.row()
-            row.prop(props, "cut_type", expand=True)
-
-        if props.use_cuts and props.cut_type == "EVEN":
-            split = box.split()
-            if props.use_symmetry:
-                split.active = False
-            split.prop(props, "cuts", slider=True)
-            split.row().prop(props, "cut_axes")
+        # symmetry cuts the mesh itself, so the cut settings can't also apply
+        sub = toggle(
+            box, props, "use_cuts", "Cuts", "MESH_GRID", active=not props.use_symmetry
+        )
+        if sub is not None:
+            sub.row().prop(props, "cut_type", expand=True)
+            if props.cut_type == "EVEN":
+                split = sub.split()
+                split.prop(props, "cuts", slider=True)
+                split.row().prop(props, "cut_axes")
 
 
-class UVGAMI_PT_guides(bpy.types.Panel):
-    bl_label = "Seam Restrictions"
+class UVGAMI_PT_weights(bpy.types.Panel):
+    bl_label = "Weights"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
+    bl_order = 0
 
     @classmethod
     def poll(cls, context):
         return get_engine(context.scene.uvgami.engine).supports_guided
 
     def draw_header(self, context):
-        self.layout.prop(context.scene.uvgami, "use_guided_mode")
+        self.layout.prop(context.scene.uvgami, "use_weights")
 
     def draw(self, context):
+        props = context.scene.uvgami
         layout = self.layout
-        guided = context.scene.uvgami.use_guided_mode
+        # active, not enabled: painting turns the checkbox on itself, so the
+        # buttons have to stay clickable while the panel reads as off
+        layout.active = props.use_weights
         box = layout.box()
 
         row = box.row()
         row.alignment = "CENTER"
-        row.label(text="Seam Restrictions", icon="SNAP_MIDPOINT")
+        row.label(text="Weights", icon="MOD_VERTEX_WEIGHT")
 
         row = box.row()
         row.scale_y = 1.5
         row.operator("uvgami.draw_guides", icon="GREASEPENCIL")
 
-        row = box.row()
+        generate = box.box()
+        row = generate.row()
+        row.label(text="Generate", icon="SHADERFX")
+        row = generate.row()
         row.operator("uvgami.seed_restrictions", text="From View").mode = "VIEW"
         row.operator("uvgami.seed_restrictions", text="Crevices").mode = "CREVICES"
         row.operator("uvgami.seed_restrictions", text="Both").mode = "BOTH"
 
         row = box.row()
-        row.active = guided
+        row.scale_y = 1.5
         row.operator("uvgami.clear_draw", icon="FILE_REFRESH")
         row.operator("uvgami.exit_draw", icon="PANEL_CLOSE")
 
         row = box.row()
-        row.active = guided
-        row.label(text="Weight", icon="MOD_VERTEX_WEIGHT")
-        row.prop(context.scene.uvgami, "weight_value", slider=True)
+        row.label(text="Strength", icon="MOD_VERTEX_WEIGHT")
+        row.prop(props, "weight_value", slider=True)
 
-        row = box.row()
-        row.label(text="Protect From Stretching", icon="MOD_MESHDEFORM")
-        row.prop(context.scene.uvgami, "use_importance_weights", text="")
+        box.row().prop(props, "weight_mode", expand=True)
 
 
 class UVGAMI_PT_symmetry(bpy.types.Panel):
@@ -318,6 +339,7 @@ class UVGAMI_PT_symmetry(bpy.types.Panel):
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
+    bl_order = 3
 
     def draw_header(self, context):
         self.layout.prop(context.scene.uvgami, "use_symmetry")
@@ -348,6 +370,7 @@ class UVGAMI_PT_grid(bpy.types.Panel):
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
+    bl_order = 5
 
     def draw(self, context):
         props = context.scene.uvgami
@@ -378,25 +401,54 @@ class UVGAMI_PT_island_uv(bpy.types.Panel):
     bl_category = "UVgami"
 
     def draw(self, context):
+        props = context.scene.uvgami
         box = self.layout.box()
 
         col = box.column()
         col.scale_y = 1.5
         col.operator("uvgami.unwrap_island", icon="UV")
         col.operator("uvgami.combine_islands", icon="UV_ISLANDSEL")
+
+        # expand only feeds the area operators, so it's grouped with them
+        area = box.box()
+        col = area.column()
+        col.scale_y = 1.5
         col.operator("uvgami.recut_area", icon="UV_FACESEL")
         col.operator("uvgami.relax_area", icon="UV_VERTEXSEL")
+        row = area.row()
+        row.label(icon="PROP_ON", text="Expand Area")
+        row.prop(props, "area_expand", text="")
 
         if manager.in_uv_editor:
             draw_result(box)
             draw_queue(box)
 
-        row = box.row()
-        row.label(icon="PROP_ON", text="Expand Area")
-        row.prop(context.scene.uvgami, "area_expand", text="")
+        draw_active(box, fix_settings(props))
 
         if context.mode != "EDIT_MESH":
             box.label(text="Select faces in Edit Mode", icon="INFO")
+
+
+class UVGAMI_PT_island_settings(bpy.types.Panel):
+    bl_label = "Settings"
+    bl_space_type = "IMAGE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "UVgami"
+    bl_parent_id = "UVGAMI_PT_island_uv"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        props = context.scene.uvgami
+        box = self.layout.box()
+
+        row = box.row()
+        row.label(icon="SOLO_OFF", text="Quality")
+        row.prop(props.optcuts, "quality", text="")
+
+        # these operators always run optcuts, whatever the main panel is set to
+        engine = get_engine("OPTCUTS")
+        draw_concurrent(box, props, engine)
+        draw_limits(box, props, engine)
 
 
 class UVGAMI_PT_pack(bpy.types.Panel):
@@ -406,6 +458,7 @@ class UVGAMI_PT_pack(bpy.types.Panel):
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
+    bl_order = 4
 
     def draw(self, context):
         props = context.scene.uvgami
@@ -443,6 +496,7 @@ class UVGAMI_PT_misc(bpy.types.Panel):
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
+    bl_order = 6
 
     def draw(self, context):
         box = self.layout.box()

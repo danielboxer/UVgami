@@ -430,13 +430,15 @@ def queue_area(obj, patch, border, k, input_path, props, nocut, snapshot):
     queue_fix(obj, AreaUVs(patch, pins, snapshot), name, path, vertex_count, props)
 
 
-def validate_engine(op, props):
-    """The engine for a fix run, or None with the error already reported."""
-    engine = get_engine(props.engine)
+def validate_engine(op):
+    """The engine for a fix run, or None with the error already reported.
+    Optcuts is the only engine that can pin a border or stitch islands, so
+    these operators ignore the engine chosen in the 3d panel."""
+    engine = get_engine("OPTCUTS")
     if manager.is_active and manager.engine is not engine:
         op.report(
             {"ERROR"},
-            "Finish or cancel the current unwrap before switching engine",
+            "Finish or cancel the current unwrap first",
         )
         return None, None
     engine_ctx, error = engine.validate(get_preferences())
@@ -475,11 +477,7 @@ def queue_targets(engine, engine_ctx, count, queue_one):
 class UVGAMI_OT_unwrap_island(bpy.types.Operator):
     bl_idname = "uvgami.unwrap_island"
     bl_label = "Unwrap Island"
-    bl_description = (
-        "Re-unwrap the uv islands under the selected faces with the engine"
-        " and fit each back into its old spot, so the rest of the map does"
-        " not move"
-    )
+    bl_description = "Re-unwrap the island under the selected face(s)"
 
     @classmethod
     def poll(cls, context):
@@ -487,7 +485,7 @@ class UVGAMI_OT_unwrap_island(bpy.types.Operator):
 
     def execute(self, context):
         props = context.scene.uvgami
-        engine, engine_ctx = validate_engine(self, props)
+        engine, engine_ctx = validate_engine(self)
         if engine is None:
             return {"CANCELLED"}
 
@@ -517,10 +515,7 @@ class UVGAMI_OT_combine_islands(bpy.types.Operator):
     bl_idname = "uvgami.combine_islands"
     bl_label = "Combine Islands"
     bl_description = (
-        "Merge the uv islands under the selected faces with the engine."
-        " Islands sharing a mesh edge are moved together, welded along it"
-        " and relaxed, so fewer islands cover the same faces. The islands"
-        " must be neighbours on the mesh"
+        "Select a face on two islands to merge them. The islands have to share a seam"
     )
 
     @classmethod
@@ -529,11 +524,8 @@ class UVGAMI_OT_combine_islands(bpy.types.Operator):
 
     def execute(self, context):
         props = context.scene.uvgami
-        engine, engine_ctx = validate_engine(self, props)
+        engine, engine_ctx = validate_engine(self)
         if engine is None:
-            return {"CANCELLED"}
-        if not engine.supports_combine:
-            self.report({"ERROR"}, f"{engine.label} can't combine islands")
             return {"CANCELLED"}
 
         obj = context.view_layer.objects.active
@@ -577,11 +569,8 @@ class AreaOperator:
 
     def execute(self, context):
         props = context.scene.uvgami
-        engine, engine_ctx = validate_engine(self, props)
+        engine, engine_ctx = validate_engine(self)
         if engine is None:
-            return {"CANCELLED"}
-        if not engine.supports_pinned:
-            self.report({"ERROR"}, f"{engine.label} can't hold the border in place")
             return {"CANCELLED"}
 
         obj = context.view_layer.objects.active
@@ -650,21 +639,11 @@ class AreaOperator:
 class UVGAMI_OT_recut_area(AreaOperator, bpy.types.Operator):
     bl_idname = "uvgami.recut_area"
     bl_label = "Recut Area"
-    bl_description = (
-        "Re-unwrap just the selected faces with the engine, holding the"
-        " area's border in place so the rest of the island does not move."
-        " The engine reshapes the inside and adds cuts only where they pay"
-        " off. Expand grows the area so the fix can blend out"
-    )
+    bl_description = "Re-unwrap the selected faces with cuts if necessary"
 
 
 class UVGAMI_OT_relax_area(AreaOperator, bpy.types.Operator):
     bl_idname = "uvgami.relax_area"
     bl_label = "Relax Area"
-    bl_description = (
-        "Move the uvs of just the selected faces with the engine to reduce"
-        " distortion, holding the area's border in place. No cuts are added,"
-        " the island keeps its shape. Expand grows the area so the fix can"
-        " blend out"
-    )
+    bl_description = "Relax the selected faces to reduce stretching"
     nocut = True
