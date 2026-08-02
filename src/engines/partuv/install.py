@@ -236,14 +236,12 @@ class UVGAMI_OT_install_partuv(PartuvTask, bpy.types.Operator):
     def description(cls, context, properties):
         if properties.tier == "AI":
             return (
-                "Install the PartUV engine with AI segmentation: the engine, the"
-                " PyTorch stack and the PartField model, ~5 GB total. Includes"
-                " geometric segmentation. Needs an NVIDIA GPU with CUDA"
+                "Install PartUV with AI segmentation, ~5 GB. Includes geometric."
+                " Needs an NVIDIA GPU"
             )
         return (
-            "Install the PartUV engine with geometric segmentation only, which"
-            " splits meshes by shape without an AI model, a much smaller download."
-            " Needs an NVIDIA GPU with CUDA"
+            "Install PartUV with geometric segmentation only, a much smaller"
+            " download. Needs an NVIDIA GPU"
         )
 
     tier: bpy.props.EnumProperty(

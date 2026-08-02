@@ -110,7 +110,7 @@ def proxy_weights(input_mesh, mapped):
     original through the same map the cuts are snapped back with. The engine
     got this paint decimated with the proxy, so both rounds of cutting steer
     by it."""
-    if not bpy.context.scene.uvgami.use_guided_mode:
+    if not bpy.context.scene.uvgami.avoid_seams:
         return None
     weights = seam_restrictions(input_mesh)
     if weights is None:
