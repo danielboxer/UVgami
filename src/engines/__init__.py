@@ -15,7 +15,7 @@ class Engine:
     supports_pinned = False
     # whether the engine honours a _stitch sidecar that merges uv islands
     # sharing a mesh edge
-    supports_stitch = False
+    supports_combine = False
     # engines whose raw uvs overlap must be packed, so pack-after-unwrap is
     # forced on rather than left to the user
     requires_pack = False

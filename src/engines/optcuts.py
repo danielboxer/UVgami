@@ -200,7 +200,7 @@ class OptcutsEngine(Engine):
     supports_preserve = True
     supports_import_uvs = True
     supports_pinned = True
-    supports_stitch = True
+    supports_combine = True
 
     def validate(self, prefs):
         raw = pathlib.Path(prefs.engine_path)
@@ -303,7 +303,9 @@ class OptcutsEngine(Engine):
             108: ("Unsupported Mesh Topology", True),
             109: ("Initial Cut Failed", True),
             110: ("Area UVs Too Broken To Pin", True),
-            111: ("Island UVs Too Broken To Stitch", True),
+            111: ("Island UVs Too Broken To Combine", True),
+            # 90 (the engine's terminate handler) stays unmapped on purpose:
+            # the unknown-code path surfaces the fatal line from stderr
         }.get(code) or super().describe_failure(code)
 
     def request_early_stop(self, process):
