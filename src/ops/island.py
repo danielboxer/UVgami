@@ -5,7 +5,14 @@ from ..engines import get_engine
 from ..job import AreaUVs, IslandUVs
 from ..logger import logger
 from ..manager import manager
-from ..seams import REPAIR_ITERATIONS, face_edges, pair, signed_area, uv_island_groups
+from ..seams import (
+    REPAIR_ITERATIONS,
+    face_edges,
+    island_layout,
+    pair,
+    signed_area,
+    uv_island_groups,
+)
 from ..unwrap import Unwrap
 from ..utils.io import export_obj
 from ..utils.mesh import new_bmesh, set_bmesh, triangulate
@@ -171,10 +178,11 @@ def queue_combine(obj, targets, input_path, props):
         [[local[v] for v in mesh.polygons[fi].vertices] for fi in faces],
     )
     uv = combine_mesh.uv_layers.new()
-    # optcuts treats a mirrored island as inverted and re-cuts it, which stitch
-    # mode forbids, so mirror those back within their own bounds before export
-    flip = {}
-    for group, (min_u, _, max_u, _), _ in targets:
+    # optcuts treats a mirrored island as inverted and overlapping islands as
+    # self-intersecting, and stitch mode forbids both, so export a mirrored-
+    # back side-by-side layout. the result comes back into the combined bbox
+    areas = []
+    for group, _, _ in targets:
         total = 0.0
         for fi in group:
             poly = mesh.polygons[fi]
@@ -183,15 +191,18 @@ def queue_combine(obj, targets, input_path, props):
                 for c in range(poly.loop_total)
             ]
             total += signed_area(pts)
-        if total < 0:
-            for fi in group:
-                flip[fi] = min_u + max_u
+        areas.append(total)
+    layout = island_layout([b for _, b, _ in targets], areas)
+    transform = {fi: t for (group, _, _), t in zip(targets, layout) for fi in group}
     loop = 0
     for fi in faces:
         poly = mesh.polygons[fi]
+        flip, du, dv = transform[fi]
         for c in range(poly.loop_total):
             u, v = layer.uv[poly.loop_start + c].vector
-            uv.uv[loop].vector = (flip[fi] - u, v) if fi in flip else (u, v)
+            if flip is not None:
+                u = flip - u
+            uv.uv[loop].vector = (u + du, v + dv)
             loop += 1
     temp = bpy.data.objects.new("uvgami_combine", combine_mesh)
     bpy.context.scene.collection.objects.link(temp)

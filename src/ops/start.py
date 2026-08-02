@@ -15,6 +15,13 @@ from ..manager import manager
 from ..objfile import remap_weights_to_vt
 from ..progress_bar import progress_bar
 from ..proxy import make_proxy
+from ..seams import (
+    face_edges,
+    island_layout,
+    islands_overlap,
+    signed_area,
+    uv_island_groups,
+)
 from ..unwrap import Unwrap
 from ..utils.geometry import apply_transforms, calc_center, cut, cut_on_axes
 from ..utils.io import export_obj
@@ -32,6 +39,39 @@ from .guides import SEAM_RESTRICTIONS_GROUP
 
 # process objects for at most this long per tick before yielding to the event loop
 TICK_BUDGET = 0.033
+
+
+def normalize_uvs(mesh):
+    """The engine reads a mirrored island as inverted and stacked islands as
+    self-intersecting, and re-cuts those charts, losing their seams. Mirror
+    them back and lay the islands side by side, the output layout is the
+    engine's repack either way."""
+    faces = [tuple(p.vertices) for p in mesh.polygons]
+    layer = mesh.uv_layers.active
+    uvs = [
+        [tuple(layer.uv[p.loop_start + c].vector) for c in range(p.loop_total)]
+        for p in mesh.polygons
+    ]
+    groups = uv_island_groups(faces, uvs, face_edges(faces))
+    boxes = []
+    areas = []
+    for group in groups:
+        points = [uv for fi in group for uv in uvs[fi]]
+        xs = [u for u, _ in points]
+        ys = [v for _, v in points]
+        boxes.append((min(xs), min(ys), max(xs), max(ys)))
+        areas.append(sum(signed_area(uvs[fi]) for fi in group))
+    if all(a >= 0 for a in areas) and not islands_overlap(boxes):
+        return
+    for group, (flip, du, dv) in zip(groups, island_layout(boxes, areas)):
+        for fi in group:
+            poly = mesh.polygons[fi]
+            for c in range(poly.loop_total):
+                uv = layer.uv[poly.loop_start + c]
+                u, v = uv.vector
+                if flip is not None:
+                    u = flip - u
+                uv.vector = (u + du, v + dv)
 
 
 class InputExporter:
@@ -133,6 +173,8 @@ class InputExporter:
 
         # seams and uvs were built before separation, see create_jobs
         has_uvs = self.piece_has_uvs[obj]
+        if has_uvs:
+            normalize_uvs(obj.data)
         export_obj(obj, path, has_uvs)
 
         guide_path = self._create_guide_file(obj, path, props, has_uvs)
