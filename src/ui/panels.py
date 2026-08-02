@@ -326,6 +326,9 @@ class UVGAMI_PT_weights(bpy.types.Panel):
         row.operator("uvgami.exit_draw", icon="PANEL_CLOSE")
 
         row = box.row()
+        # the engine only reads the strength for seam avoidance (-s), stretch
+        # mode runs at a fixed face weight
+        row.active = props.avoid_seams
         row.label(text="Strength", icon="MOD_VERTEX_WEIGHT")
         row.prop(props, "weight_value", slider=True)
 
