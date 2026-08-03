@@ -63,7 +63,7 @@ class UnwrapManager:
         self.starting_count = 0
         self.finished_count = 0
         self.cancelled_count = 0
-        self.found_invalid_objects = False
+        self.invalid_count = 0
         self.transfer_uv_failed = False
         self.transfer_uv_fail_detail = ""
         self.transfer_uv_split_count = 0
@@ -508,7 +508,7 @@ class UnwrapManager:
                 invalid_obj.hide_set(True)
                 logger.add_data("errors", invalid_name)
 
-            self.found_invalid_objects = True
+            self.invalid_count += 1
 
         found_job = None
         # count has to be reduced because this object won't be unwrapped
@@ -555,12 +555,18 @@ class UnwrapManager:
             logger.change_status("Complete")
             msg = []
 
-            if self.finished_count > 0:
+            # headline first, the banner shows it alone on the top row
+            finished, invalid = self.finished_count, self.invalid_count
+            if finished and invalid:
+                msg.append(f"{invalid} of {finished + invalid} meshes failed")
+            elif finished:
                 msg.append("UV unwrap complete!")
+            else:
+                msg.append("UV unwrap failed")
 
-            if self.found_invalid_objects:
-                msg.append("Some meshes were not unwrapped.")
-                msg.append("Check 'UVgami Not Unwrapped'.")
+            if invalid:
+                if get_preferences().invalid_collection:
+                    msg.append("Check 'UVgami Not Unwrapped'.")
                 logger.add_data("errors", "Some meshes were not able to be unwrapped")
 
             if self.transfer_uv_failed:
@@ -587,7 +593,7 @@ class UnwrapManager:
 
             self.result = msg
             self.result_failed = bool(
-                self.found_invalid_objects
+                self.invalid_count
                 or self.transfer_uv_failed
                 or self.error_code
                 or self.error_messages
@@ -603,8 +609,7 @@ class UnwrapManager:
     def _show_status(self):
         """Put the summary in the status bar. A clean run clears itself, a run
         with problems stays until the next one so it can't be missed."""
-        count = self.finished_count
-        text = f"UVgami: {count} mesh{'es' if count != 1 else ''} unwrapped"
+        text = f"UVgami: {self.result[0]}"
         if self.result_failed:
             set_status(f"{text}, see the UVgami panel", "ERROR")
         else:

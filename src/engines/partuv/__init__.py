@@ -9,6 +9,7 @@ import bpy
 
 from .. import Engine
 from ...utils.paths import get_dir_path, get_extension_dir_path
+from ...utils.ui import only_active
 from .install import (
     PARTUV_PLATFORMS,
     UVGAMI_OT_install_partuv,
@@ -111,6 +112,25 @@ class PartuvEngine(Engine):
         row = layout.row()
         row.label(icon="MOD_LENGTH", text="Threshold")
         row.prop(props.partuv, "threshold")
+
+    def active_settings(self, props):
+        partuv = props.partuv
+        return only_active(
+            (
+                (
+                    "MOD_EXPLODE",
+                    "Geometric Segmentation",
+                    "partuv.segmentation",
+                    partuv.segmentation != "AI",
+                ),
+                (
+                    "MOD_LENGTH",
+                    f"Threshold {partuv.threshold:.2f}",
+                    "partuv.threshold",
+                    partuv.threshold != 1.25,
+                ),
+            )
+        )
 
     def draw_prefs(self, layout, prefs):
         if not self.is_available():

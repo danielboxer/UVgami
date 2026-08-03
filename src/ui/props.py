@@ -145,7 +145,8 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
             (
                 "STRETCH",
                 "Reduce Stretching",
-                "Prioritize the painted faces to have less stretching",
+                "Prioritize the painted faces to have less stretching."
+                " This also allows other faces to have more stretching.",
             ),
             ("BOTH", "Both", "Avoid seams on the painted faces and stretch them less"),
         ),

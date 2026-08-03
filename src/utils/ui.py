@@ -19,14 +19,23 @@ def toggle(layout, props, name, text, icon, active=True):
     return box
 
 
-def draw_active(layout, names):
-    """The settings that will change the run. A grid so a long list wraps
-    instead of being cut off by the sidebar width."""
-    if not names:
+def only_active(entries):
+    """Keep the (icon, label, path, on) entries that are on, trimming them to
+    what draw_active takes."""
+    return [entry[:3] for entry in entries if entry[3]]
+
+
+def draw_active(layout, settings):
+    """Icon strip of the settings that will change the run, shown only while
+    set. Hover names the setting, click resets it to default."""
+    if not settings:
         return
-    grid = layout.grid_flow(row_major=True, columns=0, align=True)
-    for name in names:
-        grid.label(text=name, icon="DOT")
+    row = layout.row(align=True)
+    row.alignment = "CENTER"
+    for icon, label, path in settings:
+        op = row.operator("uvgami.reset_setting", text="", icon=icon, emboss=False)
+        op.label = label
+        op.path = path
 
 
 def tag_redraw():

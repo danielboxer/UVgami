@@ -20,17 +20,18 @@ def cancel_with_bookkeeping(context, unwrap, invalid_label=None):
     """Cancel one unwrap, optionally moving its input to the not unwrapped
     collection first. Import must happen before cancel_unwrap since
     unwrap.cleanup() deletes the input file."""
-    if (
-        invalid_label is not None
-        and get_preferences().invalid_collection
-        and unwrap.path.is_file()
-    ):
-        invalid_obj = import_obj(unwrap.path)
-        collection = check_collection("UVgami Not Unwrapped", context.scene.collection)
-        move_to_collection(invalid_obj, collection)
-        invalid_obj.name = f"{invalid_obj.name}: {invalid_label}"
-        invalid_obj.hide_set(True)
-        manager.found_invalid_objects = True
+    if invalid_label is not None:
+        if get_preferences().invalid_collection and unwrap.path.is_file():
+            invalid_obj = import_obj(unwrap.path)
+            collection = check_collection(
+                "UVgami Not Unwrapped", context.scene.collection
+            )
+            move_to_collection(invalid_obj, collection)
+            invalid_obj.name = f"{invalid_obj.name}: {invalid_label}"
+            invalid_obj.hide_set(True)
+        # counted whether or not the collection is on, the summary says how
+        # many meshes came back without a map either way
+        manager.invalid_count += 1
 
     manager.release_jobs(unwrap.jobs)
     manager.cancel_unwrap(unwrap)
@@ -101,6 +102,7 @@ class UVGAMI_OT_stop(bpy.types.Operator):
                 singles.extend(group)
                 continue
             self._import_merged_group(context, group)
+            manager.invalid_count += len(group)
             # import already done above, so skip re-importing per member
             for unwrap in group:
                 cancel_with_bookkeeping(context, unwrap, invalid_label=None)
@@ -120,7 +122,6 @@ class UVGAMI_OT_stop(bpy.types.Operator):
         move_to_collection(merged_obj, collection)
         merged_obj.name = f"{group[0].input_name}: Stopped"
         merged_obj.hide_set(True)
-        manager.found_invalid_objects = True
 
 
 class UVGAMI_OT_cancel(bpy.types.Operator):
