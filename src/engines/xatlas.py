@@ -2,6 +2,7 @@ import bpy
 
 from . import Engine
 from ..utils.paths import get_bundled_engine_path, get_extension_dir_path
+from ..utils.ui import only_active
 
 
 class UVGAMI_PG_xatlas(bpy.types.PropertyGroup):
@@ -35,6 +36,19 @@ class XatlasEngine(Engine):
         row = layout.row()
         row.label(icon="UV_ISLANDSEL", text="Chart Cost")
         row.prop(props.xatlas, "max_cost")
+
+    def active_settings(self, props):
+        max_cost = props.xatlas.max_cost
+        return only_active(
+            (
+                (
+                    "UV_ISLANDSEL",
+                    f"Chart Cost {max_cost:.2f}",
+                    "xatlas.max_cost",
+                    max_cost != 2.0,
+                ),
+            )
+        )
 
     def draw_prefs(self, layout, prefs):
         row = layout.row()

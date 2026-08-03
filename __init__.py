@@ -37,6 +37,7 @@ from .src.ops.island import (
 )
 from .src.ops.misc import (
     UVGAMI_OT_expand,
+    UVGAMI_OT_reset_setting,
     UVGAMI_OT_reset_settings,
     UVGAMI_OT_open_preferences,
     start_symmetry_draw,
@@ -93,6 +94,7 @@ classes = (
     UVGAMI_OT_cancel,
     UVGAMI_OT_remove_grid,
     UVGAMI_OT_view_unwrap,
+    UVGAMI_OT_reset_setting,
     UVGAMI_OT_reset_settings,
     UVGAMI_OT_clear_logs,
     UVGAMI_OT_clear_result,

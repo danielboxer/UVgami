@@ -5,6 +5,7 @@ from mathutils import Vector
 
 from ..manager import manager
 from ..utils.geometry import calc_center
+from ..utils.ui import tag_redraw
 
 _sym_handler = None
 _sym_shader = None
@@ -37,6 +38,31 @@ class UVGAMI_OT_expand(bpy.types.Operator):
         unwrap = manager.active[self.index]
         if unwrap.join_job is not None:
             unwrap.join_job.is_expanded = not unwrap.join_job.is_expanded
+        return {"FINISHED"}
+
+
+class UVGAMI_OT_reset_setting(bpy.types.Operator):
+    bl_idname = "uvgami.reset_setting"
+    bl_label = "Active Setting"
+    bl_options = {"UNDO", "INTERNAL"}
+
+    path: bpy.props.StringProperty()
+    label: bpy.props.StringProperty()
+
+    @classmethod
+    def description(cls, context, properties):
+        return f"{properties.label}. Click to reset to default"
+
+    def execute(self, context):
+        group = context.scene.uvgami
+        path = self.path
+        if "." in path:
+            name, path = path.split(".", 1)
+            group = getattr(group, name)
+        group.property_unset(path)
+        # unset skips the notifier a normal click sends, so the viewport
+        # wouldn't repaint the symmetry preview without this
+        tag_redraw()
         return {"FINISHED"}
 
 

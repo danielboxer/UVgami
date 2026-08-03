@@ -3,47 +3,77 @@ import bpy
 from ..engines import get_engine
 from ..logger import logger
 from ..manager import manager
-from ..utils.ui import draw_active, newline_label, toggle
+from ..utils.ui import draw_active, newline_label, only_active, toggle
 
 
 def unwrap_settings(props):
-    """The settings a full unwrap will apply. They sit in collapsed sub-panels,
-    so what the button will do stays visible without opening them."""
-    optcuts = props.optcuts
+    """The settings a full unwrap will apply, as (icon, label, path) entries
+    for draw_active. Only ones that change the result, so a sub-setting of
+    something already listed is left out."""
     engine = get_engine(props.engine)
-    hard_surface = "Hard Surface" + (" (Auto)" if optcuts.hard_surface_auto else "")
-    return [
-        name
-        for name, on in (
-            (hard_surface, props.engine == "OPTCUTS" and optcuts.use_hard_surface),
-            ("Weights", props.use_weights),
-            ("Proxy", props.use_proxy),
-            ("Cuts", props.use_cuts),
-            ("Symmetry", props.use_symmetry),
-            ("Concurrent", props.concurrent and not engine.batches_queue(props)),
-            ("Finish", engine.supports_early_stop and props.early_stop != 100),
-            ("Timeout", props.unwrap_timeout > 0),
+    return engine.active_settings(props) + only_active(
+        (
+            (
+                "IMPORT",
+                "Import UVs",
+                "import_uvs",
+                engine.supports_import_uvs and props.import_uvs,
+            ),
+            (
+                "MOD_VERTEX_WEIGHT",
+                "Weights",
+                "use_weights",
+                engine.supports_guided and props.use_weights,
+            ),
+            ("MOD_DECIM", "Proxy", "use_proxy", props.use_proxy),
+            ("MESH_GRID", "Cuts", "use_cuts", props.use_cuts),
+            ("MOD_MIRROR", "Symmetry", "use_symmetry", props.use_symmetry),
+            (
+                "CON_ROTLIKE",
+                "Concurrent",
+                "concurrent",
+                props.concurrent and not engine.batches_queue(props),
+            ),
+            (
+                "TEMP",
+                "Finish",
+                "early_stop",
+                engine.supports_early_stop and props.early_stop != 100,
+            ),
+            ("TIME", "Timeout", "unwrap_timeout", props.unwrap_timeout > 0),
+            (
+                "MOD_TRIANGULATE",
+                "Preserve Mesh",
+                "untriangulate",
+                engine.supports_preserve and props.untriangulate,
+            ),
+            ("UV_DATA", "Transfer UVs", "transfer_uvs", props.transfer_uvs),
+            (
+                "UGLYPACKAGE",
+                "Pack After Unwrap",
+                "pack_after_unwrap",
+                props.pack_after_unwrap and not engine.requires_pack,
+            ),
         )
-        if on
-    ]
+    )
 
 
 def fix_settings(props):
     """Same idea for the uv editor operators, which always run optcuts, so
     this is a different set from the main panel's."""
-    return [
-        name
-        for name, on in (
+    return only_active(
+        (
             (
+                "SOLO_OFF",
                 f"Quality {props.optcuts.quality.title()}",
+                "optcuts.quality",
                 props.optcuts.quality != "MEDIUM",
             ),
-            ("Concurrent", props.concurrent),
-            ("Finish", props.early_stop != 100),
-            ("Timeout", props.unwrap_timeout > 0),
+            ("CON_ROTLIKE", "Concurrent", "concurrent", props.concurrent),
+            ("TEMP", "Finish", "early_stop", props.early_stop != 100),
+            ("TIME", "Timeout", "unwrap_timeout", props.unwrap_timeout > 0),
         )
-        if on
-    ]
+    )
 
 
 def draw_result(layout):
@@ -51,13 +81,19 @@ def draw_result(layout):
     if not manager.result:
         return
     box = layout.box()
-    row = box.row()
-    row.label(
+    # a split, not a row: a label sizes to its text and leaves the x stranded
+    # at the far end of an empty row, a full width one centers the message
+    split = box.split(factor=0.9)
+    split.alert = manager.result_failed
+    split.operator(
+        "uvgami.clear_result",
         text=manager.result[0],
         icon="ERROR" if manager.result_failed else "CHECKMARK",
+        emboss=False,
     )
-    row.operator("uvgami.clear_result", text="", icon="X", emboss=False)
-    newline_label(manager.result[1:], box.column())
+    split.operator("uvgami.clear_result", text="", icon="X", emboss=False)
+    if len(manager.result) > 1:
+        newline_label(manager.result[1:], box.column())
 
 
 def draw_queue(box):
@@ -407,13 +443,22 @@ class UVGAMI_PT_island_uv(bpy.types.Panel):
         props = context.scene.uvgami
         box = self.layout.box()
 
-        col = box.column()
+        draw_active(box, fix_settings(props))
+
+        island = box.box()
+        row = island.row()
+        row.alignment = "CENTER"
+        row.label(text="Island Operators", icon="GROUP_UVS")
+        col = island.column()
         col.scale_y = 1.5
         col.operator("uvgami.unwrap_island", icon="UV")
         col.operator("uvgami.combine_islands", icon="UV_ISLANDSEL")
 
         # expand only feeds the area operators, so it's grouped with them
         area = box.box()
+        row = area.row()
+        row.alignment = "CENTER"
+        row.label(text="Area Operators", icon="FACESEL")
         col = area.column()
         col.scale_y = 1.5
         col.operator("uvgami.recut_area", icon="UV_FACESEL")
@@ -425,11 +470,6 @@ class UVGAMI_PT_island_uv(bpy.types.Panel):
         if manager.in_uv_editor:
             draw_result(box)
             draw_queue(box)
-
-        draw_active(box, fix_settings(props))
-
-        if context.mode != "EDIT_MESH":
-            box.label(text="Select faces in Edit Mode", icon="INFO")
 
 
 class UVGAMI_PT_island_settings(bpy.types.Panel):

@@ -27,6 +27,11 @@ class Engine:
     def draw_settings(self, layout, props):
         """Draw this engine's settings rows in the main panel."""
 
+    def active_settings(self, props):
+        """This engine's non-default settings, as (icon, label, path) entries
+        for the panel's active strip."""
+        return []
+
     def prepare_uvs(self, obj, props):
         """Return whether to export obj's uv map, building one first if the
         engine wants seams of its own. obj is a temp copy, safe to edit."""

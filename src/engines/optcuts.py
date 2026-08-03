@@ -14,6 +14,7 @@ from ..seams import FlattenError
 from ..utils.io import print_stdin
 from ..utils.mesh import deselect_all, validate_obj
 from ..utils.paths import get_bundled_engine_path
+from ..utils.ui import only_active
 
 
 class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
@@ -210,6 +211,26 @@ class OptcutsEngine(Engine):
         row = layout.row()
         row.label(icon="SOLO_OFF", text="Quality")
         row.prop(props.optcuts, "quality", text="")
+
+    def active_settings(self, props):
+        optcuts = props.optcuts
+        hard_surface = "Hard Surface" + (" (Auto)" if optcuts.hard_surface_auto else "")
+        return only_active(
+            (
+                (
+                    "MOD_BEVEL",
+                    hard_surface,
+                    "optcuts.use_hard_surface",
+                    optcuts.use_hard_surface,
+                ),
+                (
+                    "SOLO_OFF",
+                    f"Quality {optcuts.quality.title()}",
+                    "optcuts.quality",
+                    optcuts.quality != "MEDIUM",
+                ),
+            )
+        )
 
     def prepare_uvs(self, obj, props):
         optcuts = props.optcuts
