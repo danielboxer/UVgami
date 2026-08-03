@@ -56,17 +56,6 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         max=multiprocessing.cpu_count(),
         min=1,
     )
-    early_stop: bpy.props.IntProperty(
-        name="",
-        description=(
-            "When to stop the unwrap."
-            " This is based on the amount of stretching in the UV map"
-        ),
-        min=1,
-        max=100,
-        default=100,
-        subtype="PERCENTAGE",
-    )
     unwrap_timeout: bpy.props.IntProperty(
         name="",
         description=(
@@ -86,38 +75,6 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         min=0,
         max=10,
         default=1,
-    )
-    use_cuts: bpy.props.BoolProperty(
-        name="",
-        description=("Cut the input mesh into pieces. This will speed up the unwrap"),
-    )
-    cut_type: bpy.props.EnumProperty(
-        name="Cut Type",
-        description="Where the mesh will be cut",
-        items=(
-            ("EVEN", "Even", "Make even cuts on the chosen axes"),
-            ("SEAMS", "Seams", "Make cuts on the seams"),
-        ),
-    )
-    cuts: bpy.props.IntProperty(
-        name="",
-        description="The amount of cuts to make in the mesh",
-        min=1,
-        max=15,
-        default=1,
-    )
-    cut_axes: bpy.props.EnumProperty(
-        name="Axes",
-        description=(
-            "Limit cuts to specific axes."
-            " Hold down Shift to select or deselect multiple axes"
-        ),
-        items=(
-            ("X", "X", "X axis"),
-            ("Y", "Y", "Y axis"),
-            ("Z", "Z", "Z axis"),
-        ),
-        options={"ENUM_FLAG"},
     )
     use_proxy: bpy.props.BoolProperty(
         name="",
@@ -295,16 +252,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         description="Display a progress bar in the 3D view and UV editor during an unwrap",
         default=True,
     )
-    stop_timeout: bpy.props.IntProperty(
-        name="Stop Timeout",
-        description=(
-            "Time in minutes to wait after requesting a stop before force killing the engine."
-            " Set to 0 to disable"
-        ),
-        min=0,
-        max=60,
-        default=10,
-    )
 
     def draw(self, context):
         layout = self.layout
@@ -338,10 +285,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         row = cf.row()
         row.label(icon="SORTTIME")
         row.prop(self, "show_progress_bar")
-
-        row = cf.row()
-        row.label(icon="TIME")
-        row.prop(self, "stop_timeout")
 
         row = cf.row()
         row.label(icon="OUTLINER_COLLECTION")

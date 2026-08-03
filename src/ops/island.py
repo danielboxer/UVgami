@@ -77,7 +77,6 @@ def queue_fix(obj, job, name, path, vertex_count, props):
             material_indices=[],
             vertex_groups={},
             shade_smooth=False,
-            merge_cuts=False,
             maintain_mode=props.maintain_mode,
         )
     )

@@ -3,9 +3,7 @@ import threading
 import time
 from collections import deque
 
-import bmesh
 import bpy
-import numpy
 
 from ..engines import get_engine
 from ..handler import handle_error
@@ -22,7 +20,7 @@ from ..seams import (
     uv_island_groups,
 )
 from ..unwrap import Unwrap
-from ..utils.geometry import apply_transforms, calc_center, cut, cut_on_axes
+from ..utils.geometry import apply_transforms, calc_center, cut_on_axes
 from ..utils.io import export_obj
 from ..utils.mesh import (
     check_collection,
@@ -203,7 +201,6 @@ class InputExporter:
             material_indices=material_indices,
             vertex_groups=vertex_groups,
             shade_smooth=shade_smooth,
-            merge_cuts=props.use_cuts and not props.use_symmetry,
             maintain_mode=props.maintain_mode,
         )
         manager.add(unwrap)
@@ -752,7 +749,6 @@ class UVGAMI_OT_start(bpy.types.Operator):
             self._apply_modifiers(context, copy_object)
             if props.use_proxy:
                 make_proxy(copy_object, props.proxy_faces)
-            self._apply_cuts_if_needed(copy_object, obj, props)
 
             # save name, format: input name, unwrap name
             names[copy_object.name] = [obj.name, obj.name]
@@ -774,46 +770,6 @@ class UVGAMI_OT_start(bpy.types.Operator):
             # a disabled modifier can't be applied
             with contextlib.suppress(RuntimeError):
                 bpy.ops.object.modifier_apply(modifier=modifier.name)
-
-    def _apply_cuts_if_needed(self, target_obj, source_obj, props):
-        if not (props.use_cuts and not props.use_symmetry):
-            return
-
-        bm = new_bmesh(target_obj)
-        if props.cut_type == "EVEN":
-            self._apply_even_cuts(source_obj, target_obj, bm, props)
-        else:
-            self._apply_seam_cuts(source_obj, bm)
-        set_bmesh(bm, target_obj)
-
-    def _apply_even_cuts(self, source_obj, target_obj, bm, props):
-        # make even cuts on axes
-        apply_transforms(target_obj)
-
-        axes = props.cut_axes
-        cuts = props.cuts
-
-        axis_count = len(axes) if len(axes) != 0 else 3
-        d = cuts // axis_count
-        r = cuts % axis_count
-
-        x_num = d if r == 0 else d + 1
-        y_num = d if r != 2 else d + 1
-        z_num = d
-
-        center = calc_center(source_obj)
-        if not axes or "X" in axes:
-            cut(x_num, center, target_obj.dimensions.x, 0, bm)
-        if not axes or "Y" in axes:
-            cut(y_num, center, target_obj.dimensions.y, 1, bm)
-        if not axes or "Z" in axes:
-            cut(z_num, center, target_obj.dimensions.z, 2, bm)
-
-    def _apply_seam_cuts(self, source_obj, bm):
-        seams = numpy.zeros(len(bm.edges), dtype=bool)
-        source_obj.data.edges.foreach_get("use_seam", seams)
-        bm_seams = numpy.array(bm.edges)[seams]
-        bmesh.ops.split_edges(bm, edges=bm_seams)
 
     def prepare_io_folders(self):
         input_path = get_extension_dir_path() / "input"

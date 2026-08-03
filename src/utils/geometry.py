@@ -1,8 +1,5 @@
-import math
-
 import bmesh
 import mathutils
-import numpy
 
 from .mesh import new_bmesh, set_bmesh
 
@@ -29,27 +26,6 @@ def apply_transforms(obj):
     for c in obj.children:
         c.matrix_local = actual @ c.matrix_local
     obj.matrix_basis = mathutils.Matrix()
-
-
-def cut(num, center, length, dim, bm):
-    start = center[dim] - length / 2
-    end = center[dim] + length / 2
-    rot = [0, 0, 0]
-    rot[dim] = math.radians(90)
-    # n + 2 for endpoints, 1:-1 to remove endpoints
-    for s in numpy.linspace(start, end, num + 2)[1:-1]:
-        loc = center.copy()
-        loc[dim] = s
-        cut = bmesh.ops.bisect_plane(
-            bm,
-            geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
-            plane_co=loc,
-            plane_no=rot,
-            dist=1e-7,
-        )["geom_cut"]
-        bmesh.ops.split_edges(
-            bm, edges=[e for e in cut if isinstance(e, bmesh.types.BMEdge)]
-        )
 
 
 def cut_on_axes(obj, obj_center, axes):
