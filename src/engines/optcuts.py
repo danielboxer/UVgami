@@ -139,7 +139,7 @@ class UVGAMI_PT_hard_surface(bpy.types.Panel):
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
-    bl_order = 1
+    bl_order = 0
 
     @classmethod
     def poll(cls, context):

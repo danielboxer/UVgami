@@ -34,9 +34,6 @@ Blender 4.3+
   - [Speed](#speed)
     - [Concurrent mode](#concurrent-mode)
     - [Timeout](#timeout)
-    - [Cuts](#cuts)
-      - [Even](#even)
-      - [Seams](#seams)
   - [Grid](#grid)
   - [Pack](#pack)
   - [Misc](#misc)
@@ -57,7 +54,6 @@ Blender 4.3+
   - [Seam Restrictions](#seam-restrictions)
     - [Weight](#weight)
   - [Visual Mode](#visual-mode)
-  - [Finish percentage](#finish-percentage)
   - [OptCuts Limitations](#optcuts-limitations)
     - [High Poly Meshes](#high-poly-meshes)
     - [Non Manifold Meshes](#non-manifold-meshes)
@@ -164,26 +160,6 @@ You can choose the amount of cores to use below. For example, with 8 cores you c
 #### Timeout
 
 Set a maximum time in minutes for each unwrap. If an unwrap exceeds this time, the mesh will be moved to the "UVgami Not Unwrapped" collection. Set to `0` to disable the timeout. This is useful for when unwrapping multiple things at once so if one times out the rest will still unwrap.
-
-#### Cuts
-
-(should be used with concurrent mode on)
-
-This splits the mesh apart, unwraps the pieces separately, then joins them together when finished. Doing this will make the unwrap much faster and is very useful for high poly meshes.
-
-Sometimes there are errors when cuts is turned on. This is because bisecting the mesh can produce invalid geometry.
-
-![Cuts](img/cuts.jpg)
-
-##### Even
-
-Make even cuts along the XYZ axes of the mesh. The more cuts made, the faster the unwrap will be. Keep in mind there will be seams along the cuts so you wouldn't want to do too many.
-
-Hold shift to select or deselect multiple axes.
-
-##### Seams
-
-This is for if you want more control over where the cuts will be. You can manually mark seams and the mesh will be cut there.
 
 ### Grid
 
@@ -330,12 +306,6 @@ Use the `Weight` slider to control how strictly the seam restrictions are follow
 
 Press to enter visual mode. This will show a real time view of the unwrap as it progresses. All keyboard and mouse input will be blocked. Press `ESC` to exit visual mode.
 
-### Finish percentage
-
-![Finish percent](img/finish_percent.jpg)
-
-Stop the unwrap early based on the amount of stretching.
-
 ### OptCuts Limitations
 
 #### High Poly Meshes
@@ -348,8 +318,7 @@ Current ways to speed up the unwrap:
 - Turn `Concurrent` mode on and increase the max cores
 - Turn `Symmetry` on if the mesh is symmetrical
 - Don't add too many seam restrictions
-- Use the cuts option
-- Consider lowering the quality or setting the finish percent lower. Though this isn't recommended as the final unwrap will probably have too much stretching.
+- Consider lowering the quality. Though this isn't recommended as the final unwrap will probably have too much stretching.
 
 #### Non Manifold Meshes
 

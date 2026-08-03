@@ -26,19 +26,12 @@ def unwrap_settings(props):
                 engine.supports_guided and props.use_weights,
             ),
             ("MOD_DECIM", "Proxy", "use_proxy", props.use_proxy),
-            ("MESH_GRID", "Cuts", "use_cuts", props.use_cuts),
             ("MOD_MIRROR", "Symmetry", "use_symmetry", props.use_symmetry),
             (
                 "CON_ROTLIKE",
                 "Concurrent",
                 "concurrent",
                 props.concurrent and not engine.batches_queue(props),
-            ),
-            (
-                "TEMP",
-                "Finish",
-                "early_stop",
-                engine.supports_early_stop and props.early_stop != 100,
             ),
             ("TIME", "Timeout", "unwrap_timeout", props.unwrap_timeout > 0),
             (
@@ -70,7 +63,6 @@ def fix_settings(props):
                 props.optcuts.quality != "MEDIUM",
             ),
             ("CON_ROTLIKE", "Concurrent", "concurrent", props.concurrent),
-            ("TEMP", "Finish", "early_stop", props.early_stop != 100),
             ("TIME", "Timeout", "unwrap_timeout", props.unwrap_timeout > 0),
         )
     )
@@ -265,13 +257,8 @@ def draw_concurrent(layout, props, engine):
         split.prop(props, "max_cores", slider=True)
 
 
-def draw_limits(layout, props, engine):
-    """The two ways to end a run early, shared with the uv editor settings."""
-    if engine.supports_early_stop:
-        row = layout.row()
-        row.label(text="Finish", icon="TEMP")
-        row.prop(props, "early_stop")
-
+def draw_timeout(layout, props):
+    """Shared with the uv editor settings."""
     row = layout.row()
     row.label(text="Timeout", icon="TIME")
     row.prop(props, "unwrap_timeout")
@@ -284,7 +271,7 @@ class UVGAMI_PT_speed(bpy.types.Panel):
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
-    bl_order = 2
+    bl_order = 3
 
     def draw(self, context):
         box = self.layout.box()
@@ -296,7 +283,6 @@ class UVGAMI_PT_speed(bpy.types.Panel):
 
         engine = get_engine(props.engine)
         draw_concurrent(box, props, engine)
-        draw_limits(box, props, engine)
 
         sub = toggle(box, props, "use_proxy", "Proxy", "MOD_DECIM")
         if sub is not None:
@@ -304,16 +290,7 @@ class UVGAMI_PT_speed(bpy.types.Panel):
             row.label(text="Proxy Faces", icon="MESH_DATA")
             row.prop(props, "proxy_faces")
 
-        # symmetry cuts the mesh itself, so the cut settings can't also apply
-        sub = toggle(
-            box, props, "use_cuts", "Cuts", "MESH_GRID", active=not props.use_symmetry
-        )
-        if sub is not None:
-            sub.row().prop(props, "cut_type", expand=True)
-            if props.cut_type == "EVEN":
-                split = sub.split()
-                split.prop(props, "cuts", slider=True)
-                split.row().prop(props, "cut_axes")
+        draw_timeout(box, props)
 
 
 class UVGAMI_PT_weights(bpy.types.Panel):
@@ -323,7 +300,7 @@ class UVGAMI_PT_weights(bpy.types.Panel):
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
-    bl_order = 0
+    bl_order = 1
 
     @classmethod
     def poll(cls, context):
@@ -378,7 +355,7 @@ class UVGAMI_PT_symmetry(bpy.types.Panel):
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
-    bl_order = 3
+    bl_order = 2
 
     def draw_header(self, context):
         self.layout.prop(context.scene.uvgami, "use_symmetry")
@@ -491,7 +468,7 @@ class UVGAMI_PT_island_settings(bpy.types.Panel):
         # these operators always run optcuts, whatever the main panel is set to
         engine = get_engine("OPTCUTS")
         draw_concurrent(box, props, engine)
-        draw_limits(box, props, engine)
+        draw_timeout(box, props)
 
 
 class UVGAMI_PT_pack(bpy.types.Panel):

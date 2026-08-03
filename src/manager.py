@@ -3,7 +3,6 @@ import time
 import traceback
 from collections import deque
 
-import bmesh
 import bpy
 import numpy
 
@@ -21,8 +20,6 @@ from .utils.mesh import (
     check_exists,
     edit_restore,
     move_to_collection,
-    new_bmesh,
-    set_bmesh,
 )
 from .utils.paths import get_extension_dir_path, get_preferences
 from .utils.ui import popup, set_status, switch_shading, tag_redraw
@@ -148,7 +145,6 @@ class UnwrapManager:
             return None
 
         try:
-            prefs = get_preferences()
             completed = []
             failed = []
             requeued = []
@@ -156,32 +152,11 @@ class UnwrapManager:
             for unwrap in list(self._running):
                 unwrap.update_progress()
 
-                early_stop = bpy.context.scene.uvgami.early_stop
-                if (
-                    self.engine.supports_early_stop
-                    and early_stop != 100
-                    and unwrap.progress[0] >= early_stop / 100
-                ):
-                    unwrap.is_stopped = True
-
                 if unwrap.viewing:
                     unwrap.update_viewer()
 
                 if unwrap.is_stopped:
                     self.engine.request_early_stop(unwrap.process)
-                    if unwrap.stop_requested_at is None:
-                        unwrap.stop_requested_at = time.monotonic()
-                    # force kill if process doesn't respond within configured minutes
-                    elif (
-                        prefs.stop_timeout > 0
-                        and time.monotonic() - unwrap.stop_requested_at
-                        > prefs.stop_timeout * 60
-                    ):
-                        unwrap.stop_process()
-                        failed.append((unwrap, -3))
-                        # already failed this tick, don't let the poll below re-add
-                        # it once the killed process reports an exit code
-                        continue
 
                 timeout_minutes = bpy.context.scene.uvgami.unwrap_timeout
                 if (
@@ -381,11 +356,6 @@ class UnwrapManager:
         if unwrap.symmetrize_job is not None:
             unwrap.symmetrize_job.finish(output)
 
-        if unwrap.merge_cuts:
-            bm = new_bmesh(output)
-            bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
-            set_bmesh(bm, output)
-
         # automatically add grid material to final object
         if props.auto_grid:
             grid_img = make_grid_img()
@@ -467,13 +437,10 @@ class UnwrapManager:
             ret_code -= 2**32
 
         move_to_invalid = False
-        # manager-synthetic codes for timeout and force-kill
+        # manager-synthetic codes for timeout and missing output
         if ret_code == -2:
             elapsed = (time.monotonic() - unwrap.started_at) / 60
             msg = f"Timed out after {elapsed:.1f} minutes"
-            move_to_invalid = True
-        elif ret_code == -3:
-            msg = "Stop timed out (force killed)"
             move_to_invalid = True
         elif ret_code == -4:
             msg = "Engine produced no output"

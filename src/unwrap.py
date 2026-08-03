@@ -31,7 +31,6 @@ class Unwrap:
         material_indices: list,
         vertex_groups: dict,
         shade_smooth: bool,
-        merge_cuts: bool,
         maintain_mode: str,
     ):
         self.name = name
@@ -60,7 +59,6 @@ class Unwrap:
         self.vertex_groups = vertex_groups
         self.shade_smooth = shade_smooth
 
-        self.merge_cuts = merge_cuts
         # snapshot: the edge file was written for this mode, so a later change
         # must not reach the untriangulate pass
         self.maintain_mode = maintain_mode
@@ -78,7 +76,6 @@ class Unwrap:
         self.is_uv_data_ready = False
         self.is_stopped = False
         self.started_at = None
-        self.stop_requested_at = None
         # bounded tail of the solo process's stderr, drained by a reader thread
         self.stderr_tail = collections.deque(maxlen=10)
         self._stderr_thread = None
