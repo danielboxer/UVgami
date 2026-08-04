@@ -69,6 +69,7 @@ from .src.ui.props import (
     UVGAMI_AP_preferences,
 )
 from .src.engines import ENGINES
+from .src.engines.binary_engine import UVGAMI_OT_delete_engine
 
 
 # every bpy class each engine needs registered (property groups and operators)
@@ -108,6 +109,8 @@ classes = (
     UVGAMI_PT_grid,
     UVGAMI_PT_pack,
     UVGAMI_PT_misc,
+    # shared by every binary engine, so it isn't in one engine's classes
+    UVGAMI_OT_delete_engine,
     # engine groups must register before the main group that points to them
     *engine_classes,
     UVGAMI_PG_properties,

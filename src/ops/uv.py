@@ -1,13 +1,14 @@
 import bpy
 
-from ..engines import get_engine
+from ..engines import active_engine
 from ..utils.mesh import edit_restore, select_uvs, validate_obj
 
 
 def should_pack(props):
     """Pack after unwrapping when the user asked for it, or when the engine
     cannot produce non-overlapping uvs on its own."""
-    return props.pack_after_unwrap or get_engine(props.engine).requires_pack
+    engine = active_engine(props.engine)
+    return props.pack_after_unwrap or (engine is not None and engine.requires_pack)
 
 
 def pack():

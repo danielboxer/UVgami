@@ -2,18 +2,50 @@ import multiprocessing
 
 import bpy
 
-from ..engines import ENGINES
-from ..utils.paths import get_addon_id
+from ..engines import ENGINES, installed_engines
+from ..utils.paths import get_addon_id, get_preferences
+
+# built once so the item strings stay referenced, which blender requires for
+# dynamic enum callbacks. explicit numbers keep saved files stable as the
+# installed set changes, and numbering by id keeps them stable when the ui
+# order changes too
+_ENGINE_ITEMS = {
+    e.id: (e.id, e.label, e.description, number)
+    for number, e in enumerate(sorted(ENGINES.values(), key=lambda e: e.id))
+}
+
+
+def _engine_items(self, context):
+    prefs = get_preferences()
+    return [
+        _ENGINE_ITEMS[e.id]
+        for e in ENGINES.values()
+        if e.is_available() and e.is_installed(prefs)
+    ]
+
+
+# the getter clamps to an installed engine without touching the stored value,
+# so the widget can't go blank when the selected engine is deleted, and
+# reinstalling it restores the old selection
+def _engine_get(self):
+    stored = self.get("engine", -1)
+    installed = installed_engines()
+    if any(_ENGINE_ITEMS[e.id][3] == stored for e in installed):
+        return stored
+    return _ENGINE_ITEMS[installed[0].id][3] if installed else 0
+
+
+def _engine_set(self, value):
+    self["engine"] = value
 
 
 class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     engine: bpy.props.EnumProperty(
         name="Engine",
         description="The unwrapping engine to use",
-        items=tuple(
-            (e.id, e.label, e.description) for e in ENGINES.values() if e.is_available()
-        ),
-        default="OPTCUTS",
+        items=_engine_items,
+        get=_engine_get,
+        set=_engine_set,
     )
     import_uvs: bpy.props.BoolProperty(
         name="", description="Use the UV map on the mesh as input"
@@ -272,21 +304,21 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         row = box.row()
         row.label(text="General", icon="PREFERENCES")
 
-        cf = box.column_flow(columns=3)
+        grid = box.grid_flow(row_major=True, columns=3, even_columns=True)
 
-        row = cf.row()
+        row = grid.row()
         row.label(icon="FILE_TICK")
         row.prop(self, "autosave")
 
-        row = cf.row()
+        row = grid.row()
         row.label(icon="WINDOW")
         row.prop(self, "show_popup")
 
-        row = cf.row()
+        row = grid.row()
         row.label(icon="SORTTIME")
         row.prop(self, "show_progress_bar")
 
-        row = cf.row()
+        row = grid.row()
         row.label(icon="OUTLINER_COLLECTION")
         row.prop(self, "invalid_collection")
 

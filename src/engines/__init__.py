@@ -1,3 +1,6 @@
+from ..utils.paths import get_preferences
+
+
 class Engine:
     id = ""
     label = ""
@@ -18,6 +21,10 @@ class Engine:
     def is_available(self):
         """Whether this engine can run on the current platform."""
         return True
+
+    def is_installed(self, prefs):
+        """Whether the engine is ready to run, so the dropdown lists it."""
+        return self.validate(prefs)[1] is None
 
     def validate(self, prefs):
         """Return (ctx, None) if usable, else (None, error_message). ctx is an
@@ -52,6 +59,10 @@ class Engine:
 
     def draw_prefs(self, layout, prefs):
         """Draw this engine's section in the addon preferences."""
+
+    def draw_update_notice(self, layout):
+        """Draw a row in the unwrap panels when an addon update bumped the
+        engine version and the new engine isn't downloaded yet."""
 
     def batches_queue(self, props):
         """Whether queued meshes share one engine process. Batching and running
@@ -97,8 +108,23 @@ class Engine:
 from . import optcuts, partuv, xatlas  # noqa: E402
 
 # order sets the enum/ui order
-ENGINES = {e.id: e for e in (optcuts.ENGINE, partuv.ENGINE, xatlas.ENGINE)}
+ENGINES = {e.id: e for e in (optcuts.ENGINE, xatlas.ENGINE, partuv.ENGINE)}
 
 
 def get_engine(engine_id):
-    return ENGINES.get(engine_id, ENGINES["OPTCUTS"])
+    return ENGINES[engine_id]
+
+
+def installed_engines():
+    prefs = get_preferences()
+    return [e for e in ENGINES.values() if e.is_available() and e.is_installed(prefs)]
+
+
+def active_engine(engine_id):
+    """The installed engine an unwrap will run, or None when none is installed.
+    The scene enum's getter clamps to an installed engine, so the id read back
+    only misses when nothing is installed and the enum is empty."""
+    engine = ENGINES.get(engine_id)
+    if engine is not None and engine in installed_engines():
+        return engine
+    return None

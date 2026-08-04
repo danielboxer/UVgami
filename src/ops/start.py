@@ -5,7 +5,7 @@ from collections import deque
 
 import bpy
 
-from ..engines import get_engine
+from ..engines import active_engine
 from ..handler import handle_error
 from ..job import HideInput, Join, Preserve, ProxyUVs, Symmetrise, TransferUVs
 from ..logger import logger
@@ -608,7 +608,10 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         try:
             logger.new_info()
-            self.engine = get_engine(context.scene.uvgami.engine)
+            self.engine = active_engine(context.scene.uvgami.engine)
+            if self.engine is None:
+                self.report({"ERROR"}, "No engine installed")
+                return {"CANCELLED"}
 
             # the manager holds one engine for the whole session, so pieces added
             # to a running session would export for this engine and run on the old

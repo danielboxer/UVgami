@@ -25,31 +25,32 @@ def get_extension_dir_path():
     return pathlib.Path(bpy.utils.extension_path_user(get_root_package(), create=True))
 
 
-def get_bundled_engine_path(name="optcuts"):
-    """Return the path to the bundled engine binary, or None if not found."""
-    engines_dir = get_dir_path() / "engines"
-    if not engines_dir.is_dir():
-        return None
-
+def get_platform_tag():
+    """Platform name used for both the local engine folders and the engine
+    release asset names, or None on an unsupported platform."""
     system = platform.system()
-    machine = platform.machine().lower()
-
     if system == "Windows":
-        platform_dir = "windows"
-        binary_name = f"{name}.exe"
-    elif system == "Linux":
-        platform_dir = "linux"
-        binary_name = name
-    elif system == "Darwin":
-        if machine == "arm64":
-            platform_dir = "macos-arm64"
-        else:
-            platform_dir = "macos-x64"
-        binary_name = name
-    else:
-        return None
+        return "windows"
+    if system == "Linux":
+        return "linux"
+    if system == "Darwin":
+        if platform.machine().lower() == "arm64":
+            return "macos-arm64"
+        return "macos-x64"
+    return None
 
-    engine_path = engines_dir / platform_dir / binary_name
+
+def get_engine_binary_name(name):
+    return f"{name}.exe" if platform.system() == "Windows" else name
+
+
+def get_local_engine_path(name):
+    """Path to an engine binary in engines/<platform>/, or None. No engines ship
+    with the addon, so this only finds a build made in a dev checkout."""
+    tag = get_platform_tag()
+    if tag is None:
+        return None
+    engine_path = get_dir_path() / "engines" / tag / get_engine_binary_name(name)
     if engine_path.is_file():
         return engine_path
     return None

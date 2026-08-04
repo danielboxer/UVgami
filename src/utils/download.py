@@ -54,7 +54,7 @@ def _fetch(url, part, timeout, progress=None):
         if not resumed:
             # server ignored the range (or none was sent), start the file over
             resume_from = 0
-        length = response.getheader("Content-Length")
+        length = response.headers.get("Content-Length")
         expected = resume_from + int(length) if length is not None else None
         done = resume_from
         with open(part, "ab" if resumed else "wb") as file:

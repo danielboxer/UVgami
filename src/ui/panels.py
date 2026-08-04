@@ -1,8 +1,10 @@
 import bpy
 
-from ..engines import get_engine
+from ..engines import active_engine, get_engine
+from ..engines.install_task import draw_progress, task_state
 from ..logger import logger
 from ..manager import manager
+from ..utils.paths import get_preferences
 from ..utils.ui import draw_active, newline_label, only_active, toggle
 
 
@@ -10,7 +12,7 @@ def unwrap_settings(props):
     """The settings a full unwrap will apply, as (icon, label, path) entries
     for draw_active. Only ones that change the result, so a sub-setting of
     something already listed is left out."""
-    engine = get_engine(props.engine)
+    engine = active_engine(props.engine)
     return engine.active_settings(props) + only_active(
         (
             (
@@ -66,6 +68,30 @@ def fix_settings(props):
             ("TIME", "Timeout", "unwrap_timeout", props.unwrap_timeout > 0),
         )
     )
+
+
+def has_engine(context):
+    """Poll shared by every panel that needs an engine to run."""
+    return active_engine(context.scene.uvgami.engine) is not None
+
+
+def optcuts_installed():
+    return get_engine("OPTCUTS").is_installed(get_preferences())
+
+
+def draw_missing_engine(layout):
+    """Stands in for a panel body that has no engine to run."""
+    box = layout.box()
+    if task_state["running"]:
+        draw_progress(box, "Downloading engine")
+        return
+    row = box.row()
+    row.alignment = "CENTER"
+    row.label(text="Engine not installed", icon="INFO")
+    split = box.split(factor=0.85)
+    split.scale_y = 1.5
+    split.operator("uvgami.install_optcuts", text="Download Engine", icon="IMPORT")
+    split.operator("uvgami.open_preferences", text="", icon="PREFERENCES")
 
 
 def draw_result(layout):
@@ -206,8 +232,13 @@ class UVGAMI_PT_main(bpy.types.Panel):
     bl_category = "UVgami"
 
     def draw(self, context):
-        box = self.layout.box()
         props = context.scene.uvgami
+        engine = active_engine(props.engine)
+        if engine is None:
+            draw_missing_engine(self.layout)
+            return
+
+        box = self.layout.box()
 
         row = box.row()
         row.scale_y = 2
@@ -225,7 +256,7 @@ class UVGAMI_PT_main(bpy.types.Panel):
         row.label(icon="TOOL_SETTINGS", text="Engine")
         row.prop(props, "engine", text="")
 
-        engine = get_engine(props.engine)
+        engine.draw_update_notice(box)
         engine.draw_settings(box, props)
 
         if engine.supports_import_uvs:
@@ -273,6 +304,10 @@ class UVGAMI_PT_speed(bpy.types.Panel):
     bl_options = {"DEFAULT_CLOSED"}
     bl_order = 3
 
+    @classmethod
+    def poll(cls, context):
+        return has_engine(context)
+
     def draw(self, context):
         box = self.layout.box()
         props = context.scene.uvgami
@@ -281,7 +316,7 @@ class UVGAMI_PT_speed(bpy.types.Panel):
         row.alignment = "CENTER"
         row.label(text="Speed", icon="SORTTIME")
 
-        engine = get_engine(props.engine)
+        engine = active_engine(props.engine)
         draw_concurrent(box, props, engine)
 
         sub = toggle(box, props, "use_proxy", "Proxy", "MOD_DECIM")
@@ -304,7 +339,8 @@ class UVGAMI_PT_weights(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        return get_engine(context.scene.uvgami.engine).supports_guided
+        engine = active_engine(context.scene.uvgami.engine)
+        return engine is not None and engine.supports_guided
 
     def draw_header(self, context):
         self.layout.prop(context.scene.uvgami, "use_weights")
@@ -357,6 +393,10 @@ class UVGAMI_PT_symmetry(bpy.types.Panel):
     bl_options = {"DEFAULT_CLOSED"}
     bl_order = 2
 
+    @classmethod
+    def poll(cls, context):
+        return has_engine(context)
+
     def draw_header(self, context):
         self.layout.prop(context.scene.uvgami, "use_symmetry")
 
@@ -388,6 +428,10 @@ class UVGAMI_PT_grid(bpy.types.Panel):
     bl_options = {"DEFAULT_CLOSED"}
     bl_order = 5
 
+    @classmethod
+    def poll(cls, context):
+        return has_engine(context)
+
     def draw(self, context):
         props = context.scene.uvgami
         layout = self.layout
@@ -418,7 +462,13 @@ class UVGAMI_PT_island_uv(bpy.types.Panel):
 
     def draw(self, context):
         props = context.scene.uvgami
+        # the island and area operators always run optcuts
+        if not optcuts_installed():
+            draw_missing_engine(self.layout)
+            return
+
         box = self.layout.box()
+        get_engine("OPTCUTS").draw_update_notice(box)
 
         draw_active(box, fix_settings(props))
 
@@ -457,6 +507,10 @@ class UVGAMI_PT_island_settings(bpy.types.Panel):
     bl_parent_id = "UVGAMI_PT_island_uv"
     bl_options = {"DEFAULT_CLOSED"}
 
+    @classmethod
+    def poll(cls, context):
+        return optcuts_installed()
+
     def draw(self, context):
         props = context.scene.uvgami
         box = self.layout.box()
@@ -480,6 +534,10 @@ class UVGAMI_PT_pack(bpy.types.Panel):
     bl_options = {"DEFAULT_CLOSED"}
     bl_order = 4
 
+    @classmethod
+    def poll(cls, context):
+        return has_engine(context)
+
     def draw(self, context):
         props = context.scene.uvgami
         box = self.layout.box()
@@ -499,7 +557,7 @@ class UVGAMI_PT_pack(bpy.types.Panel):
         box.prop(props, "combine_uvs")
         box.prop(props, "fix_scale")
 
-        if get_engine(props.engine).requires_pack:
+        if active_engine(props.engine).requires_pack:
             # drawn as a checked label, not the prop, so a stored False can't
             # show an unchecked box next to packing that always runs
             row = box.row()
@@ -517,6 +575,10 @@ class UVGAMI_PT_misc(bpy.types.Panel):
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
     bl_order = 6
+
+    @classmethod
+    def poll(cls, context):
+        return has_engine(context)
 
     def draw(self, context):
         box = self.layout.box()
