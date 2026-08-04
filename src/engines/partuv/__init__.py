@@ -1,3 +1,4 @@
+import functools
 import os
 import pathlib
 import platform
@@ -51,6 +52,9 @@ class UVGAMI_PG_partuv(bpy.types.PropertyGroup):
     )
 
 
+# cached: validate runs on every panel redraw and shutil.which scans the
+# whole PATH. a dev checkout doesn't change mid-session
+@functools.cache
 def find_partuv_dev_repo():
     """Return the repo path if the developer CLI is usable, else None."""
     repo = get_dir_path()

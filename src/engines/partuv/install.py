@@ -1,4 +1,5 @@
 import json
+import functools
 import platform
 import shutil
 import subprocess
@@ -39,6 +40,9 @@ UV_ARCHIVES = {
 }
 
 
+# cached: the main panel's update notice calls this every redraw and the glob
+# scans the venv site-packages. cleared by invalidate_engine_caches
+@functools.cache
 def get_installed_partuv_version():
     """Version of the wheel in the venv, read from its dist-info, or None."""
     venv = get_partuv_venv_path()
