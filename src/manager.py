@@ -499,12 +499,6 @@ class UnwrapManager:
                 if isinstance(job, Join):
                     found_job = job
 
-        # a failed area fix may have pre-repaired the patch before the engine
-        # ran, put the old uvs back
-        job = unwrap.transfer_uvs_job
-        if hasattr(job, "restore"):
-            job.restore(self.input[job])
-
         if unwrap in self._running:
             self._running.remove(unwrap)
         unwrap.release_engine()
@@ -645,10 +639,6 @@ class UnwrapManager:
         unwrap.release_engine()
         self.remove_unwrap(unwrap)
         unwrap.cleanup()
-        # a cancelled area fix keeps its old uvs, not the flipped pre-repair
-        job = unwrap.transfer_uvs_job
-        if hasattr(job, "restore"):
-            job.restore(self.input[job])
         self.exit_viewer = True
         tag_redraw()
 
@@ -656,11 +646,6 @@ class UnwrapManager:
         # late import: ops.viewer imports the manager
         from .ops.viewer import stop_viewer_draw
 
-        # a cancelled area fix keeps its old uvs, not the flipped pre-repair
-        for unwrap in self.active:
-            job = unwrap.transfer_uvs_job
-            if hasattr(job, "restore"):
-                job.restore(self.input[job])
         for unwrap in list(self._running):
             unwrap.stop_process()
             unwrap.cleanup()

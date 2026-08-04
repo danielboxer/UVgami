@@ -19,9 +19,13 @@ from ..utils.paths import get_extension_dir_path, get_preferences
 
 
 def face_uvs(mesh):
-    """Per-face loop uvs from the active layer, in face vertex order."""
+    """Per-face loop uvs from the active layer, in face vertex order, rounded
+    so float noise between loops of one vert doesn't read as a seam."""
     uv = mesh.uv_layers.active.data
-    return [[tuple(uv[i].uv) for i in poly.loop_indices] for poly in mesh.polygons]
+    return [
+        [(round(uv[i].uv[0], 6), round(uv[i].uv[1], 6)) for i in poly.loop_indices]
+        for poly in mesh.polygons
+    ]
 
 
 def unwrap(obj, only, iterations):
@@ -172,48 +176,85 @@ def target_areas(obj, rings):
         return None, 0, 0, "Select the faces of the area to fix"
 
     faces = [tuple(p.vertices) for p in mesh.polygons]
+    uvs = face_uvs(mesh)
     edges = face_edges(faces)
     targets = []
     whole = ring_skipped = 0
-    for group in uv_island_groups(faces, face_uvs(mesh), edges):
+    for group in uv_island_groups(faces, uvs, edges):
         group_set = set(group)
-        patch = selected & group_set
-        if not patch:
+        island_selected = selected & group_set
+        if not island_selected:
             continue
-        # grow so the fix blends out instead of stopping at the selection edge
-        for _ in range(rings):
-            ring_verts = {v for fi in patch for v in faces[fi]}
-            grown = {
-                fi for fi in group_set - patch if ring_verts.intersection(faces[fi])
-            }
-            if not grown:
-                break
-            patch |= grown
-        patch |= enclosed_faces(faces, edges, group_set, patch)
-        if patch == group_set:
-            # a fully covered island has no border to hold
-            whole += 1
-            continue
-        for comp in face_components(faces, edges, patch):
-            comp_verts = {v for fi in comp for v in faces[fi]}
-            comp_edges = {
-                pair(faces[fi][i], faces[fi][(i + 1) % len(faces[fi])])
-                for fi in comp
-                for i in range(len(faces[fi]))
-            }
-            if len(comp_verts) - len(comp_edges) + len(comp) != 1:
-                # the area rings a real hole, no selection can make it a
-                # disk, only breaking the ring can
-                ring_skipped += 1
+        # each uv-connected piece of the selection grows into its own area,
+        # so pieces on opposite sides of a seam stay separate patches
+        taken = set(island_selected)
+        emitted = set()
+        absorbed = set()
+        for seed in sorted(
+            face_components(faces, uvs, edges, island_selected), key=min
+        ):
+            patch = set(seed) - absorbed
+            if not patch:
                 continue
-            outside = group_set - comp
-            border = comp_verts & {v for fi in outside for v in faces[fi]}
-            targets.append((sorted(comp), border))
+            # grow so the fix blends out instead of stopping at the selection
+            # edge. a face joins only when a corner uv matches and no corner
+            # puts a second uv on a patch vert, so growth can't cross the
+            # island's own seam or straddle a seam tip
+            uv_of = {
+                faces[fi][i]: uvs[fi][i] for fi in patch for i in range(len(faces[fi]))
+            }
+            for _ in range(rings):
+                ring = set(uv_of.items())
+                grew = False
+                for fi in sorted(group_set - taken):
+                    corners = list(zip(faces[fi], uvs[fi]))
+                    if ring.isdisjoint(corners):
+                        continue
+                    if any(uv_of.get(v, uv) != uv for v, uv in corners):
+                        continue
+                    patch.add(fi)
+                    taken.add(fi)
+                    uv_of.update(corners)
+                    grew = True
+                if not grew:
+                    break
+            # a pocket can hold another piece's faces, those join this patch
+            # instead of becoming their own
+            enclosed = enclosed_faces(faces, edges, group_set, patch) - emitted
+            patch |= enclosed
+            taken |= enclosed
+            absorbed |= enclosed
+            if patch == group_set:
+                # a fully covered island has no border to hold
+                whole += 1
+                continue
+            emitted |= patch
+            for comp in face_components(faces, uvs, edges, patch):
+                comp_verts = {v for fi in comp for v in faces[fi]}
+                comp_edges = {
+                    pair(faces[fi][i], faces[fi][(i + 1) % len(faces[fi])])
+                    for fi in comp
+                    for i in range(len(faces[fi]))
+                }
+                if len(comp_verts) - len(comp_edges) + len(comp) != 1:
+                    # the area rings a real hole, no selection can make it a
+                    # disk, only breaking the ring can
+                    ring_skipped += 1
+                    continue
+                outside = group_set - comp
+                border = comp_verts & {v for fi in outside for v in faces[fi]}
+                targets.append((sorted(comp), border))
     return targets, whole, ring_skipped, None
 
 
-def face_components(faces, edges, patch):
-    """The patch split into edge-connected pieces."""
+def face_components(faces, uvs, edges, patch):
+    """The patch split into uv-connected pieces: joined by edges whose corner
+    uvs agree on both faces, so a piece never crosses a seam and a two-sided
+    selection becomes one area per side."""
+
+    def corner_uv(f, v):
+        return uvs[f][faces[f].index(v)]
+
     unvisited = set(patch)
     components = []
     while unvisited:
@@ -224,8 +265,13 @@ def face_components(faces, edges, patch):
             fi = stack.pop()
             face = faces[fi]
             for i in range(len(face)):
-                for nb in edges[pair(face[i], face[(i + 1) % len(face)])]:
-                    if nb in unvisited:
+                u, v = face[i], face[(i + 1) % len(face)]
+                for nb in edges[pair(u, v)]:
+                    if (
+                        nb in unvisited
+                        and corner_uv(nb, u) == corner_uv(fi, u)
+                        and corner_uv(nb, v) == corner_uv(fi, v)
+                    ):
                         unvisited.discard(nb)
                         component.add(nb)
                         stack.append(nb)
@@ -265,15 +311,13 @@ def enclosed_faces(faces, edges, group_set, patch):
     return enclosed
 
 
-def has_flipped(mesh, patch):
+def has_flipped(mesh, patch, uv_of):
     """Any patch face with a backwards or degenerate uv corner. Checked per
     fan triangle: a twisted quad hides a flipped triangle behind a positive
     polygon area. Nonconvex faces can read as flipped, which only costs an
     unneeded repair pass."""
-    layer = mesh.uv_layers.active
     for fi in patch:
-        poly = mesh.polygons[fi]
-        pts = [tuple(layer.uv[li].vector) for li in poly.loop_indices]
+        pts = [uv_of[v] for v in mesh.polygons[fi].vertices]
         for i in range(1, len(pts) - 1):
             if signed_area([pts[0], pts[i], pts[i + 1]]) <= 0:
                 return True
@@ -284,43 +328,53 @@ def spans_own_seam(mesh, patch):
     """A patch vert carrying two different uvs: the island wraps around and
     borders its own cut edge here. queue_area's export mirrors vt indices to
     v indices, one uv per vert, so such a patch can't be represented and
-    would weld the seam's two sides."""
+    would weld the seam's two sides. Rounded like face_uvs so float noise
+    doesn't count as a seam."""
     layer = mesh.uv_layers.active
     uv_of = {}
     for fi in patch:
         poly = mesh.polygons[fi]
         for c, v in enumerate(poly.vertices):
-            uv = tuple(layer.uv[poly.loop_start + c].vector)
+            vec = layer.uv[poly.loop_start + c].vector
+            uv = (round(vec[0], 6), round(vec[1], 6))
             if uv_of.setdefault(v, uv) != uv:
                 return True
     return False
 
 
-def repair_flipped(obj, patch, border):
-    """Blender's minimum stretch unwrap over the patch with the border
-    pinned, turning a flipped area into a valid map the engine can keep."""
-    bm = new_bmesh(obj)
-    uvl = bm.loops.layers.uv.active
-    bm.faces.ensure_lookup_table()
-    pinned = []
-    for fi in patch:
-        for c, loop in enumerate(bm.faces[fi].loops):
-            if loop.vert.index in border and not loop[uvl].pin_uv:
-                loop[uvl].pin_uv = True
-                pinned.append((fi, c))
-    set_bmesh(bm, obj)
+def repair_flipped(obj, area_mesh, used, uv_of, border):
+    """Blender's minimum stretch unwrap over the exported copy of the patch
+    with the border pinned, turning a flipped area into a valid map the
+    engine can keep. The input mesh never changes, so the visible map moves
+    once, when the result lands. Updates uv_of in place."""
+    temp = bpy.data.objects.new("uvgami_area", area_mesh)
+    bpy.context.scene.collection.objects.link(temp)
 
-    unwrap(obj, patch, REPAIR_ITERATIONS)
+    bm = bmesh.new()
+    bm.from_mesh(area_mesh)
+    uvl = bm.loops.layers.uv.new()
+    for face in bm.faces:
+        for loop in face.loops:
+            v = used[loop.vert.index]
+            loop[uvl].uv = uv_of[v]
+            loop[uvl].pin_uv = v in border
+    bm.to_mesh(area_mesh)
+    bm.free()
 
-    bm = new_bmesh(obj)
-    uvl = bm.loops.layers.uv.active
-    bm.faces.ensure_lookup_table()
-    for fi, c in pinned:
-        bm.faces[fi].loops[c][uvl].pin_uv = False
-    set_bmesh(bm, obj)
+    # keep the input mesh out of the edit session: multi-object edit would
+    # pull it in and the unwrap helper's deselect would clear its faces
+    obj.select_set(False)
+    unwrap(temp, range(len(area_mesh.polygons)), REPAIR_ITERATIONS)
+    obj.select_set(True)
+
+    layer = area_mesh.uv_layers.active
+    for poly in area_mesh.polygons:
+        for c, v in enumerate(poly.vertices):
+            uv_of[used[v]] = tuple(layer.uv[poly.loop_start + c].vector)
+    bpy.data.objects.remove(temp, do_unlink=True)
 
 
-def queue_area(obj, patch, border, k, input_path, props, nocut, snapshot):
+def queue_area(obj, patch, border, k, input_path, props, nocut):
     """Export one patch with its uvs and pinned border and queue it on the
     manager with an AreaUVs job that will put the result back in place.
 
@@ -342,12 +396,30 @@ def queue_area(obj, patch, border, k, input_path, props, nocut, snapshot):
             if v in border:
                 pins.append((fi, c, uv))
 
+    # the patch's signed area is its border loop's winding, and a pinned
+    # solve can only fill the border's own orientation. a mirrored island
+    # winds backwards, so export it unmirrored and mirror the result back
+    total = 0.0
+    for fi in patch:
+        pts = [uv_of[v] for v in mesh.polygons[fi].vertices]
+        for i in range(1, len(pts) - 1):
+            total += signed_area([pts[0], pts[i], pts[i + 1]])
+    mirrored = total < 0
+    if mirrored:
+        uv_of = {v: (-u, w) for v, (u, w) in uv_of.items()}
+
     area_mesh = bpy.data.meshes.new("uvgami_area")
     area_mesh.from_pydata(
         [mesh.vertices[v].co.copy() for v in used],
         [],
         [[local[v] for v in mesh.polygons[fi].vertices] for fi in patch],
     )
+
+    # a flipped area would make the engine reject the map, repair the copy
+    # with a pinned unwrap so the border still holds
+    if has_flipped(mesh, patch, uv_of):
+        repair_flipped(obj, area_mesh, used, uv_of, border)
+
     bm = bmesh.new()
     bm.from_mesh(area_mesh)
     if any(len(f.verts) > 3 for f in bm.faces):
@@ -379,7 +451,7 @@ def queue_area(obj, patch, border, k, input_path, props, nocut, snapshot):
     vertex_count = len(area_mesh.vertices)
     bpy.data.meshes.remove(area_mesh)
 
-    queue_fix(obj, AreaUVs(patch, pins, snapshot), name, path, vertex_count, props)
+    queue_fix(obj, AreaUVs(patch, pins, mirrored), name, path, vertex_count, props)
 
 
 def validate_engine(op):
@@ -531,7 +603,7 @@ class UVGAMI_OT_combine_islands(bpy.types.Operator):
 
 
 class AreaOperator:
-    """Shared body of Recut Area and Relax Area. A plain mixin: registering a
+    """Shared body of Unwrap Area and Relax Area. A plain mixin: registering a
     subclass of a registered operator unregisters the parent."""
 
     bl_options = {"UNDO"}
@@ -564,7 +636,7 @@ class AreaOperator:
                     error = "The whole island is selected, use Unwrap Island instead"
                 elif seam_skipped:
                     error = (
-                        "The area spans the island's own seam,"
+                        "The area covers both sides of a seam,"
                         " deselect the faces on one side"
                     )
                 else:
@@ -572,37 +644,9 @@ class AreaOperator:
                 self.report({"ERROR"}, error)
                 return {"CANCELLED"}
 
-            # snapshot each patch so a failed run can put the map back, the
-            # flipped pre-repair below changes it before the engine even runs
-            layer = obj.data.uv_layers.active
-            snapshots = []
-            for patch, border in targets:
-                snapshot = []
-                for fi in patch:
-                    poly = obj.data.polygons[fi]
-                    for c in range(poly.loop_total):
-                        snapshot.append(
-                            (fi, c, tuple(layer.uv[poly.loop_start + c].vector))
-                        )
-                snapshots.append(snapshot)
-                # a flipped area would make the engine reject the map,
-                # pre-repair it with Blender's pinned unwrap so the border
-                # still holds
-                if has_flipped(obj.data, patch):
-                    repair_flipped(obj, patch, border)
-
             def queue_one(k, input_path):
                 patch, border = targets[k]
-                queue_area(
-                    obj,
-                    patch,
-                    border,
-                    k + 1,
-                    input_path,
-                    props,
-                    self.nocut,
-                    snapshots[k],
-                )
+                queue_area(obj, patch, border, k + 1, input_path, props, self.nocut)
 
             queue_targets(engine, engine_ctx, len(targets), queue_one)
         finally:
@@ -616,15 +660,15 @@ class AreaOperator:
         if rings:
             notes.append(f"{rings} area(s) around holes skipped")
         if seam_skipped:
-            notes.append(f"{seam_skipped} area(s) spanning their seam skipped")
+            notes.append(f"{seam_skipped} area(s) on both sides of a seam skipped")
         skipped = f", {', '.join(notes)}" if notes else ""
         self.report({"INFO"}, f"Fixing {len(targets)} area(s){skipped}")
         return {"FINISHED"}
 
 
-class UVGAMI_OT_recut_area(AreaOperator, bpy.types.Operator):
-    bl_idname = "uvgami.recut_area"
-    bl_label = "Recut Area"
+class UVGAMI_OT_unwrap_area(AreaOperator, bpy.types.Operator):
+    bl_idname = "uvgami.unwrap_area"
+    bl_label = "Unwrap Area"
     bl_description = "Re-unwrap the selected faces with cuts if necessary"
 
 

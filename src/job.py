@@ -439,36 +439,23 @@ class AreaUVs(IslandUVs):
     engine held the patch border in place, so instead of a bbox fit the
     output is aligned by undoing its normalization through those pinned
     loops, and they snap back to their exact old uvs so the patch rejoins
-    the island seamlessly."""
+    the island seamlessly. A patch from a mirrored island was exported with
+    u negated, so its result mirrors back before the fit."""
 
-    def __init__(self, faces, pins, snapshot):
+    def __init__(self, faces, pins, mirrored):
         super().__init__(faces, None, None)
         self.pins = pins  # (face index, corner, old uv)
-        self.snapshot = snapshot  # every patch loop's old uv, for restore
-
-    def restore(self, input_mesh):
-        """Put the patch uvs back after a failed run. The flipped pre-repair
-        changes the map before the engine even starts, so a failure must not
-        leave that behind."""
-        if not check_exists(input_mesh):
-            return
-        old_active = bpy.context.view_layer.objects.active
-        was_in_edit = input_mesh.mode == "EDIT"
-        try:
-            if was_in_edit:
-                bpy.context.view_layer.objects.active = input_mesh
-                bpy.ops.object.mode_set(mode="OBJECT")
-            data = input_mesh.data
-            layer = data.uv_layers.active
-            for fi, c, uv in self.snapshot:
-                layer.uv[data.polygons[fi].loop_start + c].vector = uv
-        finally:
-            if was_in_edit:
-                bpy.context.view_layer.objects.active = input_mesh
-                bpy.ops.object.mode_set(mode="EDIT")
-            bpy.context.view_layer.objects.active = old_active
+        self.mirrored = mirrored
 
     def _fit(self, plan):
+        if self.mirrored:
+            for k in plan.loop_uvs:
+                u, v = plan.loop_uvs[k]
+                plan.loop_uvs[k] = (-u, v)
+            for fi, parts in plan.split_faces.items():
+                plan.split_faces[fi] = [
+                    (verts, [(-u, v) for u, v in part_uvs]) for verts, part_uvs in parts
+                ]
         pairs = []
         for fi, corner, old in self.pins:
             new = plan.loop_uvs.get(self.loop_base[fi] + corner)
