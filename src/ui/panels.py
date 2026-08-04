@@ -98,24 +98,24 @@ def draw_missing_engine(layout):
     split.operator("uvgami.open_preferences", text="", icon="PREFERENCES")
 
 
-def draw_result(layout):
+def draw_summary(layout):
     """Banner with the last session's summary, until dismissed or the next run."""
-    if not manager.result:
+    if not manager.summary:
         return
     box = layout.box()
     # a split, not a row: a label sizes to its text and leaves the x stranded
     # at the far end of an empty row, a full width one centers the message
     split = box.split(factor=0.9)
-    split.alert = manager.result_failed
+    split.alert = manager.summary_failed
     split.operator(
-        "uvgami.clear_result",
-        text=manager.result[0],
-        icon="ERROR" if manager.result_failed else "CHECKMARK",
+        "uvgami.clear_summary",
+        text=manager.summary[0],
+        icon="ERROR" if manager.summary_failed else "CHECKMARK",
         emboss=False,
     )
-    split.operator("uvgami.clear_result", text="", icon="X", emboss=False)
-    if len(manager.result) > 1:
-        newline_label(manager.result[1:], box.column())
+    split.operator("uvgami.clear_summary", text="", icon="X", emboss=False)
+    if len(manager.summary) > 1:
+        newline_label(manager.summary[1:], box.column())
 
 
 def draw_queue(box):
@@ -155,7 +155,6 @@ def _build_unwrap_groups(active_unwraps):
 
 def _draw_unwrap_groups(box, groups, active_groups):
     """Draw all unwrap groups with their buttons."""
-    cancel_index = 0
     for group_id, group in groups.items():
         display_box = box.box()
         row = display_box.row()
@@ -168,7 +167,7 @@ def _draw_unwrap_groups(box, groups, active_groups):
                 text="",
                 icon=f"DISCLOSURE_TRI_{'DOWN' if group_id.is_expanded else 'RIGHT'}",
                 emboss=False,
-            ).index = manager.active.index(group[0])
+            ).stem = group[0].path.stem
             label_text = group[0].input_name
             is_active = group_id in active_groups
         else:
@@ -183,15 +182,13 @@ def _draw_unwrap_groups(box, groups, active_groups):
         if expand_layout:
             # pieces the exporter hasn't written yet have no input file, so
             # stop couldn't put them in the not unwrapped collection
-            is_exporting = group_id.count - len(group_id.unwrapped) - len(group) > 0
+            is_exporting = any(not u.is_exported for u in group)
             if is_active and not is_exporting:
                 stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
-                stop_op.start_idx = cancel_index
-                stop_op.end_idx = cancel_index + len(group)
+                stop_op.stem = group[0].path.stem
                 stop_op.whole_group = True
             cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
-            cancel_op.start_idx = cancel_index
-            cancel_op.end_idx = cancel_index + len(group)
+            cancel_op.stem = group[0].path.stem
             cancel_op.whole_group = True
 
         if not expand_layout or group_id.is_expanded:
@@ -208,21 +205,14 @@ def _draw_unwrap_groups(box, groups, active_groups):
                     view_op = row.operator(
                         "uvgami.view_unwrap", text="", icon="HIDE_OFF"
                     )
-                    view_op.index = manager.active.index(item)
+                    view_op.stem = item.path.stem
                 # stop button, only a running mesh on an engine that can
                 # finish early with a result
                 if manager.engine.supports_early_stop and item.is_active:
                     stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
-                    stop_op.start_idx = cancel_index
-                    stop_op.end_idx = cancel_index + 1
+                    stop_op.stem = item.path.stem
                 cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
-                cancel_op.start_idx = cancel_index
-                cancel_op.end_idx = cancel_index + 1
-
-                cancel_index += 1
-        else:
-            # collapsed, so no per-item rows drew, skip the whole group's indices
-            cancel_index += len(group)
+                cancel_op.stem = item.path.stem
 
     if len(groups) > 1:
         row = box.row()
@@ -249,7 +239,7 @@ class UVGAMI_PT_main(bpy.types.Panel):
         row.operator("uvgami.start", icon="UV")
 
         if not manager.in_uv_editor:
-            draw_result(box)
+            draw_summary(box)
 
         draw_active(box, unwrap_settings(props))
 
@@ -488,7 +478,7 @@ class UVGAMI_PT_island_uv(bpy.types.Panel):
         row.prop(props, "area_expand", text="")
 
         if manager.in_uv_editor:
-            draw_result(box)
+            draw_summary(box)
             draw_queue(box)
 
 

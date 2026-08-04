@@ -21,16 +21,7 @@ class Unwrap:
         name: str,
         input_name: str,
         path: pathlib.Path,
-        guide_path: pathlib.Path,
-        edge_path: pathlib.Path,
         jobs: tuple,
-        origin: mathutils.Vector,
-        materials: list,
-        added_edges: list,
-        vertex_count: int,
-        material_indices: list,
-        vertex_groups: dict,
-        shade_smooth: bool,
         maintain_mode: str,
     ):
         self.name = name
@@ -38,30 +29,34 @@ class Unwrap:
 
         self.path = path
         self.output_path = get_extension_dir_path() / "output" / f"{self.path.stem}.obj"
-        # seam restrictions
-        self.guide_path = guide_path
-        # for untriangulation (added edges)
-        self.edge_path = edge_path
 
         # jobs
-        self.jobs = [j for j in jobs if j is not None]
         self.preserve_job = jobs[0]
         self.join_job = jobs[1]
         self.hide_job = jobs[2]
         self.symmetrize_job = jobs[3]
         self.transfer_uvs_job = jobs[4]
 
-        self.origin = mathutils.Vector(origin)
-        self.materials = materials
-        self.added_edges = added_edges
-        self.vertex_count = vertex_count
-        self.material_indices = material_indices
-        self.vertex_groups = vertex_groups
-        self.shade_smooth = shade_smooth
-
         # snapshot: the edge file was written for this mode, so a later change
         # must not reach the untriangulate pass
         self.maintain_mode = maintain_mode
+
+        # result state, set once through manager.record_result
+        self.result = None
+
+        # export data, filled by set_export_data
+        self.is_exported = False
+        # seam restrictions
+        self.guide_path = None
+        # for untriangulation (added edges)
+        self.edge_path = None
+        self.origin = None
+        self.materials = []
+        self.added_edges = []
+        self.vertex_count = 0
+        self.material_indices = []
+        self.vertex_groups = {}
+        self.shade_smooth = False
 
         # unwrap state
         self.is_active = False
@@ -79,6 +74,31 @@ class Unwrap:
         # bounded tail of the solo process's stderr, drained by a reader thread
         self.stderr_tail = collections.deque(maxlen=10)
         self._stderr_thread = None
+
+    def set_export_data(
+        self,
+        *,
+        origin,
+        vertex_count,
+        guide_path=None,
+        edge_path=None,
+        materials=(),
+        added_edges=(),
+        material_indices=(),
+        vertex_groups=None,
+        shade_smooth=False,
+    ):
+        """The defaults cover a fix export, which carries no mesh metadata."""
+        self.guide_path = guide_path
+        self.edge_path = edge_path
+        self.origin = mathutils.Vector(origin)
+        self.materials = materials
+        self.added_edges = added_edges
+        self.vertex_count = vertex_count
+        self.material_indices = material_indices
+        self.vertex_groups = vertex_groups or {}
+        self.shade_smooth = shade_smooth
+        self.is_exported = True
 
     def start_unwrap(self):
         props = bpy.context.scene.uvgami

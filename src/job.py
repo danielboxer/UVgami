@@ -1,4 +1,5 @@
 from collections import namedtuple
+from enum import Enum
 
 import bmesh
 import bpy
@@ -10,7 +11,15 @@ from .seams import FlattenError, uv_area_fit
 from .uv_transfer import plan_transfer
 from .utils.mesh import check_exists, new_bmesh, set_bmesh, triangulate
 
-TransferOutcome = namedtuple("TransferOutcome", ["applied", "split_count", "detail"])
+TransferReport = namedtuple("TransferReport", ["applied", "split_count", "detail"])
+
+
+class Result(Enum):
+    """The results a finished mesh can report."""
+
+    FINISHED = "finished"
+    INVALID = "invalid"
+    CANCELLED = "cancelled"
 
 
 def output_mesh_data(output, output_uv):
@@ -40,17 +49,7 @@ def output_mesh_data(output, output_uv):
     return output_positions, output_polygons, output_uvs, output_seams
 
 
-class Job:
-    def __init__(self, count):
-        self.count = count
-        self.unwrapped = []
-        self.is_expanded = False
-
-    def is_completed(self):
-        return len(self.unwrapped) == self.count
-
-
-class Preserve(Job):
+class Preserve:
     @staticmethod
     def _seam_edges(bm):
         """The mesh edges that carry a uv seam, found by rebuilding the uv
@@ -141,31 +140,42 @@ class Preserve(Job):
         set_bmesh(bm, output)
 
 
-class Join(Job):
-    def __init__(self, count):
-        super().__init__(count)
-        # set when a whole-group cancel is issued, so the exporter can drop the
-        # group's still-unexported pieces
-        self.cancel_requested = False
+class Join:
+    def __init__(self, expected):
+        self.expected = expected
+        # finished unwraps in completion order, the merge concatenates in this
+        # order so material indices and vertex groups line up
+        self.finished = []
+        self.reported = 0
+        # a whole-group cancel drops the finished pieces instead of joining them
+        self.discard = False
+        self.is_expanded = False
 
-    def finish(self, unwrap):
-        paths = [u.path.parents[1] / "output" / u.path.name for u in self.unwrapped]
-        edge_path = unwrap.edge_path
+    def record(self, unwrap, result):
+        self.reported += 1
+        if result is Result.FINISHED:
+            self.finished.append(unwrap)
+
+    def is_settled(self):
+        return self.reported == self.expected
+
+    def finish(self):
+        unwraps = self.finished
+        edge_path = unwraps[-1].edge_path
 
         # the merged first obj is the file that will be imported
-        path = merge_obj_files(paths)
+        path = merge_obj_files([u.output_path for u in unwraps])
 
         added_edges = []
-        if unwrap.preserve_job is not None:
+        if unwraps[-1].preserve_job is not None:
             # combine all added edges in the group
             v_count = 0
-            for e_idx, edges in enumerate([u.added_edges for u in self.unwrapped]):
+            for e_idx, edges in enumerate([u.added_edges for u in unwraps]):
                 for v1, v2 in edges:
                     added_edges.append((v1 + v_count, v2 + v_count))
-                v_count += self.unwrapped[e_idx].vertex_count
+                v_count += unwraps[e_idx].vertex_count
 
             # combine all edge files
-            unwraps = self.unwrapped
             edge_path = unwraps[0].edge_path
             v_count = unwraps[0].vertex_count
             e_paths = [u.edge_path for u in unwraps]
@@ -182,24 +192,24 @@ class Join(Job):
         return (path, edge_path, added_edges)
 
 
-class HideInput(Job):
+class HideInput:
     def finish(self, input_mesh):
         if check_exists(input_mesh):
             input_mesh.hide_set(True)
 
 
-class TransferUVs(Job):
+class TransferUVs:
     # whether the manager should repack the input mesh in place of the
     # deleted output at session end
     repack_input = True
 
     def finish(self, input_mesh, output):
         if not check_exists(input_mesh) or not check_exists(output):
-            return TransferOutcome(False, 0, "input or output object missing")
+            return TransferReport(False, 0, "input or output object missing")
 
         output_uv = output.data.uv_layers.active
         if output_uv is None:
-            return TransferOutcome(False, 0, "output mesh has no uv layer")
+            return TransferReport(False, 0, "output mesh has no uv layer")
 
         # exit edit mode to read and write mesh data, restore it no matter what
         old_active = bpy.context.view_layer.objects.active
@@ -209,11 +219,11 @@ class TransferUVs(Job):
                 bpy.context.view_layer.objects.active = input_mesh
                 bpy.ops.object.mode_set(mode="OBJECT")
 
-            result = plan_transfer(*self._extract(input_mesh, output, output_uv))
-            if not result.ok:
-                return TransferOutcome(False, 0, f"{result.reason}: {result.detail}")
+            plan = plan_transfer(*self._extract(input_mesh, output, output_uv))
+            if not plan.ok:
+                return TransferReport(False, 0, f"{plan.reason}: {plan.detail}")
 
-            self._apply(input_mesh, result)
+            self._apply(input_mesh, plan)
         finally:
             if was_in_edit:
                 bpy.context.view_layer.objects.active = input_mesh
@@ -223,7 +233,7 @@ class TransferUVs(Job):
         # only tear down the output once the whole plan applied
         bpy.data.objects.remove(output, do_unlink=True)
         input_mesh.hide_set(False)
-        return TransferOutcome(True, len(result.split_faces), "")
+        return TransferReport(True, len(plan.split_faces), "")
 
     def _extract(self, input_mesh, output, output_uv):
         input_data = input_mesh.data
@@ -302,7 +312,6 @@ class IslandUVs(TransferUVs):
     repack_input = False
 
     def __init__(self, faces, bbox, area, mirrored=False):
-        super().__init__(1)
         self.faces = faces
         self.bbox = bbox
         self.area = area
@@ -500,27 +509,19 @@ class AreaUVs(IslandUVs):
                 plan.loop_uvs[k] = old
 
 
-class ProxyUVs(Job):
-    """Cut the original along the unwrapped proxy's seams and unwrap it.
+class ProxyUVs:
+    """Cut the original along the unwrapped proxy's seams and unwrap it."""
 
-    Rides the transfer uvs slot: the engine ran on a decimated copy, so the
-    original is the mesh that needs a uv map and the copy is thrown away.
-    With transfer off the cuts land on a triangulated duplicate instead and
-    the original stays untouched, matching what transfer off means everywhere
-    else. Triangulating before the transfer also gives the snapped seams
-    diagonals to walk. The duplicate is exposed as result so the manager can
-    pack and collect it."""
-
-    def __init__(self, count, transfer):
-        super().__init__(count)
+    def __init__(self, transfer):
         self.repack_input = transfer
-        self.result = None
+        # the duplicate that stands in for the deleted output, transfer off only
+        self.replacement = None
 
     def finish(self, input_mesh, output):
         if not check_exists(input_mesh) or not check_exists(output):
-            return TransferOutcome(False, 0, "input or output object missing")
+            return TransferReport(False, 0, "input or output object missing")
         if output.data.uv_layers.active is None:
-            return TransferOutcome(False, 0, "output mesh has no uv layer")
+            return TransferReport(False, 0, "output mesh has no uv layer")
 
         old_active = bpy.context.view_layer.objects.active
         old_mode = old_active.mode if old_active is not None else "OBJECT"
@@ -542,7 +543,7 @@ class ProxyUVs(Job):
         except FlattenError as error:
             if target is not input_mesh:
                 bpy.data.objects.remove(target, do_unlink=True)
-            return TransferOutcome(False, 0, str(error))
+            return TransferReport(False, 0, str(error))
         finally:
             if (
                 old_active is not None
@@ -561,13 +562,12 @@ class ProxyUVs(Job):
             input_mesh.hide_set(True)
             # named only now: the deleted output held this name until here
             target.name = f"{input_mesh.name}_unwrapped"
-            self.result = target
-        return TransferOutcome(True, 0, "")
+            self.replacement = target
+        return TransferReport(True, 0, "")
 
 
-class Symmetrise(Job):
-    def __init__(self, count, axes, center, overlap):
-        super().__init__(count)
+class Symmetrise:
+    def __init__(self, axes, center, overlap):
         self.x = "X" in axes
         self.y = "Y" in axes
         self.z = "Z" in axes

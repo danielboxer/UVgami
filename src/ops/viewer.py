@@ -189,10 +189,13 @@ class UVGAMI_OT_view_unwrap(bpy.types.Operator):
     bl_label = "View Unwrap"
     bl_description = "Show the unwrap live in the UV editor"
 
-    index: bpy.props.IntProperty()
+    stem: bpy.props.StringProperty()
 
     def execute(self, context):
-        unwrap = manager.active[self.index]
+        unwrap = next((u for u in manager.active if u.path.stem == self.stem), None)
+        if unwrap is None:
+            # the unwrap settled between the panel draw and the click
+            return {"CANCELLED"}
         manager.is_viewer_active = True
         manager.exit_viewer = False
         manager.viewer_done = False

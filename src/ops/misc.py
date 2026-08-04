@@ -32,11 +32,11 @@ class UVGAMI_OT_expand(bpy.types.Operator):
     bl_label = "Expand"
     bl_description = "Expand or collapse joined mesh details"
 
-    index: bpy.props.IntProperty()
+    stem: bpy.props.StringProperty()
 
     def execute(self, context):
-        unwrap = manager.active[self.index]
-        if unwrap.join_job is not None:
+        unwrap = next((u for u in manager.active if u.path.stem == self.stem), None)
+        if unwrap is not None and unwrap.join_job is not None:
             unwrap.join_job.is_expanded = not unwrap.join_job.is_expanded
         return {"FINISHED"}
 

@@ -7,7 +7,15 @@ import bpy
 
 from ..engines import active_engine
 from ..handler import handle_error
-from ..job import HideInput, Join, Preserve, ProxyUVs, Symmetrise, TransferUVs
+from ..job import (
+    HideInput,
+    Join,
+    Preserve,
+    ProxyUVs,
+    Result,
+    Symmetrise,
+    TransferUVs,
+)
 from ..logger import logger
 from ..manager import manager
 from ..progress_bar import progress_bar
@@ -80,9 +88,7 @@ class InputExporter:
         self,
         engine,
         engine_ctx,
-        input_path,
-        names,
-        jobs,
+        piece_unwrap,
         piece_has_uvs,
         separated_objects,
         old_active,
@@ -92,16 +98,13 @@ class InputExporter:
     ):
         self.engine = engine
         self.engine_ctx = engine_ctx
-        self.input_path = input_path
-        self.names = names
-        self.jobs = jobs
+        self.piece_unwrap = piece_unwrap
         self.piece_has_uvs = piece_has_uvs
         self.remaining = deque(separated_objects)
         self.old_active = old_active
         self.old_mode = old_mode
         self.start_objects = start_objects
         self.temp_collection = temp_collection
-        self.added_any = False
 
     def tick(self):
         # exports need object mode, the user may have entered edit mode between ticks
@@ -110,10 +113,9 @@ class InputExporter:
 
         # the session we joined was cancelled mid-export (Cancel All), so drop the
         # remaining pieces instead of exporting into a dead session
-        if self.added_any and not manager.is_active:
+        if self.piece_unwrap and not manager.is_active:
             # release the hold first so a failure below can't wedge the manager
             manager.hold_count -= 1
-            manager.pending_count -= len(self.remaining)
             for obj in self.remaining:
                 bpy.data.objects.remove(obj, do_unlink=True)
             bpy.data.collections.remove(self.temp_collection)
@@ -130,7 +132,7 @@ class InputExporter:
                     # yield to the event loop, resume next pass
                     return 0.0
 
-            self._finish(props)
+            self._finish()
             return None
 
         except Exception as e:
@@ -139,30 +141,25 @@ class InputExporter:
             handle_error(e, "START", objects=self.start_objects)
             bpy.data.collections.remove(self.temp_collection)
             manager.hold_count -= 1
-            # return the pieces that never made it into the session
-            manager.pending_count -= len(self.remaining)
+            # settle the pieces that never got exported so their groups and
+            # the session can still finish
+            for unwrap in self.piece_unwrap.values():
+                if unwrap.result is None and not unwrap.is_exported:
+                    manager.record_result(unwrap, Result.INVALID)
             # if no session owns the bar (nothing added yet), tear it down
             if not manager.is_active:
                 progress_bar.remove()
             return None
 
     def _export_object(self, obj, props):
-        join = self.jobs[obj]["join"]
-        if join is not None and join.cancel_requested:
-            # whole-group cancel: drop the piece instead of exporting it
-            self._skip_piece(obj)
+        unwrap = self.piece_unwrap[obj]
+        if unwrap.result is not None:
+            # cancelled while waiting to export
+            bpy.data.objects.remove(obj, do_unlink=True)
             return
 
-        # consume upfront so a failure below can't double count this piece,
-        # the error path only subtracts what's still in the queue
-        manager.pending_count -= 1
-        unwrap_name = self.names[obj.name][1]
-        path = self.input_path / f"{bpy.path.clean_name(unwrap_name)}.obj"
-        # find a unique name if the path is taken
-        while path.is_file():
-            path = path.parent / (f"{path.stem}1.obj")
-
-        edge_path, new_edges = self._triangulate_mesh(obj, path, props)
+        path = unwrap.path
+        edge_path, new_edges = self._triangulate_mesh(obj, unwrap, path, props)
 
         # relink to the scene so matrix_world is evaluated for the world-space
         # export, all within one tick so no redraw shows the object
@@ -181,19 +178,9 @@ class InputExporter:
             self._get_mesh_metadata(obj)
         )
 
-        unwrap = Unwrap(
-            name=unwrap_name,
-            input_name=self.names[obj.name][0],
-            path=path,
+        unwrap.set_export_data(
             guide_path=guide_path,
             edge_path=edge_path,
-            jobs=(
-                self.jobs[obj]["preserve"],
-                self.jobs[obj]["join"],
-                self.jobs[obj]["hide"],
-                self.jobs[obj]["symmetrize"],
-                self.jobs[obj]["transfer_uvs"],
-            ),
             origin=obj.matrix_world.translation,
             materials=materials,
             added_edges=new_edges,
@@ -201,33 +188,13 @@ class InputExporter:
             material_indices=material_indices,
             vertex_groups=vertex_groups,
             shade_smooth=shade_smooth,
-            maintain_mode=props.maintain_mode,
         )
-        manager.add(unwrap)
-        if not manager.is_active:
-            manager.engine = self.engine
-            manager.engine_ctx = self.engine_ctx
-            manager.start()
-            # start() only counted the queue; include still-pending pieces
-            # in the bar total (the active case was counted in execute)
-            manager.starting_count += manager.pending_count
-        self.added_any = True
 
         bpy.data.objects.remove(obj, do_unlink=True)
 
-    def _skip_piece(self, obj):
-        # release each job so the group's finished runners still satisfy
-        # is_completed() and get imported
-        jobs = [j for j in self.jobs[obj].values() if j is not None]
-        manager.release_jobs(jobs)
-        bpy.data.objects.remove(obj, do_unlink=True)
-        # drop it from the bar denominator
-        manager.pending_count -= 1
-        manager.starting_count -= 1
-
-    def _finish(self, props):
-        # pieces were added as they exported; only start here if none were
-        # (e.g. every piece had zero polygons)
+    def _finish(self):
+        # a session with no valid pieces never started in _separate; start it
+        # anyway so the empty run still finishes and reports
         if not manager.is_active:
             manager.engine = self.engine
             manager.engine_ctx = self.engine_ctx
@@ -237,7 +204,7 @@ class InputExporter:
         bpy.data.collections.remove(self.temp_collection)
         manager.hold_count -= 1
 
-    def _triangulate_mesh(self, obj, path, props):
+    def _triangulate_mesh(self, obj, unwrap, path, props):
         """Triangulate the mesh if needed, tracking added edges for untriangulation."""
         new_edges = []
         bm = new_bmesh(obj)
@@ -266,7 +233,7 @@ class InputExporter:
         edge_path = None
         if must_triangulate:
             if untriangulate:
-                self.jobs[obj]["preserve"] = Preserve(1)
+                unwrap.preserve_job = Preserve()
                 old_edges = set(bm.edges)
 
             triangulate(bm)
@@ -359,12 +326,12 @@ class InputExporter:
         return materials, material_indices, vertex_groups, shade_smooth
 
 
-def input_job(props, count):
+def input_job(props):
     """The job that finishes an unwrap against the original input mesh."""
     if props.use_proxy:
-        return ProxyUVs(count, props.transfer_uvs)
+        return ProxyUVs(props.transfer_uvs)
     if props.transfer_uvs:
-        return TransferUVs(count)
+        return TransferUVs()
     return None
 
 
@@ -396,8 +363,8 @@ class SessionBuilder:
         self.old_mode = old_mode
         self.start_objects = start_objects
         self.temp_collection = temp_collection
-        self.jobs = {}
         self.separated_objects = []
+        self.piece_unwrap = {}
         self.piece_has_uvs = {}
         self.pending = None
 
@@ -414,11 +381,11 @@ class SessionBuilder:
             if check_exists(self.temp_collection):
                 bpy.data.collections.remove(self.temp_collection)
             manager.hold_count -= 1
-            # pieces already counted but never handed to the exporter
-            manager.pending_count -= len(self.separated_objects)
-            if manager.is_active:
-                manager.starting_count -= len(self.separated_objects)
-            else:
+            # settle the pieces already added, none of them exported yet
+            for unwrap in self.piece_unwrap.values():
+                if unwrap.result is None:
+                    manager.record_result(unwrap, Result.INVALID)
+            if not manager.is_active:
                 progress_bar.remove()
             return None
 
@@ -469,6 +436,41 @@ class SessionBuilder:
         self.pending = (thread, box, apply, obj, index, symmetrize_job)
         return 0.1
 
+    def _input_jobs(self, props, index):
+        """The hide or transfer job that finishes against the input mesh."""
+        transfer_uvs_job = input_job(props)
+        hide_job = None
+        if transfer_uvs_job is not None:
+            manager.input[transfer_uvs_job] = self.input_objs[index]
+        else:
+            # the hide job can come after join because it doesn't depend
+            # on the unwrapped objects
+            hide_job = HideInput()
+            manager.input[hide_job] = self.input_objs[index]
+        return hide_job, transfer_uvs_job
+
+    def _add_piece(self, obj, input_name, piece_name, jobs, has_uvs, props):
+        """Create the piece's session record before its input file exists, so
+        cancels and the queue ui see the whole session upfront."""
+        path = self.input_path / f"{bpy.path.clean_name(piece_name)}.obj"
+        # names can repeat across pieces and session extends, and the output
+        # file is keyed by stem, so claim a stem no other unwrap holds
+        claimed = {u.path for u in manager.active}
+        claimed.update(u.path for u, _ in manager.results)
+        while path.is_file() or path in claimed:
+            path = path.parent / f"{path.stem}1.obj"
+
+        unwrap = Unwrap(
+            name=piece_name,
+            input_name=input_name,
+            path=path,
+            jobs=jobs,
+            maintain_mode=props.maintain_mode,
+        )
+        self.piece_unwrap[obj] = unwrap
+        self.piece_has_uvs[obj] = self.engine.piece_uses_uvs(obj, props, has_uvs)
+        manager.add(unwrap)
+
     def _separate(self, obj, index, has_uvs, symmetrize_job):
         props = bpy.context.scene.uvgami
         # relink for the ops selection, all within one tick so nothing shows
@@ -483,68 +485,31 @@ class SessionBuilder:
         added = []
         if len(s) > 1:
             unwrap_name = self.names[obj.name][0]
-            join_job = Join(len(s))
-            hide_job = None
-            transfer_uvs_job = input_job(props, len(s))
-
-            if transfer_uvs_job is not None:
-                manager.input[transfer_uvs_job] = self.input_objs[index]
-            else:
-                # the hide job can come after join because it doesn't depend
-                # on the unwrapped objects
-                # the count is > 1 because all the separated objs need to
-                # finish before hiding the original
-                hide_job = HideInput(len(s))
-                manager.input[hide_job] = self.input_objs[index]
-
-            for obj_idx, o in enumerate(s):
+            valid = []
+            for o in s:
                 # check for 0 polygons again
                 if len(o.data.polygons) == 0:
-                    join_job.count -= 1
-                    if hide_job is not None:
-                        hide_job.count -= 1
-                    if transfer_uvs_job is not None:
-                        transfer_uvs_job.count -= 1
                     collection = check_collection(
                         "UVgami Not Unwrapped", bpy.context.scene.collection
                     )
                     move_to_collection(o, collection)
                     o.name = f"{unwrap_name}: No Polygons"
                 else:
-                    # add ids to separated objects
-                    self.jobs[o] = {
-                        "join": join_job,
-                        "preserve": None,
-                        "hide": hide_job,
-                        "symmetrize": symmetrize_job,
-                        "transfer_uvs": transfer_uvs_job,
-                    }
-                    self.piece_has_uvs[o] = self.engine.piece_uses_uvs(
-                        o, props, has_uvs
-                    )
-                    added.append(o)
-                    self.names[o.name] = [
-                        unwrap_name,
-                        f"{unwrap_name}_{obj_idx + 1}",
-                    ]
+                    valid.append(o)
+
+            join_job = Join(len(valid))
+            hide_job, transfer_uvs_job = self._input_jobs(props, index)
+            for obj_idx, o in enumerate(valid):
+                jobs = (None, join_job, hide_job, symmetrize_job, transfer_uvs_job)
+                piece_name = f"{unwrap_name}_{obj_idx + 1}"
+                self._add_piece(o, unwrap_name, piece_name, jobs, has_uvs, props)
+                added.append(o)
         else:
             # object didn't need to be separated
-            self.jobs[obj] = {
-                "join": None,
-                "preserve": None,
-                "hide": None,
-                "symmetrize": symmetrize_job,
-                "transfer_uvs": None,
-            }
-            transfer_uvs_job = input_job(props, 1)
-            if transfer_uvs_job is not None:
-                self.jobs[obj]["transfer_uvs"] = transfer_uvs_job
-                manager.input[transfer_uvs_job] = self.input_objs[index]
-            else:
-                hide_job = HideInput(1)
-                self.jobs[obj]["hide"] = hide_job
-                manager.input[hide_job] = self.input_objs[index]
-            self.piece_has_uvs[obj] = self.engine.piece_uses_uvs(obj, props, has_uvs)
+            unwrap_name = self.names[obj.name][0]
+            hide_job, transfer_uvs_job = self._input_jobs(props, index)
+            jobs = (None, None, hide_job, symmetrize_job, transfer_uvs_job)
+            self._add_piece(obj, unwrap_name, unwrap_name, jobs, has_uvs, props)
             added.append(obj)
 
         deselect_all()
@@ -553,19 +518,19 @@ class SessionBuilder:
             for coll in piece.users_collection:
                 coll.objects.unlink(piece)
             self.temp_collection.objects.link(piece)
-        # count pieces into the bar as they become known, so the finished
-        # ratio doesn't shrink as pieces get added
-        manager.pending_count += len(added)
-        if manager.is_active:
-            manager.starting_count += len(added)
+
+        # the pieces are queued, start the session so the bar and the queue ui
+        # track them while the export catches up
+        if added and not manager.is_active:
+            manager.engine = self.engine
+            manager.engine_ctx = self.engine_ctx
+            manager.start()
 
     def _finish(self):
         exporter = InputExporter(
             engine=self.engine,
             engine_ctx=self.engine_ctx,
-            input_path=self.input_path,
-            names=self.names,
-            jobs=self.jobs,
+            piece_unwrap=self.piece_unwrap,
             piece_has_uvs=self.piece_has_uvs,
             separated_objects=self.separated_objects,
             old_active=self.old_active,
