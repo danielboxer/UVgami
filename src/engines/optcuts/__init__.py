@@ -285,6 +285,7 @@ class OptcutsEngine(BinaryEngine):
             110: ("Area UVs Too Broken To Pin", True),
             111: ("Island UVs Too Broken To Combine", True),
             113: ("Invalid Coordinates", True),
+            114: ("Island UVs Too Broken To Relax", True),
             # 90 (the engine's terminate handler) stays unmapped on purpose:
             # the unknown-code path surfaces the fatal line from stderr
         }.get(code) or super().describe_failure(code)

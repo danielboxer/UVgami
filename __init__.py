@@ -34,6 +34,7 @@ from .src.ops.island import (
     UVGAMI_OT_relax_area,
     UVGAMI_OT_combine_islands,
     UVGAMI_OT_unwrap_island,
+    UVGAMI_OT_relax_island,
 )
 from .src.ops.misc import (
     UVGAMI_OT_expand,
@@ -89,6 +90,7 @@ classes = (
     UVGAMI_OT_clear_draw,
     UVGAMI_OT_pack,
     UVGAMI_OT_unwrap_island,
+    UVGAMI_OT_relax_island,
     UVGAMI_OT_combine_islands,
     UVGAMI_OT_unwrap_area,
     UVGAMI_OT_relax_area,

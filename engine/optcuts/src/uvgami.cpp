@@ -981,6 +981,32 @@ int main(int argc, char *argv[]) {
                                  pathSeparator() + meshName + "_stitch";
     stitchMode = std::ifstream(stitchFileName).is_open();
 
+    // pinned uvs: <mesh>_fixed lists comma-separated 0-based uv vertex
+    // indices to hold in place while the rest reshapes and cuts. only valid
+    // when the input map is kept, a redone layout has nothing to pin to,
+    // and the check comes before the cut-to-disk fallback so pinned runs
+    // fail with this reason instead of a cutting error. read before the keep
+    // decision because nocut relaxes the disk requirement like stitch does
+    std::set<int> fixedVerts;
+    std::string fixedFileName = std::string(inputFolderPath.u8string()) +
+                                pathSeparator() + meshName + "_fixed";
+    std::ifstream fixedFile(fixedFileName);
+    if (fixedFile.is_open()) {
+        std::string line;
+        getline(fixedFile, line);
+        for (float token : split(line, ','))
+            fixedVerts.insert((int)token);
+        // optional second line "nocut" keeps the map's topology untouched.
+        // an empty pin line is valid: a whole-island relax holds nothing
+        if (getline(fixedFile, line)) {
+            while (!line.empty() &&
+                   (line.back() == '\r' || line.back() == '\n'))
+                line.pop_back();
+            noCutMode = line == "nocut";
+        }
+        fixedFile.close();
+    }
+
     // an input UV chart is kept when it is already a valid flattening: no
     // flipped or overlapping triangles, and disk topology. the rest are cut to
     // disks below and re-laid out, which keeps the input seams and adds only
@@ -1043,9 +1069,10 @@ int main(int argc, char *argv[]) {
         // a stitch run can keep charts with holes: an interior split the
         // engine never merged back leaves a slit, and the machinery is
         // hole-safe. a pinched boundary is not, the scaffold's corner air
-        // loop cannot represent it, so those still re-cut
-        bool stitchKeepable = stitchMode;
-        if (stitchMode && !allDisks) {
+        // loop cannot represent it, so those still re-cut. a nocut run never
+        // queries topology either, so it rides the same exception
+        bool stitchKeepable = stitchMode || noCutMode;
+        if (stitchKeepable && !allDisks) {
             std::map<std::pair<int, int>, int> edgeCount;
             for (int triI = 0; triI < temp.F.rows(); ++triI) {
                 for (int i = 0; i < 3; ++i) {
@@ -1111,29 +1138,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // pinned uvs: <mesh>_fixed lists comma-separated 0-based uv vertex
-    // indices to hold in place while the rest reshapes and cuts. only valid
-    // when the input map is kept, a redone layout has nothing to pin to,
-    // and the check comes before the cut-to-disk fallback so pinned runs
-    // fail with this reason instead of a cutting error
-    std::set<int> fixedVerts;
-    std::string fixedFileName = std::string(inputFolderPath.u8string()) +
-                                pathSeparator() + meshName + "_fixed";
-    std::ifstream fixedFile(fixedFileName);
-    if (fixedFile.is_open()) {
-        std::string line;
-        getline(fixedFile, line);
-        for (float token : split(line, ','))
-            fixedVerts.insert((int)token);
-        // optional second line "nocut" keeps the map's topology untouched
-        if (getline(fixedFile, line)) {
-            while (!line.empty() &&
-                   (line.back() == '\r' || line.back() == '\n'))
-                line.pop_back();
-            noCutMode = !fixedVerts.empty() && line == "nocut";
-        }
-        fixedFile.close();
-    }
     if (!fixedVerts.empty() && !keepInputUV) {
         std::cerr << "pinned vertices need the input UV map kept" << std::endl;
         return UVGAMI_RC_PINNED_UV_NOT_KEPT;
@@ -1142,6 +1146,10 @@ int main(int argc, char *argv[]) {
     if (stitchMode && !keepInputUV) {
         std::cerr << "stitching needs the input UV map kept" << std::endl;
         return UVGAMI_RC_STITCH_UV_NOT_KEPT;
+    }
+    if (noCutMode && !keepInputUV) {
+        std::cerr << "nocut needs the input UV map kept" << std::endl;
+        return UVGAMI_RC_NOCUT_UV_NOT_KEPT;
     }
     if (!fixedVerts.empty()) {
         // the distortion energy is scale-sensitive and pins block the global
