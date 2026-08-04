@@ -27,7 +27,9 @@ else()
 endif()
 
 # package the exe into a zip. the ci passes -DCPACK_GENERATOR=ZIP and
-# -DCPACK_PACKAGE_FILE_NAME; bundle-engines.sh finds the binary by name.
+# -DCPACK_PACKAGE_FILE_NAME; the addon finds the binary in the zip by name.
 install(TARGETS xatlas RUNTIME DESTINATION .)
+# the engine zip is the only distribution of the binary, so the notice ships here
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE DESTINATION . RENAME LICENSE.txt)
 set(CPACK_PACKAGE_NAME xatlas)
 include(CPack)

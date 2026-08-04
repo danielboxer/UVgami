@@ -109,7 +109,7 @@ def unwrap_all(pairs, unwrap_one):
 
 
 def find_engine(name, label, explicit_path):
-    """Locate an engine binary: the explicit path if given, else the bundled one."""
+    """Locate an engine binary: the explicit path if given, else the local build."""
     if explicit_path is not None:
         path = Path(explicit_path)
         if not path.is_file():
@@ -132,7 +132,7 @@ def find_engine(name, label, explicit_path):
     if not path.is_file():
         raise UnwrapError(
             EXIT_MISSING_RUNTIME,
-            f"bundled {label} binary not found: {path} (pass --{name}-path)",
+            f"local {label} binary not found: {path} (pass --{name}-path)",
         )
     return path
 

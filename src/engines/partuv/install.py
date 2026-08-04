@@ -3,13 +3,13 @@ import platform
 import shutil
 import subprocess
 import tarfile
-import threading
 import urllib.request
 import zipfile
 
 import bpy
 
 from ...utils.download import download_file
+from ..install_task import InstallTask, report_progress, task_state
 from .paths import (
     get_partuv_checkpoint_path,
     get_partuv_venv_path,
@@ -38,19 +38,23 @@ UV_ARCHIVES = {
     "Linux": "uv-x86_64-unknown-linux-gnu.tar.gz",
 }
 
-# written by the install or uninstall thread, read by the preferences ui
-task_state = {
-    "running": False,
-    "error": None,
-    "phase": "",
-    "bytes_done": 0,
-    "bytes_total": None,
-}
+
+def get_installed_partuv_version():
+    """Version of the wheel in the venv, read from its dist-info, or None."""
+    venv = get_partuv_venv_path()
+    if platform.system() == "Windows":
+        site = venv / "Lib" / "site-packages"
+    else:
+        site = venv / "lib" / f"python{VENV_PYTHON}" / "site-packages"
+    info = next(site.glob("partuv-*.dist-info"), None)
+    if info is None:
+        return None
+    return info.name[len("partuv-") : -len(".dist-info")]
 
 
-def _report_progress(done, total):
-    task_state["bytes_done"] = done
-    task_state["bytes_total"] = total
+def partuv_update_pending():
+    version = get_installed_partuv_version()
+    return version is not None and version != PARTUV_VERSION
 
 
 def find_wheel_url():
@@ -95,7 +99,7 @@ def ensure_uv():
     uv.parent.mkdir(parents=True, exist_ok=True)
     tmp = uv.parent / archive_name
     task_state["phase"] = "Downloading uv"
-    download_file(url, tmp, progress=_report_progress)
+    download_file(url, tmp, progress=report_progress)
     # the archives nest the binary in a per-target folder, extract just uv
     if archive_name.endswith(".zip"):
         with zipfile.ZipFile(tmp) as archive:
@@ -147,7 +151,7 @@ def download_checkpoint():
         return
     target.parent.mkdir(parents=True, exist_ok=True)
     task_state["phase"] = "Downloading AI checkpoint"
-    download_file(CHECKPOINT_URL, target, progress=_report_progress)
+    download_file(CHECKPOINT_URL, target, progress=report_progress)
 
 
 def install_partuv(ai):
@@ -167,80 +171,29 @@ def uninstall_partuv():
         shutil.rmtree(uv_dir)
 
 
-def _run_task(task):
-    try:
-        task()
-    except Exception as error:
-        task_state["error"] = str(error)
-    finally:
-        task_state["running"] = False
+class PartuvTask(InstallTask):
+    owner = "partuv"
 
-
-class PartuvTask:
-    """Runs an install or uninstall on a thread, with a modal that redraws the
-    preferences while it works. Subclasses return the work as a callable."""
-
-    done_message = ""
-
-    def build_task(self):
-        raise NotImplementedError
-
-    def execute(self, context):
-        if task_state["running"]:
-            self.report({"WARNING"}, "A PartUV install or delete is already running")
-            return {"CANCELLED"}
+    def precheck(self):
         if platform.system() not in PARTUV_PLATFORMS:
-            self.report({"ERROR"}, "PartUV is only available on Windows and Linux")
-            return {"CANCELLED"}
-
-        task_state["running"] = True
-        task_state["error"] = None
-        task_state["phase"] = ""
-        task_state["bytes_done"] = 0
-        task_state["bytes_total"] = None
-        # built here so the thread never reads operator properties
-        threading.Thread(
-            target=_run_task, args=(self.build_task(),), daemon=True
-        ).start()
-
-        self._timer = context.window_manager.event_timer_add(0.5, window=context.window)
-        context.window_manager.modal_handler_add(self)
-        return {"RUNNING_MODAL"}
-
-    def modal(self, context, event):
-        if event.type != "TIMER":
-            return {"PASS_THROUGH"}
-        if task_state["running"]:
-            # preferences can live in its own window, redraw them all so the bar animates
-            for window in context.window_manager.windows:
-                for area in window.screen.areas:
-                    if area.type == "PREFERENCES":
-                        area.tag_redraw()
-            return {"PASS_THROUGH"}
-        context.window_manager.event_timer_remove(self._timer)
-        for area in context.screen.areas:
-            area.tag_redraw()
-        if task_state["error"] is not None:
-            self.report({"ERROR"}, f"{self.bl_label} failed: {task_state['error']}")
-            return {"CANCELLED"}
-        self.report({"INFO"}, self.done_message)
-        return {"FINISHED"}
+            return "PartUV is only available on Windows and Linux"
+        return None
 
 
 class UVGAMI_OT_install_partuv(PartuvTask, bpy.types.Operator):
     bl_idname = "uvgami.install_partuv"
-    bl_label = "Install PartUV Engine"
-    done_message = "PartUV engine installed"
+    bl_label = "Download PartUV Engine"
+    done_message = "PartUV engine downloaded"
 
     @classmethod
     def description(cls, context, properties):
         if properties.tier == "AI":
             return (
-                "Install PartUV with AI segmentation, ~5 GB. Includes geometric."
+                "Download PartUV with AI segmentation, ~5 GB. Includes geometric."
                 " Needs an NVIDIA GPU"
             )
         return (
-            "Install PartUV with geometric segmentation only, a much smaller"
+            "Download PartUV with geometric segmentation only, a much smaller"
             " download. Needs an NVIDIA GPU"
         )
 

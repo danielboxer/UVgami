@@ -1,0 +1,49 @@
+name: Check engine version sync
+
+# the addon pins each engine version for its release download url. this fails
+# the build if a pin and that engine's VERSION ever disagree.
+on:
+  pull_request:
+    paths:
+      - engine/optcuts/VERSION
+      - engine/xatlas/VERSION
+      - src/engines/optcuts/install.py
+      - src/engines/xatlas.py
+  push:
+    branches:
+      - master
+    paths:
+      - engine/optcuts/VERSION
+      - engine/xatlas/VERSION
+      - src/engines/optcuts/install.py
+      - src/engines/xatlas.py
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - engine: optcuts
+            constant: OPTCUTS_VERSION
+            file: src/engines/optcuts/install.py
+          - engine: xatlas
+            constant: XATLAS_VERSION
+            file: src/engines/xatlas.py
+    steps:
+      - uses: actions/checkout@v6
+      - name: Compare ${{ matrix.engine }} versions
+        shell: bash
+        env:
+          ENGINE: ${{ matrix.engine }}
+          CONSTANT: ${{ matrix.constant }}
+          FILE: ${{ matrix.file }}
+        run: |
+          engine=$(tr -d '[:space:]' < engine/$ENGINE/VERSION)
+          addon=$(grep -m1 "^$CONSTANT" "$FILE" | sed -E 's/.*"(.*)"/\1/')
+          echo "VERSION: $engine"
+          echo "$FILE: $addon"
+          if [ "$engine" != "$addon" ]; then
+            echo "::error::$CONSTANT ($addon) != engine version ($engine). Update $FILE to match."
+            exit 1
+          fi

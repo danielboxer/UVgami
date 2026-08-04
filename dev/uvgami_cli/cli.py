@@ -41,7 +41,9 @@ def _add_optcuts_args(group):
         choices=range(1, 6),
         help="seam weight level, default: 3",
     )
-    group.add_argument("--optcuts-path", type=Path, help="default: bundled binary")
+    group.add_argument(
+        "--optcuts-path", type=Path, help="default: local engines/ binary"
+    )
     group.add_argument(
         "--timeout", type=float, help="kill the engine after this many seconds per mesh"
     )
@@ -92,7 +94,9 @@ def _add_xatlas_args(group):
         type=float,
         help="chart growth cost ceiling, lower means more charts, default: 2.0",
     )
-    group.add_argument("--xatlas-path", type=Path, help="default: bundled binary")
+    group.add_argument(
+        "--xatlas-path", type=Path, help="default: local engines/ binary"
+    )
 
 
 XATLAS_FLAGS = {"--max-cost": "max_cost", "--xatlas-path": "xatlas_path"}

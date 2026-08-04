@@ -76,46 +76,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Download built optcuts
-        if: needs.optcuts.outputs.built == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          pattern: optcuts-*
-          merge-multiple: true
-
-      - name: Download built xatlas
-        if: needs.xatlas.outputs.built == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          pattern: xatlas-*
-          merge-multiple: true
-
-      - name: Download released optcuts
-        if: needs.optcuts.outputs.built != 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          ENGINE_VERSION=$(cat engine/optcuts/VERSION | tr -d '[:space:]')
-          gh release download "optcuts-v$ENGINE_VERSION" -p "optcuts-engine-*.zip"
-
-      - name: Download released xatlas
-        if: needs.xatlas.outputs.built != 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          ENGINE_VERSION=$(cat engine/xatlas/VERSION | tr -d '[:space:]')
-          gh release download "xatlas-v$ENGINE_VERSION" -p "xatlas-engine-*.zip"
-
-      - name: Move to nested folder
-        run: |
-          mkdir $ADDON_NAME
-          mv $INCLUDED_FILES $ADDON_NAME
-
-      - name: Bundle engines and zip
-        run: |
-          bash .github/scripts/bundle-engines.sh $ADDON_NAME optcuts-engine
-          bash .github/scripts/bundle-engines.sh $ADDON_NAME xatlas-engine
-          zip -r ${ADDON_NAME}.zip $ADDON_NAME
+      # no engine is bundled, the addon downloads each one from the engine
+      # release that the jobs above publish
+      - name: Zip the addon
+        run: zip -r ${ADDON_NAME}.zip $INCLUDED_FILES
 
       - name: Determine TAG
         run: echo "TAG=${{ needs.prepare.outputs.tag }}" >> $GITHUB_ENV

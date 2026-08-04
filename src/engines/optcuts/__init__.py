@@ -1,20 +1,19 @@
 import math
-import pathlib
 
 import bpy
 
-from . import Engine
-from ..hard_surface import (
+from ...hard_surface import (
     auto_hard_faces,
     build_seam_uvs,
     preseed_work,
     seam_restrictions,
 )
-from ..seams import FlattenError
-from ..utils.io import print_stdin
-from ..utils.mesh import deselect_all, validate_obj
-from ..utils.paths import get_bundled_engine_path
-from ..utils.ui import only_active
+from ...seams import FlattenError
+from ...utils.io import print_stdin
+from ...utils.mesh import deselect_all, validate_obj
+from ...utils.ui import only_active
+from ..binary_engine import BinaryEngine
+from .install import OPTCUTS, UVGAMI_OT_install_optcuts
 
 
 class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
@@ -143,7 +142,10 @@ class UVGAMI_PT_hard_surface(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        return context.scene.uvgami.engine == "OPTCUTS"
+        # imported here: engines imports this module back
+        from .. import active_engine
+
+        return active_engine(context.scene.uvgami.engine) is ENGINE
 
     def draw_header(self, context):
         self.layout.prop(context.scene.uvgami.optcuts, "use_hard_surface")
@@ -174,38 +176,28 @@ class UVGAMI_PT_hard_surface(bpy.types.Panel):
         row.operator("uvgami.preview_seams", icon="UV_EDGESEL")
 
 
-class OptcutsEngine(Engine):
+class OptcutsEngine(BinaryEngine):
     id = "OPTCUTS"
     label = "Optcuts"
-    description = "Default CPU engine. Least stretching and islands, but slow"
+    description = (
+        "Default CPU engine. Highest quality but can be slow."
+        " Includes the UV island operators"
+    )
     icon = "UV"
     property_group = UVGAMI_PG_optcuts
-    classes = (UVGAMI_PG_optcuts, UVGAMI_OT_preview_seams, UVGAMI_PT_hard_surface)
+    classes = (
+        UVGAMI_PG_optcuts,
+        UVGAMI_OT_install_optcuts,
+        UVGAMI_OT_preview_seams,
+        UVGAMI_PT_hard_surface,
+    )
     supports_guided = True
     supports_viewer = True
     supports_early_stop = True
     supports_preserve = True
     supports_import_uvs = True
-
-    def validate(self, prefs):
-        raw = pathlib.Path(prefs.engine_path)
-        if str(raw) == ".":
-            # try bundled engine as fallback
-            bundled = get_bundled_engine_path("optcuts")
-            if bundled is None:
-                return (
-                    None,
-                    "Engine path is not set. Set the path in the add-on preferences",
-                )
-            path = bundled
-        else:
-            if not raw.is_file():
-                return None, "Engine path doesn't exist"
-            if raw.stem != "optcuts":
-                return None, "Engine path is incorrect"
-            path = raw
-
-        return path, None
+    release = OPTCUTS
+    uses_engine_path = True
 
     def draw_settings(self, layout, props):
         row = layout.row()
@@ -273,23 +265,6 @@ class OptcutsEngine(Engine):
         if not props.optcuts.is_auto or props.import_uvs:
             return has_uvs
         return has_uvs and any(e.use_seam for e in obj.data.edges)
-
-    def draw_prefs(self, layout, prefs):
-        row = layout.row()
-        _, error = self.validate(prefs)
-        if error is not None:
-            row.label(text=error, icon="ERROR")
-        elif str(pathlib.Path(prefs.engine_path)) == ".":
-            row.label(text="Using the bundled engine", icon="CHECKMARK")
-        else:
-            row.label(text="Using the engine path below", icon="CHECKMARK")
-
-        row = layout.row()
-        row.scale_y = 1.5
-        split = row.split(factor=0.2)
-        split.scale_x = 1.5
-        split.label(text="Engine Path")
-        split.prop(prefs, "engine_path")
 
     def build_args(self, ctx, input_path, props):
         u = {"HIGH": "4.05", "MEDIUM": "4.1"}.get(props.optcuts.quality, "4.2")

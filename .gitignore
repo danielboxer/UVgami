@@ -14,6 +14,9 @@ output/
 # bundled engine binaries
 /engines/
 
+# local test builds from dev/build.ps1
+/dist/
+
 # benchmark artifacts. every model is committed
 dev/bench/out/
 dev/bench/results.csv

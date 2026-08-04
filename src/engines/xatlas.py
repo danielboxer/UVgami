@@ -1,8 +1,21 @@
 import bpy
 
-from . import Engine
-from ..utils.paths import get_bundled_engine_path, get_extension_dir_path
+from ..utils.paths import get_extension_dir_path
 from ..utils.ui import only_active
+from .binary_engine import BinaryEngine, EngineRelease, InstallEngineTask
+
+# must match engine/xatlas/VERSION (check-engine-versions.yml fails on drift)
+XATLAS_VERSION = "0.2.0"
+XATLAS = EngineRelease("xatlas", "xatlas", XATLAS_VERSION)
+
+
+class UVGAMI_OT_install_xatlas(InstallEngineTask, bpy.types.Operator):
+    bl_idname = "uvgami.install_xatlas"
+    bl_label = "Download xatlas Engine"
+    bl_description = "Download the xatlas engine"
+    done_message = "xatlas engine downloaded"
+    owner = "xatlas"
+    release = XATLAS
 
 
 class UVGAMI_PG_xatlas(bpy.types.PropertyGroup):
@@ -16,21 +29,15 @@ class UVGAMI_PG_xatlas(bpy.types.PropertyGroup):
     )
 
 
-class XatlasEngine(Engine):
+class XatlasEngine(BinaryEngine):
     id = "XATLAS"
     label = "xatlas"
     description = "Fast CPU engine for baking lightmaps and texture painting"
     icon = "MESH_GRID"
     property_group = UVGAMI_PG_xatlas
-    classes = (UVGAMI_PG_xatlas,)
+    classes = (UVGAMI_PG_xatlas, UVGAMI_OT_install_xatlas)
+    release = XATLAS
     # xatlas packs its own atlas, so it never needs forced packing
-
-    def validate(self, prefs):
-        # ignores prefs.engine_path, that setting is optcuts-only
-        bundled = get_bundled_engine_path("xatlas")
-        if bundled is None:
-            return None, "Bundled xatlas engine is missing"
-        return bundled, None
 
     def draw_settings(self, layout, props):
         row = layout.row()
@@ -49,14 +56,6 @@ class XatlasEngine(Engine):
                 ),
             )
         )
-
-    def draw_prefs(self, layout, prefs):
-        row = layout.row()
-        _, error = self.validate(prefs)
-        if error is not None:
-            row.label(text=error, icon="ERROR")
-        else:
-            row.label(text="Using the bundled engine", icon="CHECKMARK")
 
     def build_args(self, ctx, input_path, props):
         output_path = get_extension_dir_path() / "output" / f"{input_path.stem}.obj"

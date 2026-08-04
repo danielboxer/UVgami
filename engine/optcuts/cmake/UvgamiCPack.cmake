@@ -49,5 +49,26 @@ if(EXISTS "${CMAKE_ROOT}/Modules/CPack.cmake")
     COMPONENT Metadata
     EXCLUDE_FROM_ALL
   )
+
+  install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/licenses/Triangle-LICENSE.txt
+    ${CMAKE_CURRENT_SOURCE_DIR}/licenses/oneTBB-LICENSE-Apache2.txt
+    ${CMAKE_CURRENT_SOURCE_DIR}/licenses/mimalloc-LICENSE-MIT.txt
+    DESTINATION licenses
+    COMPONENT Metadata
+    EXCLUDE_FROM_ALL
+  )
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../LICENSE
+    DESTINATION licenses RENAME GPL-3.0.txt
+    COMPONENT Metadata EXCLUDE_FROM_ALL
+  )
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/ext/libigl/LICENSE.MPL2
+    DESTINATION licenses RENAME libigl-LICENSE-MPL2.txt
+    COMPONENT Metadata EXCLUDE_FROM_ALL
+  )
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/include/tclap/COPYING
+    DESTINATION licenses RENAME tclap-LICENSE-MIT.txt
+    COMPONENT Metadata EXCLUDE_FROM_ALL
+  )
   include(CPack)
 endiF(EXISTS "${CMAKE_ROOT}/Modules/CPack.cmake")
