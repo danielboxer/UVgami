@@ -8,7 +8,6 @@ from ..manager import manager
 from ..seams import (
     REPAIR_ITERATIONS,
     face_edges,
-    island_layout,
     pair,
     signed_area,
     uv_island_groups,
@@ -159,79 +158,6 @@ def islands_connected(mesh, targets):
                 if j != i:
                     parent[find(i)] = find(j)
     return len({find(i) for i in range(len(targets))}) == 1
-
-
-def queue_combine(obj, targets, input_path, props):
-    """Export the selected islands as one mesh with their uvs and a _stitch
-    sidecar, and queue it with an IslandUVs job over all their faces so the
-    merged result comes back into the islands' combined uv bounds."""
-    mesh = obj.data
-    layer = mesh.uv_layers.active
-    faces = [fi for group, _, _ in targets for fi in group]
-    used = sorted({v for fi in faces for v in mesh.polygons[fi].vertices})
-    local = {v: i for i, v in enumerate(used)}
-    combine_mesh = bpy.data.meshes.new("uvgami_combine")
-    combine_mesh.from_pydata(
-        [mesh.vertices[v].co.copy() for v in used],
-        [],
-        [[local[v] for v in mesh.polygons[fi].vertices] for fi in faces],
-    )
-    uv = combine_mesh.uv_layers.new()
-    # optcuts treats a mirrored island as inverted and overlapping islands as
-    # self-intersecting, and stitch mode forbids both, so export a mirrored-
-    # back side-by-side layout. the result comes back into the combined bbox
-    areas = []
-    for group, _, _ in targets:
-        total = 0.0
-        for fi in group:
-            poly = mesh.polygons[fi]
-            pts = [
-                tuple(layer.uv[poly.loop_start + c].vector)
-                for c in range(poly.loop_total)
-            ]
-            total += signed_area(pts)
-        areas.append(total)
-    layout = island_layout([b for _, b, _ in targets], areas)
-    transform = {fi: t for (group, _, _), t in zip(targets, layout) for fi in group}
-    loop = 0
-    for fi in faces:
-        poly = mesh.polygons[fi]
-        flip, du, dv = transform[fi]
-        for c in range(poly.loop_total):
-            u, v = layer.uv[poly.loop_start + c].vector
-            if flip is not None:
-                u = flip - u
-            uv.uv[loop].vector = (u + du, v + dv)
-            loop += 1
-    temp = bpy.data.objects.new("uvgami_combine", combine_mesh)
-    bpy.context.scene.collection.objects.link(temp)
-    temp.matrix_world = obj.matrix_world.copy()
-
-    bm = new_bmesh(temp)
-    if any(len(f.verts) > 3 for f in bm.faces):
-        triangulate(bm)
-        set_bmesh(bm, temp)
-    else:
-        bm.free()
-
-    name = f"{obj.name}_combine"
-    path = input_path / f"{bpy.path.clean_name(name)}.obj"
-    while path.is_file():
-        path = path.parent / f"{path.stem}1.obj"
-    export_obj(temp, path, True)
-    (path.parent / f"{path.stem}_stitch").touch()
-    vertex_count = len(temp.data.vertices)
-    bpy.data.objects.remove(temp, do_unlink=True)
-    bpy.data.meshes.remove(combine_mesh)
-
-    bbox = (
-        min(b[0] for _, b, _ in targets),
-        min(b[1] for _, b, _ in targets),
-        max(b[2] for _, b, _ in targets),
-        max(b[3] for _, b, _ in targets),
-    )
-    area = sum(a for _, _, a in targets)
-    queue_fix(obj, IslandUVs(faces, bbox, area), name, path, vertex_count, props)
 
 
 def target_areas(obj, rings):
@@ -549,7 +475,8 @@ class UVGAMI_OT_combine_islands(bpy.types.Operator):
     bl_idname = "uvgami.combine_islands"
     bl_label = "Combine Islands"
     bl_description = (
-        "Select a face on two islands to merge them. The islands have to share a seam"
+        "Select a face on two islands to unwrap them as one."
+        " The islands have to share a seam"
     )
     bl_options = {"UNDO"}
 
@@ -579,8 +506,19 @@ class UVGAMI_OT_combine_islands(bpy.types.Operator):
                 )
                 return {"CANCELLED"}
 
+            # a fresh unwrap of the union merges regardless of how the
+            # islands' seam shapes differ, unlike stitching them
+            group = sorted({fi for g, _, _ in targets for fi in g})
+            bbox = (
+                min(b[0] for _, b, _ in targets),
+                min(b[1] for _, b, _ in targets),
+                max(b[2] for _, b, _ in targets),
+                max(b[3] for _, b, _ in targets),
+            )
+            area = sum(a for _, _, a in targets)
+
             def queue_one(k, input_path):
-                queue_combine(obj, targets, input_path, props)
+                queue_island(obj, group, bbox, area, k + 1, input_path, props)
 
             queue_targets(engine, engine_ctx, 1, queue_one)
         finally:
