@@ -2,8 +2,8 @@ import multiprocessing
 
 import bpy
 
-from ..engines import ENGINES, installed_engines
-from ..utils.paths import get_addon_id, get_preferences
+from ..engines import ENGINES, installed_engines, invalidate_engine_caches
+from ..utils.paths import get_addon_id
 
 # built once so the item strings stay referenced, which blender requires for
 # dynamic enum callbacks. explicit numbers keep saved files stable as the
@@ -16,12 +16,7 @@ _ENGINE_ITEMS = {
 
 
 def _engine_items(self, context):
-    prefs = get_preferences()
-    return [
-        _ENGINE_ITEMS[e.id]
-        for e in ENGINES.values()
-        if e.is_available() and e.is_installed(prefs)
-    ]
+    return [_ENGINE_ITEMS[e.id] for e in installed_engines()]
 
 
 # the getter clamps to an installed engine without touching the stored value,
@@ -272,6 +267,7 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         name="",
         description="The path to the unwrapper application stored on your computer",
         subtype="FILE_PATH",
+        update=lambda self, context: invalidate_engine_caches(),
     )
     invalid_collection: bpy.props.BoolProperty(
         name="Not Unwrapped Collection",

@@ -78,6 +78,10 @@ class InstallTask:
                         area.tag_redraw()
             return {"PASS_THROUGH"}
         context.window_manager.event_timer_remove(self._timer)
+        # imported late: the engines package imports this module while loading
+        from . import invalidate_engine_caches
+
+        invalidate_engine_caches()
         for area in context.screen.areas:
             area.tag_redraw()
         if task_state["error"] is not None:

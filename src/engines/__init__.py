@@ -115,9 +115,26 @@ def get_engine(engine_id):
     return ENGINES[engine_id]
 
 
+# panel polls and the engine enum call installed_engines on every redraw, and
+# is_installed stats the filesystem, so the result is cached until an install
+# task ends or engine_path changes
+_installed_cache = None
+
+
+def invalidate_engine_caches():
+    global _installed_cache
+    _installed_cache = None
+    partuv.install.get_installed_partuv_version.cache_clear()
+
+
 def installed_engines():
-    prefs = get_preferences()
-    return [e for e in ENGINES.values() if e.is_available() and e.is_installed(prefs)]
+    global _installed_cache
+    if _installed_cache is None:
+        prefs = get_preferences()
+        _installed_cache = [
+            e for e in ENGINES.values() if e.is_available() and e.is_installed(prefs)
+        ]
+    return _installed_cache
 
 
 def active_engine(engine_id):

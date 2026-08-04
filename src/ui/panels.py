@@ -1,10 +1,9 @@
 import bpy
 
-from ..engines import active_engine, get_engine
+from ..engines import active_engine, get_engine, installed_engines
 from ..engines.install_task import draw_progress, task_state
 from ..logger import logger
 from ..manager import manager
-from ..utils.paths import get_preferences
 from ..utils.ui import draw_active, newline_label, only_active, toggle
 
 
@@ -70,13 +69,18 @@ def fix_settings(props):
     )
 
 
-def has_engine(context):
-    """Poll shared by every panel that needs an engine to run."""
-    return active_engine(context.scene.uvgami.engine) is not None
+class EnginePanel:
+    """Hidden until an engine is installed, so the body can assume one. The
+    enum getter clamps to an installed engine, so installed non-empty means
+    active_engine can't return None."""
+
+    @classmethod
+    def poll(cls, context):
+        return bool(installed_engines())
 
 
 def optcuts_installed():
-    return get_engine("OPTCUTS").is_installed(get_preferences())
+    return get_engine("OPTCUTS") in installed_engines()
 
 
 def draw_missing_engine(layout):
@@ -295,7 +299,7 @@ def draw_timeout(layout, props):
     row.prop(props, "unwrap_timeout")
 
 
-class UVGAMI_PT_speed(bpy.types.Panel):
+class UVGAMI_PT_speed(EnginePanel, bpy.types.Panel):
     bl_label = "Speed"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -303,10 +307,6 @@ class UVGAMI_PT_speed(bpy.types.Panel):
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
     bl_order = 3
-
-    @classmethod
-    def poll(cls, context):
-        return has_engine(context)
 
     def draw(self, context):
         box = self.layout.box()
@@ -384,7 +384,7 @@ class UVGAMI_PT_weights(bpy.types.Panel):
         box.row().prop(props, "weight_mode", expand=True)
 
 
-class UVGAMI_PT_symmetry(bpy.types.Panel):
+class UVGAMI_PT_symmetry(EnginePanel, bpy.types.Panel):
     bl_label = "Symmetry"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -392,10 +392,6 @@ class UVGAMI_PT_symmetry(bpy.types.Panel):
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
     bl_order = 2
-
-    @classmethod
-    def poll(cls, context):
-        return has_engine(context)
 
     def draw_header(self, context):
         self.layout.prop(context.scene.uvgami, "use_symmetry")
@@ -419,7 +415,7 @@ class UVGAMI_PT_symmetry(bpy.types.Panel):
         row.prop(props, "sym_merge")
 
 
-class UVGAMI_PT_grid(bpy.types.Panel):
+class UVGAMI_PT_grid(EnginePanel, bpy.types.Panel):
     bl_label = "Grid"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -427,10 +423,6 @@ class UVGAMI_PT_grid(bpy.types.Panel):
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
     bl_order = 5
-
-    @classmethod
-    def poll(cls, context):
-        return has_engine(context)
 
     def draw(self, context):
         props = context.scene.uvgami
@@ -525,7 +517,7 @@ class UVGAMI_PT_island_settings(bpy.types.Panel):
         draw_timeout(box, props)
 
 
-class UVGAMI_PT_pack(bpy.types.Panel):
+class UVGAMI_PT_pack(EnginePanel, bpy.types.Panel):
     bl_label = "Pack"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -533,10 +525,6 @@ class UVGAMI_PT_pack(bpy.types.Panel):
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
     bl_order = 4
-
-    @classmethod
-    def poll(cls, context):
-        return has_engine(context)
 
     def draw(self, context):
         props = context.scene.uvgami
@@ -567,7 +555,7 @@ class UVGAMI_PT_pack(bpy.types.Panel):
             box.prop(props, "pack_after_unwrap")
 
 
-class UVGAMI_PT_misc(bpy.types.Panel):
+class UVGAMI_PT_misc(EnginePanel, bpy.types.Panel):
     bl_label = "Misc"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -575,10 +563,6 @@ class UVGAMI_PT_misc(bpy.types.Panel):
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
     bl_order = 6
-
-    @classmethod
-    def poll(cls, context):
-        return has_engine(context)
 
     def draw(self, context):
         box = self.layout.box()
