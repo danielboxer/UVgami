@@ -30,7 +30,7 @@ from .src.ops.guides import (
 )
 from .src.ops.uv import UVGAMI_OT_pack
 from .src.ops.island import (
-    UVGAMI_OT_recut_area,
+    UVGAMI_OT_unwrap_area,
     UVGAMI_OT_relax_area,
     UVGAMI_OT_combine_islands,
     UVGAMI_OT_unwrap_island,
@@ -90,7 +90,7 @@ classes = (
     UVGAMI_OT_pack,
     UVGAMI_OT_unwrap_island,
     UVGAMI_OT_combine_islands,
-    UVGAMI_OT_recut_area,
+    UVGAMI_OT_unwrap_area,
     UVGAMI_OT_relax_area,
     UVGAMI_OT_cancel,
     UVGAMI_OT_remove_grid,

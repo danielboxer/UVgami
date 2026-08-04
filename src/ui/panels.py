@@ -480,7 +480,7 @@ class UVGAMI_PT_island_uv(bpy.types.Panel):
         row.label(text="Area Operators", icon="FACESEL")
         col = area.column()
         col.scale_y = 1.5
-        col.operator("uvgami.recut_area", icon="UV_FACESEL")
+        col.operator("uvgami.unwrap_area", icon="UV_FACESEL")
         col.operator("uvgami.relax_area", icon="UV_VERTEXSEL")
         row = area.row()
         row.label(icon="PROP_ON", text="Expand Area")
