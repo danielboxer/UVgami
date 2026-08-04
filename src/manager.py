@@ -7,7 +7,7 @@ import bpy
 import numpy
 
 from .batch import BatchProcess, last_meaningful_line
-from .job import Join
+from .job import Join, Result
 from .logger import logger
 from .ops.grid import add_grid, make_grid_img, make_grid_mat
 from .ops.uv import pack, should_pack, show_seams
@@ -44,23 +44,21 @@ class UnwrapManager:
         # pieces still being written by exporters that add unwraps incrementally;
         # blocks finalizing the session until every exporter is done
         self.hold_count = 0
-        # unexported pieces already counted in starting_count, shown as
-        # remaining so the finished ratio doesn't shrink as pieces get added
-        self.pending_count = 0
         # session progress as (done, running, remaining) fractions
         self.progress = numpy.zeros(3)
         # last session's summary, shown as a banner until dismissed
-        self.result = []
-        self.result_failed = False
+        self.summary = []
+        self.summary_failed = False
         self._reset_session()
 
     def _reset_session(self):
         """Per-run state. Called from __init__ too, so the error path can reach
         finish() before a session ever starts."""
-        self.starting_count = 0
-        self.finished_count = 0
-        self.cancelled_count = 0
-        self.invalid_count = 0
+        # (unwrap, result) per settled piece, the source for all counts
+        self.results = []
+        # settled groups and solo unwraps waiting for the dispatch timer to
+        # import them
+        self._to_import = []
         self.transfer_uv_failed = False
         self.transfer_uv_fail_detail = ""
         self.transfer_uv_split_count = 0
@@ -89,13 +87,12 @@ class UnwrapManager:
 
     def start(self, uv_editor=False):
         self._reset_session()
-        self.starting_count = len(self._queue) + len(self._running)
         self._fill_slots()
         if get_preferences().show_progress_bar:
             progress_bar.start(uv_editor)
         self.in_uv_editor = uv_editor
         self.is_active = True
-        self.clear_result()
+        self.clear_summary()
         self._dispatch_handle = functools.partial(self._dispatch)
         bpy.app.timers.register(self._dispatch_handle)
 
@@ -119,7 +116,13 @@ class UnwrapManager:
             max_concurrent = props.max_cores
         else:
             max_concurrent = 1
-        while len(self._running) < max_concurrent and self._queue:
+        # pieces export in queue order, so an unexported head means everything
+        # behind it is unexported too
+        while (
+            len(self._running) < max_concurrent
+            and self._queue
+            and self._queue[0].is_exported
+        ):
             unwrap = self._queue.popleft()
             unwrap.start_unwrap()
             self._running.append(unwrap)
@@ -209,10 +212,8 @@ class UnwrapManager:
                     self.error_messages.append(
                         f"Error finishing {unwrap.input_name}, see the console"
                     )
-                    # ensure unwrap is removed even on error
-                    if unwrap in self._running:
-                        self._running.remove(unwrap)
-                    unwrap.cleanup()
+                    # settle the piece even on error so its group can't hang
+                    self.record_result(unwrap, Result.INVALID)
 
             # process failures (each isolated)
             for unwrap, ret_code in failed:
@@ -227,9 +228,9 @@ class UnwrapManager:
                     self.error_messages.append(
                         f"Error handling {unwrap.input_name} failure, see the console"
                     )
-                    if unwrap in self._running:
-                        self._running.remove(unwrap)
-                    unwrap.cleanup()
+                    self.record_result(unwrap, Result.INVALID)
+
+            self._drain_imports()
 
             # requeue detached batch members so _fill_slots re-batches them
             for unwrap in requeued:
@@ -258,66 +259,68 @@ class UnwrapManager:
         return 0.1
 
     def _update_progress_bar(self):
-        all_unwraps = self.active
-        progress = [numpy.array(unwrap.progress) for unwrap in all_unwraps]
-        # pieces still exporting count as remaining, not finished
-        for _ in range(self.pending_count):
-            progress.append(numpy.array((0, 0, 1)))
-        # fill up progress bar with finished unwraps
-        for _ in range(self.starting_count - len(progress)):
-            progress.append(numpy.array((1, 0, 0)))
-        if self.starting_count > 0:
-            self.progress = sum(progress) / self.starting_count
+        # unexported pieces sit at (0, 0, 1) until they start reporting
+        progress = [numpy.array(unwrap.progress) for unwrap in self.active]
+        progress += [numpy.array((1, 0, 0))] * len(self.results)
+        if progress:
+            self.progress = sum(progress) / len(progress)
             if get_preferences().show_progress_bar:
                 progress_bar.update(self.progress)
             tag_redraw()
 
-    def _process_completion(self, unwrap, invalid_pass=False):
-        if not invalid_pass:
-            self.finished_count += 1
+    def record_result(self, unwrap, result):
+        """Every piece ends here as finished, invalid, or cancelled."""
+        if unwrap.result is not None:
+            return
+        unwrap.result = result
+        self.results.append((unwrap, result))
 
-        path, edge_path, added_edges, is_import_ready = self._resolve_join(
-            unwrap, invalid_pass
-        )
+        self.remove_unwrap(unwrap)
+        unwrap.release_engine()
+        unwrap.cleanup()
 
-        if is_import_ready:
-            self._import_and_finalize(unwrap, path, edge_path, added_edges)
+        group = unwrap.join_job
+        if group is None:
+            if result is Result.FINISHED:
+                self._to_import.append(unwrap)
+        else:
+            group.record(unwrap, result)
+            if group.is_settled() and group.finished and not group.discard:
+                self._to_import.append(group)
 
+    def _drain_imports(self):
+        """Every result imports here on the timer."""
+        for item in self._to_import:
+            is_group = isinstance(item, Join)
+            unwrap = item.finished[-1] if is_group else item
+            try:
+                if is_group and len(item.finished) > 1:
+                    path, edge_path, added_edges = item.finish()
+                else:
+                    path = unwrap.output_path
+                    edge_path, added_edges = unwrap.edge_path, []
+                self._import_and_finalize(unwrap, path, edge_path, added_edges)
+                # checkpoint each applied result while the session keeps
+                # running, so a mid-session ctrl z can't discard it. the last
+                # one is finish()'s push
+                if self._running or self._queue or self.hold_count:
+                    bpy.ops.ed.undo_push(message="UVgami Unwrap")
+            except Exception:
+                error_list = traceback.format_exc().split("\n")[:-1]
+                logger.add_data("errors", "Error finishing unwrap:")
+                for line in error_list:
+                    logger.add_data("errors", line)
+                    print(line)
+                self.error_messages.append(
+                    f"Error finishing {unwrap.input_name}, see the console"
+                )
+        self._to_import.clear()
+
+    def _process_completion(self, unwrap):
         if unwrap.viewing:
             self.viewer_done = True
             tag_redraw()
-
-        if not invalid_pass:
-            if unwrap in self._running:
-                self._running.remove(unwrap)
-            unwrap.cleanup()
-
-        # checkpoint each applied result while the session keeps running, so a
-        # mid-session ctrl z can't discard it. the last one is finish()'s push
-        if is_import_ready and (self._running or self._queue or self.hold_count):
-            bpy.ops.ed.undo_push(message="UVgami Unwrap")
-
-    def _resolve_join(self, unwrap, invalid_pass):
-        path = unwrap.output_path
-        edge_path = unwrap.edge_path
-        added_edges = []
-        is_import_ready = True
-
-        if unwrap.join_job is not None:
-            if not invalid_pass:
-                unwrap.join_job.unwrapped.append(unwrap)
-            # get all paths of finished unwraps before joining
-            if unwrap.join_job.is_completed() and unwrap.join_job.count > 1:
-                data = unwrap.join_job.finish(unwrap)
-                path = data[0]
-                edge_path = data[1]
-                added_edges = data[2]
-            # if the count is 1, that means all but one unwrap of group was cancelled
-            elif not (unwrap.join_job.is_completed() and unwrap.join_job.count == 1):
-                # in all other cases, wait until last unwrap finishes before importing
-                is_import_ready = False
-
-        return path, edge_path, added_edges, is_import_ready
+        self.record_result(unwrap, Result.FINISHED)
 
     def _import_and_finalize(self, unwrap, path, edge_path, added_edges):
         props = bpy.context.scene.uvgami
@@ -339,10 +342,10 @@ class UnwrapManager:
             output.data.materials.append(m)
 
         # restore per-face material indices
-        if unwrap.join_job is not None and len(unwrap.join_job.unwrapped) > 1:
+        if unwrap.join_job is not None and len(unwrap.join_job.finished) > 1:
             # concatenate material indices from all joined unwraps
             combined_indices = []
-            for u in unwrap.join_job.unwrapped:
+            for u in unwrap.join_job.finished:
                 combined_indices.extend(u.material_indices)
             if len(combined_indices) == len(output.data.polygons):
                 output.data.polygons.foreach_set("material_index", combined_indices)
@@ -393,37 +396,37 @@ class UnwrapManager:
             if pack_index is not None and job.repack_input:
                 self._pack_output_objects[pack_index] = input_mesh
                 pack_replaced = True
-            outcome = job.finish(input_mesh, output)
-            if outcome.applied:
-                self.transfer_uv_split_count += outcome.split_count
-                result = getattr(job, "result", None)
-                if result is None:
+            report = job.finish(input_mesh, output)
+            if report.applied:
+                self.transfer_uv_split_count += report.split_count
+                replacement = getattr(job, "replacement", None)
+                if replacement is None:
                     return
                 # proxy with transfer off: a duplicate of the original takes
                 # the deleted output's place in packing and collecting
                 if pack_index is not None:
-                    self._pack_output_objects[pack_index] = result
-                output = result
+                    self._pack_output_objects[pack_index] = replacement
+                output = replacement
             else:
                 # transfer failed, restore pack list if we changed it
                 if pack_replaced:
                     self._pack_output_objects[pack_index] = output
                 self.transfer_uv_failed = True
-                self.transfer_uv_fail_detail = outcome.detail
+                self.transfer_uv_fail_detail = report.detail
                 logger.add_data(
                     "errors",
-                    f"UV transfer failed ({outcome.detail}), keeping output",
+                    f"UV transfer failed ({report.detail}), keeping output",
                 )
 
         collection = check_collection("UVgami Unwrapped", bpy.context.scene.collection)
         move_to_collection(output, collection)
 
     def _restore_vertex_groups(self, unwrap, output):
-        if unwrap.join_job is not None and len(unwrap.join_job.unwrapped) > 1:
+        if unwrap.join_job is not None and len(unwrap.join_job.finished) > 1:
             # combine vertex groups from all joined unwraps with offset indices
             combined_groups = {}
             v_offset = 0
-            for u in unwrap.join_job.unwrapped:
+            for u in unwrap.join_job.finished:
                 for group_name, weights in u.vertex_groups.items():
                     if group_name not in combined_groups:
                         combined_groups[group_name] = {}
@@ -487,28 +490,22 @@ class UnwrapManager:
                 invalid_obj.hide_set(True)
                 logger.add_data("errors", invalid_name)
 
-            self.invalid_count += 1
+        self.record_result(unwrap, Result.INVALID)
 
-        found_job = None
-        # count has to be reduced because this object won't be unwrapped
-        for job in unwrap.jobs:
-            if job.count > 1:
-                job.count = job.count - 1
-                # found_job can't be a HideInput job because the unwrapped list
-                # will be empty
-                if isinstance(job, Join):
-                    found_job = job
-
-        if unwrap in self._running:
-            self._running.remove(unwrap)
-        unwrap.release_engine()
-        unwrap.cleanup()
-
-        # if the invalid obj has jobs that are complete with the now reduced count
-        # that means that this unwrap was the last of the group
-        if found_job is not None and found_job.is_completed():
-            # use the last completed unwrap
-            self._process_completion(found_job.unwrapped[-1], invalid_pass=True)
+    def _result_counts(self):
+        """Per-result piece counts. A finished piece whose group was discarded
+        or never settled was not imported, so it counts as cancelled."""
+        counts = dict.fromkeys(Result, 0)
+        for unwrap, result in self.results:
+            group = unwrap.join_job
+            if (
+                result is Result.FINISHED
+                and group is not None
+                and (group.discard or not group.is_settled())
+            ):
+                result = Result.CANCELLED
+            counts[result] += 1
+        return counts
 
     def _finish_batch(self):
         """Called when all unwraps are done (completed, failed, or cancelled)."""
@@ -522,14 +519,15 @@ class UnwrapManager:
                     for obj in valid_objects:
                         edit_restore([obj], pack)
 
+        counts = self._result_counts()
         self.finish()
 
-        if self.cancelled_count != self.starting_count:
+        if counts[Result.CANCELLED] != len(self.results):
             logger.change_status("Complete")
             msg = []
 
             # headline first, the banner shows it alone on the top row
-            finished, invalid = self.finished_count, self.invalid_count
+            finished, invalid = counts[Result.FINISHED], counts[Result.INVALID]
             if finished and invalid:
                 msg.append(f"{invalid} of {finished + invalid} meshes failed")
             elif finished:
@@ -564,9 +562,9 @@ class UnwrapManager:
                 msg.append(err)
                 logger.add_data("errors", err)
 
-            self.result = msg
-            self.result_failed = bool(
-                self.invalid_count
+            self.summary = msg
+            self.summary_failed = bool(
+                invalid
                 or self.transfer_uv_failed
                 or self.error_code
                 or self.error_messages
@@ -577,24 +575,24 @@ class UnwrapManager:
                 popup(msg, "UVgami", "INFO")
         else:
             logger.change_status("Cancelled")
-            self.clear_result()
+            self.clear_summary()
 
     def _show_status(self):
         """Put the summary in the status bar. A clean run clears itself, a run
         with problems stays until the next one so it can't be missed."""
-        text = f"UVgami: {self.result[0]}"
-        if self.result_failed:
-            set_status(f"{text}, see the UVgami panel", "ERROR")
+        text = f"UVgami: {self.summary[0]}"
+        if self.summary_failed:
+            set_status(f"{text}", "ERROR")
         else:
             set_status(text)
             bpy.app.timers.register(
                 functools.partial(set_status, None), first_interval=STATUS_SECONDS
             )
 
-    def clear_result(self):
+    def clear_summary(self):
         """Drop the banner and the status bar message."""
-        self.result = []
-        self.result_failed = False
+        self.summary = []
+        self.summary_failed = False
         set_status(None)
 
     def _unregister_dispatch(self):
@@ -614,33 +612,14 @@ class UnwrapManager:
         self._pack_output_objects.clear()
         self.input.clear()
 
-        if bpy.context.scene.uvgami.auto_grid and self.finished_count > 0:
+        props = bpy.context.scene.uvgami
+        if props.auto_grid and self._result_counts()[Result.FINISHED] > 0:
             switch_shading("MATERIAL")
 
         for file in (get_extension_dir_path() / "input").iterdir():
             file.unlink()
         for file in (get_extension_dir_path() / "output").iterdir():
             file.unlink()
-
-    def release_jobs(self, jobs):
-        """Decrement each job's count for a piece that won't be unwrapped and
-        apply the Join cancelled/finished adjustment when its group empties.
-        Shared by cancel_with_bookkeeping and the exporter's group-cancel skip."""
-        for job in jobs:
-            job.count = job.count - 1
-            # if it was the last one
-            if isinstance(job, Join) and job.count - len(job.unwrapped) == 0:
-                # this makes it so the popup doesn't show if all cancelled
-                self.finished_count -= len(job.unwrapped)
-                self.cancelled_count += len(job.unwrapped)
-
-    def cancel_unwrap(self, unwrap):
-        self.cancelled_count += 1
-        unwrap.release_engine()
-        self.remove_unwrap(unwrap)
-        unwrap.cleanup()
-        self.exit_viewer = True
-        tag_redraw()
 
     def stop_all(self):
         # late import: ops.viewer imports the manager
@@ -666,7 +645,7 @@ class UnwrapManager:
         processes and the draw handlers survive both, and a file load kills the
         timer that would have cleaned them up."""
         self.stop_all()
-        self.clear_result()
+        self.clear_summary()
 
 
 manager = UnwrapManager()

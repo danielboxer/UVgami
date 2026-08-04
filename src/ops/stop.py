@@ -1,40 +1,38 @@
 import bpy
 
+from ..job import Result
 from ..manager import manager
 from ..objfile import merge_obj_files
 from ..utils.io import import_obj
 from ..utils.mesh import check_collection, move_to_collection
 from ..utils.paths import get_preferences
+from ..utils.ui import tag_redraw
 
 
-def _expand_whole_group(unwraps):
-    """The panel captures slice indices at draw time and the exporter can add
-    pieces between draw and click, so a stale slice can miss group members.
-    Resolve membership from join jobs at execute time instead."""
-    joins = {u.join_job for u in unwraps if u.join_job is not None}
-    expanded = [u for u in manager.active if u in unwraps or u.join_job in joins]
-    return expanded, joins
+def resolve_targets(stem, whole_group):
+    """The unwraps a panel button targets, resolved by input file stem at
+    execute time so a stale click on an already settled piece is a no-op."""
+    target = next((u for u in manager.active if u.path.stem == stem), None)
+    if target is None:
+        return []
+    if whole_group and target.join_job is not None:
+        return [u for u in manager.active if u.join_job is target.join_job]
+    return [target]
 
 
-def cancel_with_bookkeeping(context, unwrap, invalid_label=None):
-    """Cancel one unwrap, optionally moving its input to the not unwrapped
-    collection first. Import must happen before cancel_unwrap since
-    unwrap.cleanup() deletes the input file."""
-    if invalid_label is not None:
-        if get_preferences().invalid_collection and unwrap.path.is_file():
-            invalid_obj = import_obj(unwrap.path)
-            collection = check_collection(
-                "UVgami Not Unwrapped", context.scene.collection
-            )
-            move_to_collection(invalid_obj, collection)
-            invalid_obj.name = f"{invalid_obj.name}: {invalid_label}"
-            invalid_obj.hide_set(True)
-        # counted whether or not the collection is on, the summary says how
-        # many meshes came back without a map either way
-        manager.invalid_count += 1
-
-    manager.release_jobs(unwrap.jobs)
-    manager.cancel_unwrap(unwrap)
+def drop_unwrap(context, unwrap, invalid_label, result):
+    if (
+        invalid_label is not None
+        and get_preferences().invalid_collection
+        and unwrap.path.is_file()
+    ):
+        # the import must happen before record_result, which deletes the input file
+        invalid_obj = import_obj(unwrap.path)
+        collection = check_collection("UVgami Not Unwrapped", context.scene.collection)
+        move_to_collection(invalid_obj, collection)
+        invalid_obj.name = f"{invalid_obj.name}: {invalid_label}"
+        invalid_obj.hide_set(True)
+    manager.record_result(unwrap, result)
 
 
 class UVGAMI_OT_stop(bpy.types.Operator):
@@ -42,16 +40,11 @@ class UVGAMI_OT_stop(bpy.types.Operator):
     bl_label = "Stop"
     bl_description = "Stop UV unwrap"
 
-    start_idx: bpy.props.IntProperty()
-    end_idx: bpy.props.IntProperty()
+    stem: bpy.props.StringProperty()
     whole_group: bpy.props.BoolProperty()
 
     def execute(self, context):
-        unwraps = manager.active[self.start_idx : self.end_idx]
-        if self.whole_group:
-            # the panel hides group stop while the exporter still has pieces, so
-            # every piece of the group already has an input file
-            unwraps, _ = _expand_whole_group(unwraps)
+        unwraps = resolve_targets(self.stem, self.whole_group)
 
         stopped_pending = False
         # collect cancellations so group members can be merged into one import
@@ -79,6 +72,9 @@ class UVGAMI_OT_stop(bpy.types.Operator):
                 stopped_pending = True
 
         self._cancel_collected(context, to_cancel)
+        if to_cancel:
+            manager.exit_viewer = True
+            tag_redraw()
 
         if stopped_pending:
             self.report({"INFO"}, "Stop: queued meshes dropped")
@@ -102,18 +98,17 @@ class UVGAMI_OT_stop(bpy.types.Operator):
                 singles.extend(group)
                 continue
             self._import_merged_group(context, group)
-            manager.invalid_count += len(group)
             # import already done above, so skip re-importing per member
             for unwrap in group:
-                cancel_with_bookkeeping(context, unwrap, invalid_label=None)
+                drop_unwrap(context, unwrap, None, Result.INVALID)
 
         for unwrap in singles:
-            cancel_with_bookkeeping(context, unwrap, invalid_label="Stopped")
+            drop_unwrap(context, unwrap, "Stopped", Result.INVALID)
 
     def _import_merged_group(self, context, group):
         if not get_preferences().invalid_collection:
             return
-        # merge before any cancel: cleanup() deletes these input files
+        # merge before any settle: record_result deletes these input files
         paths = [unwrap.path for unwrap in group if unwrap.path.is_file()]
         if not paths:
             return
@@ -129,29 +124,34 @@ class UVGAMI_OT_cancel(bpy.types.Operator):
     bl_label = "Cancel"
     bl_description = "Cancel UV unwrap"
 
-    start_idx: bpy.props.IntProperty()
-    end_idx: bpy.props.IntProperty()
+    stem: bpy.props.StringProperty()
     whole_group: bpy.props.BoolProperty()
 
     def execute(self, context):
-        unwraps = manager.active[self.start_idx : self.end_idx]
+        unwraps = resolve_targets(self.stem, self.whole_group)
         if self.whole_group:
-            unwraps, joins = _expand_whole_group(unwraps)
-            # also cancel pieces the exporter hasn't added to the session yet
-            for join in joins:
-                join.cancel_requested = True
-        cancel_count = len(unwraps)
+            # the user dropped the whole mesh, so the already finished pieces
+            # get discarded instead of joined when the group settles
+            for unwrap in unwraps:
+                if unwrap.join_job is not None:
+                    unwrap.join_job.discard = True
 
         for unwrap in unwraps:
-            # individual cancel from a group: move to not unwrapped collection
+            # an individual cancel from a group goes to the collection, so the
+            # joined result visibly misses a piece
             is_individual_from_group = (
-                cancel_count == 1
+                not self.whole_group
                 and unwrap.join_job is not None
-                and unwrap.join_job.count > 1
+                and unwrap.join_job.expected > 1
             )
-            invalid_label = "Cancelled (group)" if is_individual_from_group else None
-            cancel_with_bookkeeping(context, unwrap, invalid_label=invalid_label)
+            if is_individual_from_group:
+                drop_unwrap(context, unwrap, "Cancelled (group)", Result.INVALID)
+            else:
+                drop_unwrap(context, unwrap, None, Result.CANCELLED)
 
+        if unwraps:
+            manager.exit_viewer = True
+            tag_redraw()
         self.report({"INFO"}, "UV unwrap cancelled")
         return {"FINISHED"}
 

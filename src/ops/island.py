@@ -65,24 +65,17 @@ def queue_fix(obj, job, name, path, vertex_count, props):
     engine's result back into obj. A fix carries none of the material or
     vertex group state a full unwrap does, the input mesh keeps its own."""
     manager.input[job] = obj
-    manager.add(
-        Unwrap(
-            name=name,
-            input_name=name,
-            path=path,
-            guide_path=None,
-            edge_path=None,
-            jobs=(None, None, None, None, job),
-            origin=obj.matrix_world.translation,
-            materials=[],
-            added_edges=[],
-            vertex_count=vertex_count,
-            material_indices=[],
-            vertex_groups={},
-            shade_smooth=False,
-            maintain_mode=props.maintain_mode,
-        )
+    unwrap = Unwrap(
+        name=name,
+        input_name=name,
+        path=path,
+        jobs=(None, None, None, None, job),
+        maintain_mode=props.maintain_mode,
     )
+    unwrap.set_export_data(
+        origin=obj.matrix_world.translation, vertex_count=vertex_count
+    )
+    manager.add(unwrap)
 
 
 def target_islands(obj):
@@ -617,8 +610,6 @@ def queue_targets(engine, engine_ctx, count, queue_one):
         manager.engine_ctx = engine_ctx
         # these operators are run from the uv editor, so the bar belongs there
         manager.start(uv_editor=True)
-    else:
-        manager.starting_count += count
 
 
 class IslandOperator:

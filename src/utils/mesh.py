@@ -114,10 +114,8 @@ def select_uvs():
 
 
 def set_active_any():
-    """Make any linked mesh the active object, for the callers that need one.
-    An unlinked object can't be active, so it doesn't count."""
     for obj in bpy.data.objects:
-        if obj.type == "MESH" and len(obj.users_collection) != 0:
+        if obj.type == "MESH" and len(obj.users_collection) != 0 and obj.visible_get():
             bpy.context.view_layer.objects.active = obj
             return obj
     return None
@@ -127,12 +125,15 @@ def edit_restore(input, func, *args, **kwargs):
     old_selection = bpy.context.selected_objects
     old_active = bpy.context.view_layer.objects.active
 
-    if old_active is None:
+    # a hidden active object (e.g. one just moved to the not unwrapped
+    # collection) fails the mode_set poll the same as no active object
+    if old_active is None or not old_active.visible_get():
         old_active = set_active_any()
 
-    old_mode = old_active.mode
+    old_mode = old_active.mode if old_active is not None else "OBJECT"
 
-    bpy.ops.object.mode_set(mode="OBJECT")
+    if old_active is not None:
+        bpy.ops.object.mode_set(mode="OBJECT")
 
     deselect_all()
     for obj in input:
@@ -145,7 +146,8 @@ def edit_restore(input, func, *args, **kwargs):
     bpy.ops.object.mode_set(mode="OBJECT")
 
     deselect_all()
-    bpy.context.view_layer.objects.active = old_active
     for obj in old_selection:
         obj.select_set(True)
-    bpy.ops.object.mode_set(mode=old_mode)
+    if old_active is not None:
+        bpy.context.view_layer.objects.active = old_active
+        bpy.ops.object.mode_set(mode=old_mode)
