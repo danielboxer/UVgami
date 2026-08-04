@@ -362,7 +362,7 @@ class InputExporter:
 def input_job(props, count):
     """The job that finishes an unwrap against the original input mesh."""
     if props.use_proxy:
-        return ProxyUVs(count)
+        return ProxyUVs(count, props.transfer_uvs)
     if props.transfer_uvs:
         return TransferUVs(count)
     return None

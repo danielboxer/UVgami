@@ -6,9 +6,9 @@ import bpy
 from .logger import logger
 from .objfile import merge_obj_files
 from .proxy import transfer_cuts
-from .seams import uv_area_fit
+from .seams import FlattenError, uv_area_fit
 from .uv_transfer import plan_transfer
-from .utils.mesh import check_exists, new_bmesh, set_bmesh
+from .utils.mesh import check_exists, new_bmesh, set_bmesh, triangulate
 
 TransferOutcome = namedtuple("TransferOutcome", ["applied", "split_count", "detail"])
 
@@ -510,9 +510,17 @@ class ProxyUVs(Job):
     """Cut the original along the unwrapped proxy's seams and unwrap it.
 
     Rides the transfer uvs slot: the engine ran on a decimated copy, so the
-    original is the mesh that needs a uv map and the copy is thrown away."""
+    original is the mesh that needs a uv map and the copy is thrown away.
+    With transfer off the cuts land on a triangulated duplicate instead and
+    the original stays untouched, matching what transfer off means everywhere
+    else. Triangulating before the transfer also gives the snapped seams
+    diagonals to walk. The duplicate is exposed as result so the manager can
+    pack and collect it."""
 
-    repack_input = True
+    def __init__(self, count, transfer):
+        super().__init__(count)
+        self.repack_input = transfer
+        self.result = None
 
     def finish(self, input_mesh, output):
         if not check_exists(input_mesh) or not check_exists(output):
@@ -525,8 +533,22 @@ class ProxyUVs(Job):
         # mesh writes need object mode, the flatten itself runs outside blender
         if old_mode != "OBJECT":
             bpy.ops.object.mode_set(mode="OBJECT")
+
+        target = input_mesh
+        if not self.repack_input:
+            target = input_mesh.copy()
+            target.data = input_mesh.data.copy()
+            bpy.context.scene.collection.objects.link(target)
+            bm = new_bmesh(target)
+            triangulate(bm)
+            set_bmesh(bm, target)
+
         try:
-            transfer_cuts(input_mesh, output)
+            transfer_cuts(target, output)
+        except FlattenError as error:
+            if target is not input_mesh:
+                bpy.data.objects.remove(target, do_unlink=True)
+            return TransferOutcome(False, 0, str(error))
         finally:
             if (
                 old_active is not None
@@ -537,7 +559,15 @@ class ProxyUVs(Job):
                 bpy.ops.object.mode_set(mode=old_mode)
 
         bpy.data.objects.remove(output, do_unlink=True)
-        input_mesh.hide_set(False)
+        if target is input_mesh:
+            input_mesh.hide_set(False)
+        else:
+            # no HideInput job exists when a transfer job holds the slot, so
+            # hide the untouched original here like transfer off does elsewhere
+            input_mesh.hide_set(True)
+            # named only now: the deleted output held this name until here
+            target.name = f"{input_mesh.name}_unwrapped"
+            self.result = target
         return TransferOutcome(True, 0, "")
 
 

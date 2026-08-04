@@ -377,31 +377,40 @@ class UnwrapManager:
 
         # transfer UVs to original input mesh if enabled
         if unwrap.transfer_uvs_job is not None:
-            input_mesh = self.input[unwrap.transfer_uvs_job]
-            # replace output with input in pack list before finish deletes output
-            pack_replaced = False
-            if should_pack(props) and unwrap.transfer_uvs_job.repack_input:
+            job = unwrap.transfer_uvs_job
+            input_mesh = self.input[job]
+            # locate output in the pack list before finish deletes output
+            pack_index = None
+            if should_pack(props):
                 for i, obj in enumerate(self._pack_output_objects):
                     if obj == output:
-                        self._pack_output_objects[i] = input_mesh
-                        pack_replaced = True
+                        pack_index = i
                         break
-            outcome = unwrap.transfer_uvs_job.finish(input_mesh, output)
+            pack_replaced = False
+            if pack_index is not None and job.repack_input:
+                self._pack_output_objects[pack_index] = input_mesh
+                pack_replaced = True
+            outcome = job.finish(input_mesh, output)
             if outcome.applied:
                 self.transfer_uv_split_count += outcome.split_count
-                return
-            # transfer failed, restore pack list if we changed it
-            if pack_replaced:
-                for i, obj in enumerate(self._pack_output_objects):
-                    if obj == input_mesh:
-                        self._pack_output_objects[i] = output
-                        break
-            self.transfer_uv_failed = True
-            self.transfer_uv_fail_detail = outcome.detail
-            logger.add_data(
-                "errors",
-                f"UV transfer failed ({outcome.detail}), keeping output",
-            )
+                result = getattr(job, "result", None)
+                if result is None:
+                    return
+                # proxy with transfer off: a duplicate of the original takes
+                # the deleted output's place in packing and collecting
+                if pack_index is not None:
+                    self._pack_output_objects[pack_index] = result
+                output = result
+            else:
+                # transfer failed, restore pack list if we changed it
+                if pack_replaced:
+                    self._pack_output_objects[pack_index] = output
+                self.transfer_uv_failed = True
+                self.transfer_uv_fail_detail = outcome.detail
+                logger.add_data(
+                    "errors",
+                    f"UV transfer failed ({outcome.detail}), keeping output",
+                )
 
         collection = check_collection("UVgami Unwrapped", bpy.context.scene.collection)
         move_to_collection(output, collection)
