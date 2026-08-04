@@ -70,6 +70,7 @@ class UnwrapManager:
         self.current_viewer = None
         self.is_viewer_active = False
         self.exit_viewer = False
+        self.viewer_done = False
         self._pack_output_objects = []
 
     @property
@@ -282,7 +283,9 @@ class UnwrapManager:
         if is_import_ready:
             self._import_and_finalize(unwrap, path, edge_path, added_edges)
 
-        self.exit_viewer = True
+        if unwrap.viewing:
+            self.viewer_done = True
+            tag_redraw()
 
         if not invalid_pass:
             if unwrap in self._running:
