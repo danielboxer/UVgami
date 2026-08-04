@@ -94,6 +94,14 @@ def test_engine_failure_raises(tmp_path):
         engine.flatten(CUBE_VERTS, CUBE_FACES, set())
 
 
+def test_flatten_rejects_non_manifold(tmp_path):
+    # an edge with 3 faces fails before the binary is even resolved
+    engine = FlattenEngine(tmp_path / "missing.exe", tmp_path)
+    faces = list(CUBE_FACES) + [(0, 3, 6)]
+    with pytest.raises(FlattenError, match="Non Manifold"):
+        engine.flatten(CUBE_VERTS, faces, set())
+
+
 def test_preseed_marked_only_uses_given_seams():
     engine = GridEngine()
     marked = {(0, 4), (1, 5), (2, 6), (3, 7), (4, 5), (5, 6), (6, 7)}

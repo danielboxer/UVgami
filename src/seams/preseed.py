@@ -43,6 +43,10 @@ class FlattenEngine:
 
     def flatten(self, verts, faces, seams, iterations=10):
         """Per-face corner uvs for faces cut along seams, packed."""
+        # the engine doesn't validate in flatten mode: a non-manifold mesh
+        # comes back as degenerate uvs with exit 0
+        if any(len(owners) > 2 for owners in face_edges(faces).values()):
+            raise FlattenError("Non Manifold Edges")
         return self._run(verts, faces, seams=seams, iterations=iterations)
 
     def pack(self, verts, faces, uvs):
