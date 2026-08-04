@@ -1,3 +1,4 @@
+import blf
 import bpy
 import gpu
 import numpy
@@ -6,13 +7,16 @@ from gpu_extras.batch import batch_for_shader
 from ..manager import manager
 from ..utils.mesh import check_exists
 
-# ui and (object, mode) to restore when the viewer closes
-old_ui = None
+VIEWER_WORKSPACE = "UVgami Viewer"
+
+# workspace name and (object, mode) to restore when the viewer closes
+old_workspace = None
 old_mode = None
 
 # POST_VIEW in the image editor draws in uv space, so snapshot uvs go
 # straight into gpu batches, no viewer mesh or edit mode needed
 _handler = None
+_text_handler = None
 _wire_batch = None
 _fill_batch = None
 _wire_shader = None
@@ -110,22 +114,74 @@ def _draw():
     gpu.state.blend_set("NONE")
 
 
+def _trim_to_uv(window):
+    """Collapse the viewer workspace down to a single uv editor area."""
+    screen = window.screen
+    while len(screen.areas) > 1:
+        smallest = min(screen.areas, key=lambda a: a.width * a.height)
+        with bpy.context.temp_override(window=window, area=smallest):
+            bpy.ops.screen.area_close()
+    area = screen.areas[0]
+    area.ui_type = "UV"
+    region = next(r for r in area.regions if r.type == "WINDOW")
+    with bpy.context.temp_override(window=window, area=area, region=region):
+        bpy.ops.image.view_all(fit_view=True)
+
+
+def _schedule_workspace_trim(window, name):
+    """Workspace switches are deferred to the next main loop tick, so the
+    layout edit has to wait on a timer until the new workspace is active."""
+    attempts = [0]
+
+    def tick():
+        workspace = bpy.data.workspaces.get(name)
+        if workspace is None or attempts[0] > 20:
+            return None
+        if window.workspace != workspace:
+            attempts[0] += 1
+            return 0.01
+        _trim_to_uv(window)
+        return None
+
+    bpy.app.timers.register(tick, first_interval=0.0)
+
+
+def _draw_done_text():
+    """Pixel-space companion to _draw: blf works in pixels, so the grid
+    corner anchor is converted from uv space each redraw."""
+    if not manager.viewer_done:
+        return
+    x, y = bpy.context.region.view2d.view_to_region(0.0, 0.0, clip=False)
+    font = 0
+    blf.size(font, 14)
+    blf.position(font, x + 10, y + 10, 0)
+    blf.color(font, 1.0, 1.0, 1.0, 0.9)
+    blf.draw(font, "Done, click to exit")
+
+
 def start_viewer_draw():
-    global _handler
+    global _handler, _text_handler
     if _handler is None:
         _handler = bpy.types.SpaceImageEditor.draw_handler_add(
             _draw, (), "WINDOW", "POST_VIEW"
         )
+        _text_handler = bpy.types.SpaceImageEditor.draw_handler_add(
+            _draw_done_text, (), "WINDOW", "POST_PIXEL"
+        )
 
 
 def stop_viewer_draw():
-    global _handler, _wire_batch, _fill_batch, _face_area
+    global _handler, _text_handler, _wire_batch, _fill_batch, _face_area
     if _handler is not None:
         bpy.types.SpaceImageEditor.draw_handler_remove(_handler, "WINDOW")
         _handler = None
+    if _text_handler is not None:
+        bpy.types.SpaceImageEditor.draw_handler_remove(_text_handler, "WINDOW")
+        _text_handler = None
     _wire_batch = None
     _fill_batch = None
     _face_area = None
+    manager.viewer_done = False
 
 
 class UVGAMI_OT_view_unwrap(bpy.types.Operator):
@@ -139,13 +195,22 @@ class UVGAMI_OT_view_unwrap(bpy.types.Operator):
         unwrap = manager.active[self.index]
         manager.is_viewer_active = True
         manager.exit_viewer = False
+        manager.viewer_done = False
 
-        global old_ui, old_mode
-        old_ui = None
-        if context.area.ui_type != "UV":
-            old_ui = context.area.ui_type
-            context.area.ui_type = "UV"
-        bpy.ops.image.view_all(fit_view=True)
+        global old_workspace, old_mode
+        window = context.window
+        old_workspace = window.workspace.name
+        workspace = bpy.data.workspaces.get(VIEWER_WORKSPACE)
+        if workspace is None:
+            existing = set(bpy.data.workspaces.keys())
+            bpy.ops.workspace.duplicate()
+            new_name = next(n for n in bpy.data.workspaces.keys() if n not in existing)
+            workspace = bpy.data.workspaces[new_name]
+            workspace.name = VIEWER_WORKSPACE
+            _schedule_workspace_trim(window, workspace.name)
+        else:
+            # leftover from a crashed session
+            window.workspace = workspace
 
         # an edit mode mesh would draw its own uv map under the snapshot
         old_mode = None
@@ -170,8 +235,15 @@ class UVGAMI_OT_view_unwrap(bpy.types.Operator):
                 manager.current_viewer = None
             stop_viewer_draw()
 
-            if old_ui is not None:
-                context.area.ui_type = old_ui
+            # both ops are deferred a tick but process in order: the delete
+            # removes the active viewer workspace, then the old one activates
+            workspace = bpy.data.workspaces.get(VIEWER_WORKSPACE)
+            if workspace is not None and context.window.workspace == workspace:
+                bpy.ops.workspace.delete()
+            restore = bpy.data.workspaces.get(old_workspace) if old_workspace else None
+            if restore is not None:
+                context.window.workspace = restore
+
             if old_mode is not None:
                 obj, mode = old_mode
                 # a finished unwrap can have hidden or removed the source
