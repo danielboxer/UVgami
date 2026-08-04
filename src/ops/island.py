@@ -144,6 +144,122 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
     queue_fix(obj, IslandUVs(list(group), bbox, area), name, path, vertex_count, props)
 
 
+def repair_flipped_island(obj, temp):
+    """Clear flipped uv triangles from the exported island copy so the engine
+    keeps the map: pin everything but the flipped faces and two rings around
+    them, mark the uv discontinuities as seams so the island's own cuts
+    survive the unwrap, and run a pinned minimum stretch over the copy. Best
+    effort, a map still flipped after it fails at the engine with its own
+    error."""
+    bm = new_bmesh(temp)
+    uvl = bm.loops.layers.uv.active
+
+    flipped = []
+    for face in bm.faces:
+        pts = [loop[uvl].uv for loop in face.loops]
+        if any(
+            signed_area([pts[0], pts[i], pts[i + 1]]) < 0
+            for i in range(1, len(pts) - 1)
+        ):
+            flipped.append(face)
+    if not flipped:
+        bm.free()
+        return
+
+    for edge in bm.edges:
+        uv_of = {}
+        seam = False
+        for loop in edge.link_loops:
+            for corner in (loop, loop.link_loop_next):
+                uv = (round(corner[uvl].uv[0], 6), round(corner[uvl].uv[1], 6))
+                if uv_of.setdefault(corner.vert.index, uv) != uv:
+                    seam = True
+        edge.seam = seam
+
+    free = {v for face in flipped for v in face.verts}
+    for _ in range(2):
+        grown = [f for f in bm.faces if not free.isdisjoint(f.verts)]
+        free |= {v for face in grown for v in face.verts}
+    for face in bm.faces:
+        for loop in face.loops:
+            loop[uvl].pin_uv = loop.vert not in free
+    set_bmesh(bm, temp)
+
+    # keep the input mesh out of the edit session, like repair_flipped
+    obj.select_set(False)
+    unwrap(temp, range(len(temp.data.polygons)), REPAIR_ITERATIONS)
+    obj.select_set(True)
+
+
+def queue_relax(obj, group, bbox, area, k, input_path, props):
+    """Export one island with its uv map and queue a nocut run: the engine
+    keeps the map, so the seams come back unchanged and only the stretch
+    moves. A mirrored island reads as inverted to the engine, so it exports
+    with u negated and the job mirrors the result back."""
+    mesh = obj.data
+    layer = mesh.uv_layers.active
+    used = sorted({v for fi in group for v in mesh.polygons[fi].vertices})
+    local = {v: i for i, v in enumerate(used)}
+
+    total = 0.0
+    for fi in group:
+        poly = mesh.polygons[fi]
+        pts = [
+            tuple(layer.uv[poly.loop_start + c].vector) for c in range(poly.loop_total)
+        ]
+        total += signed_area(pts)
+    mirrored = total < 0
+
+    island_mesh = bpy.data.meshes.new("uvgami_island")
+    island_mesh.from_pydata(
+        [mesh.vertices[v].co.copy() for v in used],
+        [],
+        [[local[v] for v in mesh.polygons[fi].vertices] for fi in group],
+    )
+    island_layer = island_mesh.uv_layers.new()
+    li = 0
+    for fi in group:
+        poly = mesh.polygons[fi]
+        for c in range(poly.loop_total):
+            u, w = layer.uv[poly.loop_start + c].vector
+            island_layer.uv[li].vector = (-u, w) if mirrored else (u, w)
+            li += 1
+
+    temp = bpy.data.objects.new("uvgami_island", island_mesh)
+    bpy.context.scene.collection.objects.link(temp)
+    temp.matrix_world = obj.matrix_world.copy()
+
+    bm = new_bmesh(temp)
+    if any(len(f.verts) > 3 for f in bm.faces):
+        triangulate(bm)
+        set_bmesh(bm, temp)
+    else:
+        bm.free()
+
+    repair_flipped_island(obj, temp)
+
+    name = f"{obj.name}_island_{k}"
+    path = input_path / f"{bpy.path.clean_name(name)}.obj"
+    while path.is_file():
+        path = path.parent / f"{path.stem}1.obj"
+    export_obj(temp, path, True)
+    # empty pin line, nothing is held: the whole island reshapes freely
+    with (path.parent / f"{path.stem}_fixed").open("w") as f:
+        f.write("\nnocut")
+    vertex_count = len(temp.data.vertices)
+    bpy.data.objects.remove(temp, do_unlink=True)
+    bpy.data.meshes.remove(island_mesh)
+
+    queue_fix(
+        obj,
+        IslandUVs(list(group), bbox, area, mirrored),
+        name,
+        path,
+        vertex_count,
+        props,
+    )
+
+
 def islands_connected(mesh, targets):
     """True when the islands form one connected set through shared mesh edges,
     the only places the engine can weld."""
@@ -505,11 +621,13 @@ def queue_targets(engine, engine_ctx, count, queue_one):
         manager.starting_count += count
 
 
-class UVGAMI_OT_unwrap_island(bpy.types.Operator):
-    bl_idname = "uvgami.unwrap_island"
-    bl_label = "Unwrap Island"
-    bl_description = "Re-unwrap the island under the selected face(s)"
+class IslandOperator:
+    """Shared body of Unwrap Island and Relax Island. A plain mixin like
+    AreaOperator."""
+
     bl_options = {"UNDO"}
+    queue_target = None
+    verb = ""
 
     @classmethod
     def poll(cls, context):
@@ -531,7 +649,7 @@ class UVGAMI_OT_unwrap_island(bpy.types.Operator):
 
             def queue_one(k, input_path):
                 group, bbox, area = targets[k]
-                queue_island(obj, group, bbox, area, k + 1, input_path, props)
+                self.queue_target(obj, group, bbox, area, k + 1, input_path, props)
 
             queue_targets(engine, engine_ctx, len(targets), queue_one)
         finally:
@@ -539,8 +657,27 @@ class UVGAMI_OT_unwrap_island(bpy.types.Operator):
             context.view_layer.objects.active = obj
             bpy.ops.object.mode_set(mode="EDIT")
 
-        self.report({"INFO"}, f"Unwrapping {len(targets)} island(s)")
+        self.report({"INFO"}, f"{self.verb} {len(targets)} island(s)")
         return {"FINISHED"}
+
+
+class UVGAMI_OT_unwrap_island(IslandOperator, bpy.types.Operator):
+    bl_idname = "uvgami.unwrap_island"
+    bl_label = "Unwrap Island"
+    bl_description = "Re-unwrap the island under the selected face(s)"
+    queue_target = staticmethod(queue_island)
+    verb = "Unwrapping"
+
+
+class UVGAMI_OT_relax_island(IslandOperator, bpy.types.Operator):
+    bl_idname = "uvgami.relax_island"
+    bl_label = "Relax Island"
+    bl_description = (
+        "Relax the island under the selected face(s) to reduce stretching,"
+        " without changing its seams"
+    )
+    queue_target = staticmethod(queue_relax)
+    verb = "Relaxing"
 
 
 class UVGAMI_OT_combine_islands(bpy.types.Operator):

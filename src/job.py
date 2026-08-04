@@ -301,14 +301,28 @@ class IslandUVs(TransferUVs):
 
     repack_input = False
 
-    def __init__(self, faces, bbox, area):
+    def __init__(self, faces, bbox, area, mirrored=False):
         super().__init__(1)
         self.faces = faces
         self.bbox = bbox
         self.area = area
+        self.mirrored = mirrored
         self.orig_vert = []
         self.loop_base = {}
         self.loop_counts = []
+
+    def _unmirror(self, plan):
+        """A mirrored island reads as inverted to the engine, so it was
+        exported with u negated, mirror the result back before placing it."""
+        if not self.mirrored:
+            return
+        for k in plan.loop_uvs:
+            u, v = plan.loop_uvs[k]
+            plan.loop_uvs[k] = (-u, v)
+        for fi, parts in plan.split_faces.items():
+            plan.split_faces[fi] = [
+                (verts, [(-u, v) for u, v in part_uvs]) for verts, part_uvs in parts
+            ]
 
     def _extract(self, input_mesh, output, output_uv):
         data = input_mesh.data
@@ -335,6 +349,7 @@ class IslandUVs(TransferUVs):
         """Scale the engine's layout back to the island's old uv area, centered
         on its old spot. The faces a cut split are read from their new parts,
         the loops they came from are dead."""
+        self._unmirror(plan)
         polygons = []
         for i, count in enumerate(self.loop_counts):
             parts = plan.split_faces.get(i)
@@ -443,19 +458,11 @@ class AreaUVs(IslandUVs):
     u negated, so its result mirrors back before the fit."""
 
     def __init__(self, faces, pins, mirrored):
-        super().__init__(faces, None, None)
+        super().__init__(faces, None, None, mirrored)
         self.pins = pins  # (face index, corner, old uv)
-        self.mirrored = mirrored
 
     def _fit(self, plan):
-        if self.mirrored:
-            for k in plan.loop_uvs:
-                u, v = plan.loop_uvs[k]
-                plan.loop_uvs[k] = (-u, v)
-            for fi, parts in plan.split_faces.items():
-                plan.split_faces[fi] = [
-                    (verts, [(-u, v) for u, v in part_uvs]) for verts, part_uvs in parts
-                ]
+        self._unmirror(plan)
         pairs = []
         for fi, corner, old in self.pins:
             new = plan.loop_uvs.get(self.loop_base[fi] + corner)

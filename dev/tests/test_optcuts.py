@@ -326,6 +326,139 @@ def test_optcuts_nocut_relaxes_without_cutting(tmp_path):
 
 @pytest.mark.smoke
 @pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
+def test_optcuts_nocut_without_pins(tmp_path):
+    """An empty pin line with nocut (the relax island export) must relax the
+    whole map with a free boundary: same topology, and the interior moves
+    even though nothing is held."""
+    input_dir = tmp_path / "input"
+    out_dir = tmp_path / "output"
+    input_dir.mkdir()
+    out_dir.mkdir()
+    obj = input_dir / "patch.obj"
+    verts, faces, _ = _write_bump_patch(obj, n=20, height=1.5, width=0.01)
+    (input_dir / "patch_fixed").write_text("\nnocut")
+
+    subprocess.run(
+        [str(BUNDLED), "-i", str(obj), "-o", str(out_dir) + os.sep],
+        check=True,
+        timeout=300,
+        capture_output=True,
+    )
+
+    uvs_out = []
+    faces_out = []
+    for line in (out_dir / "patch.obj").read_text().splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] == "vt":
+            uvs_out.append((float(parts[1]), float(parts[2])))
+        elif parts[0] == "f":
+            faces_out.append(tuple(int(c.split("/")[1]) - 1 for c in parts[1:]))
+    assert len(faces_out) == len(faces)
+    # a cut duplicates the uv verts along it
+    assert len(uvs_out) == len(verts)
+
+    # the input map is the unit grid and the output is normalized into the
+    # unit box, so an unmoved map would come back identical
+    vt_map = {}
+    for face_in, face_out in zip(faces, faces_out):
+        for ti, to in zip(face_in, face_out):
+            vt_map[ti] = to
+    moved = max(
+        max(
+            abs(uvs_out[vt_map[t]][0] - verts[t][0]),
+            abs(uvs_out[vt_map[t]][1] - verts[t][1]),
+        )
+        for t in range(len(verts))
+    )
+    assert moved > 1e-3
+
+
+@pytest.mark.smoke
+@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
+def test_optcuts_nocut_keeps_hole_chart(tmp_path):
+    """Nocut must keep an annulus chart: relax island runs on islands that
+    ring a hole, which the disk keep-check would otherwise send to the
+    cut-to-disk relayout."""
+    n = 8
+    input_dir = tmp_path / "input"
+    out_dir = tmp_path / "output"
+    input_dir.mkdir()
+    out_dir.mkdir()
+    obj = input_dir / "ring.obj"
+
+    verts = []
+    for j in range(n + 1):
+        for i in range(n + 1):
+            x, y = i / n, j / n
+            z = 0.3 * math.exp(-((x - 0.2) ** 2 + (y - 0.2) ** 2) / 0.05)
+            verts.append((x, y, z))
+    hole = {n // 2 - 1, n // 2}
+    faces = []
+    for j in range(n):
+        for i in range(n):
+            if i in hole and j in hole:
+                continue
+            a = j * (n + 1) + i
+            faces.append((a, a + 1, a + n + 2))
+            faces.append((a, a + n + 2, a + n + 1))
+    # the vert inside the hole is unreferenced, drop it so vt counts compare
+    used = sorted({v for face in faces for v in face})
+    local = {v: i for i, v in enumerate(used)}
+    verts = [verts[v] for v in used]
+    faces = [tuple(local[v] for v in face) for face in faces]
+    with obj.open("w") as f:
+        for x, y, z in verts:
+            f.write(f"v {x} {y} {z}\n")
+        for x, y, _ in verts:
+            f.write(f"vt {x} {y}\n")
+        for face in faces:
+            f.write("f " + " ".join(f"{c + 1}/{c + 1}" for c in face) + "\n")
+    (input_dir / "ring_fixed").write_text("\nnocut")
+
+    subprocess.run(
+        [str(BUNDLED), "-i", str(obj), "-o", str(out_dir) + os.sep],
+        check=True,
+        timeout=300,
+        capture_output=True,
+    )
+
+    out_text = (out_dir / "ring.obj").read_text()
+    faces_out = [ln for ln in out_text.splitlines() if ln.startswith("f ")]
+    vts_out = [ln for ln in out_text.splitlines() if ln.startswith("vt ")]
+    assert len(faces_out) == len(faces)
+    # cutting the hole open to a disk would duplicate uv verts
+    assert len(vts_out) == len(verts)
+
+
+@pytest.mark.smoke
+@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
+def test_optcuts_nocut_rejects_broken_map(tmp_path):
+    """Nocut without pins on a map the engine cannot keep must exit 114
+    instead of falling through to the cut-to-disk relayout."""
+    input_dir = tmp_path / "input"
+    (tmp_path / "output").mkdir()
+    input_dir.mkdir()
+    obj = input_dir / "patch.obj"
+    verts, _, _ = _write_bump_patch(obj)
+    (input_dir / "patch_fixed").write_text("\nnocut")
+
+    lines = obj.read_text().splitlines()
+    center = len(verts) // 2
+    lines[len(verts) + center] = "vt -5 -5"
+    obj.write_text("\n".join(lines) + "\n")
+
+    ran = subprocess.run(
+        [str(BUNDLED), "-i", str(obj), "-o", str(tmp_path / "output") + os.sep],
+        timeout=300,
+        capture_output=True,
+    )
+    assert ran.returncode == 114
+
+
+@pytest.mark.smoke
+@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
 def test_optcuts_pinned_rejects_broken_map(tmp_path):
     """Pins on a map the engine cannot keep must exit 110, never fall through
     to the cut-to-disk relayout that would move the pinned border."""

@@ -471,6 +471,7 @@ class UVGAMI_PT_island_uv(bpy.types.Panel):
         col = island.column()
         col.scale_y = 1.5
         col.operator("uvgami.unwrap_island", icon="UV")
+        col.operator("uvgami.relax_island", icon="UV_VERTEXSEL")
         col.operator("uvgami.combine_islands", icon="UV_ISLANDSEL")
 
         # expand only feeds the area operators, so it's grouped with them
