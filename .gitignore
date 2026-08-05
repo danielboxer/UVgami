@@ -14,6 +14,9 @@ output/
 # bundled engine binaries
 /engines/
 
+# agent notes
+docs/agents/
+
 # local test builds from dev/build.ps1
 /dist/
 
