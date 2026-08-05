@@ -71,6 +71,7 @@ class Unwrap:
         self.is_uv_data_ready = False
         self.is_stopped = False
         self.started_at = None
+        self.stop_requested_at = None
         # bounded tail of the solo process's stderr, drained by a reader thread
         self.stderr_tail = collections.deque(maxlen=10)
         self._stderr_thread = None
