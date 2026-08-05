@@ -399,7 +399,12 @@ class SessionBuilder:
                 raise box["error"]
             if not check_exists(obj):
                 raise RuntimeError("Undo removed the working copy mid unwrap")
-            self._separate(obj, index, apply(box.get("result")), symmetrize_job)
+            props = bpy.context.scene.uvgami
+            preseeded = apply(box.get("result"))
+            has_uvs = preseeded or (
+                props.import_uvs and self.engine.supports_import_uvs
+            )
+            self._separate(obj, index, has_uvs, symmetrize_job, preseeded=preseeded)
             return 0.0
         if not self.remaining:
             return self._finish()
@@ -449,7 +454,7 @@ class SessionBuilder:
             manager.input[hide_job] = self.input_objs[index]
         return hide_job, transfer_uvs_job
 
-    def _add_piece(self, obj, input_name, piece_name, jobs, has_uvs, props):
+    def _add_piece(self, obj, input_name, piece_name, jobs, has_uvs, props, preseeded):
         """Create the piece's session record before its input file exists, so
         cancels and the queue ui see the whole session upfront."""
         path = self.input_path / f"{bpy.path.clean_name(piece_name)}.obj"
@@ -460,18 +465,20 @@ class SessionBuilder:
         while path.is_file() or path in claimed:
             path = path.parent / f"{path.stem}1.obj"
 
+        uses_uvs = self.engine.piece_uses_uvs(obj, props, has_uvs)
         unwrap = Unwrap(
             name=piece_name,
             input_name=input_name,
             path=path,
             jobs=jobs,
             maintain_mode=props.maintain_mode,
+            preseeded=preseeded and uses_uvs,
         )
         self.piece_unwrap[obj] = unwrap
-        self.piece_has_uvs[obj] = self.engine.piece_uses_uvs(obj, props, has_uvs)
+        self.piece_has_uvs[obj] = uses_uvs
         manager.add(unwrap)
 
-    def _separate(self, obj, index, has_uvs, symmetrize_job):
+    def _separate(self, obj, index, has_uvs, symmetrize_job, preseeded=False):
         props = bpy.context.scene.uvgami
         # relink for the ops selection, all within one tick so nothing shows
         bpy.context.scene.collection.objects.link(obj)
@@ -502,14 +509,18 @@ class SessionBuilder:
             for obj_idx, o in enumerate(valid):
                 jobs = (None, join_job, hide_job, symmetrize_job, transfer_uvs_job)
                 piece_name = f"{unwrap_name}_{obj_idx + 1}"
-                self._add_piece(o, unwrap_name, piece_name, jobs, has_uvs, props)
+                self._add_piece(
+                    o, unwrap_name, piece_name, jobs, has_uvs, props, preseeded
+                )
                 added.append(o)
         else:
             # object didn't need to be separated
             unwrap_name = self.names[obj.name][0]
             hide_job, transfer_uvs_job = self._input_jobs(props, index)
             jobs = (None, None, hide_job, symmetrize_job, transfer_uvs_job)
-            self._add_piece(obj, unwrap_name, unwrap_name, jobs, has_uvs, props)
+            self._add_piece(
+                obj, unwrap_name, unwrap_name, jobs, has_uvs, props, preseeded
+            )
             added.append(obj)
 
         deselect_all()

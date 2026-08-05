@@ -160,14 +160,12 @@ class OptcutsEngine(BinaryEngine):
         optcuts = props.optcuts
         if not optcuts.use_hard_surface:
             return None
-        compute, apply = preseed_work(
+        return preseed_work(
             obj,
             math.degrees(optcuts.hard_surface_angle),
             weights=seam_restrictions(obj) if props.avoid_seams else None,
             auto=optcuts.is_auto,
         )
-        # an auto run that finds nothing hard falls back to prepare_uvs' answer
-        return compute, lambda result: apply(result) or props.import_uvs
 
     def piece_uses_uvs(self, obj, props, has_uvs):
         # auto mode routes per loose part: a piece the preseed skipped has no

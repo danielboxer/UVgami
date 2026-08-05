@@ -23,9 +23,12 @@ class Unwrap:
         path: pathlib.Path,
         jobs: tuple,
         maintain_mode: str,
+        preseeded: bool = False,
     ):
         self.name = name
         self.input_name = input_name
+        # this piece carries preseed uvs, so its output gets the finish pass
+        self.preseeded = preseeded
 
         self.path = path
         self.output_path = get_extension_dir_path() / "output" / f"{self.path.stem}.obj"

@@ -6,16 +6,27 @@ from ..job import AreaUVs, IslandUVs
 from ..logger import logger
 from ..manager import manager
 from ..seams import (
-    REPAIR_ITERATIONS,
     face_edges,
+    island_groups,
+    island_ruined,
     pair,
     signed_area,
+    split_islands,
     uv_island_groups,
 )
 from ..unwrap import Unwrap
 from ..utils.io import export_obj
 from ..utils.mesh import new_bmesh, set_bmesh, triangulate
 from ..utils.paths import get_extension_dir_path, get_preferences
+
+# how much a split piece shrinks towards its own centre. blender decides
+# islands from uv coordinates, so pieces sharing the cut line exactly stay
+# one island however they are seamed, and this is what parts them
+SPLIT_GAP = 0.98
+
+# iterations for the pinned minimum stretch repairs. blender's default is 10,
+# 50 flattens the stubborn folds
+REPAIR_ITERATIONS = 50
 
 
 def face_uvs(mesh):
@@ -182,6 +193,65 @@ def repair_flipped_island(obj, temp):
     obj.select_set(False)
     unwrap(temp, range(len(temp.data.polygons)), REPAIR_ITERATIONS)
     obj.select_set(True)
+
+
+def finish_preseed(obj, ranges=None):
+    """Slice the long strips out of a preseeded engine output.
+
+    The engine leaves a developable strip whole because splitting it gains
+    no distortion, so split_islands slices those (its cuts snap to creases).
+    A long strip packs badly, sliced pieces fill the atlas.
+
+    ranges are (start, stop) polygon index ranges to scan, None for the whole
+    mesh, so the organic pieces of a mixed output are never scanned. The
+    joined output concatenates each piece's faces unwelded, so a uv island
+    lies inside one piece and its first face decides which.
+
+    The pieces are never re-unwrapped, each keeps its engine uvs exactly and
+    only shrinks a little towards its own centre, which is what parts them
+    into islands and leaves a valid map behind for the pack to tighten. A
+    flipped triangle the engine ships is left for Relax Island: re-unwraps
+    tried here made those islands worse, not better."""
+    mesh = obj.data
+    verts = [tuple(v.co) for v in mesh.vertices]
+    faces = [tuple(p.vertices) for p in mesh.polygons]
+    uvs = face_uvs(mesh)
+    edges = face_edges(faces)
+    uv_at = [dict(zip(face, uvs[fi])) for fi, face in enumerate(faces)]
+    seams = {
+        key
+        for key, owners in edges.items()
+        if len(owners) == 2
+        and any(uv_at[owners[0]][v] != uv_at[owners[1]][v] for v in key)
+    }
+    groups = island_groups(faces, seams, edges)
+    groups = [g for g in groups if not island_ruined(g, faces, uvs, edges, seams)]
+    if ranges is None:
+        scanned = groups
+        extra = split_islands(verts, faces, seams, uvs, None, groups)
+    else:
+        # one call per piece: each piece's engine output has its own uv scale,
+        # so its length cap has to come from its own area alone
+        scanned = []
+        extra = set()
+        for start, stop in ranges:
+            scoped = [g for g in groups if start <= g[0] < stop]
+            scanned += scoped
+            extra |= split_islands(verts, faces, seams, uvs, None, scoped)
+    if not extra:
+        return
+    touched = {f for e in extra for f in edges[e]}
+    target_faces = {f for g in scanned if touched & set(g) for f in g}
+    layer = mesh.uv_layers.active.data
+    for piece in island_groups(faces, seams | extra, edges):
+        if piece[0] not in target_faces:
+            continue
+        loops = [li for f in piece for li in mesh.polygons[f].loop_indices]
+        cx = sum(layer[li].uv[0] for li in loops) / len(loops)
+        cy = sum(layer[li].uv[1] for li in loops) / len(loops)
+        for li in loops:
+            u, v = layer[li].uv
+            layer[li].uv = (cx + (u - cx) * SPLIT_GAP, cy + (v - cy) * SPLIT_GAP)
 
 
 def queue_relax(obj, group, bbox, area, k, input_path, props):

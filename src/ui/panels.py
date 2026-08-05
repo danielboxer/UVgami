@@ -42,12 +42,6 @@ def unwrap_settings(props):
                 engine.supports_preserve and props.untriangulate,
             ),
             ("UV_DATA", "Transfer UVs", "transfer_uvs", props.transfer_uvs),
-            (
-                "UGLYPACKAGE",
-                "Pack After Unwrap",
-                "pack_after_unwrap",
-                props.pack_after_unwrap and not engine.requires_pack,
-            ),
         )
     )
 
@@ -536,14 +530,7 @@ class UVGAMI_PT_pack(EnginePanel, bpy.types.Panel):
         box.prop(props, "combine_uvs")
         box.prop(props, "fix_scale")
 
-        if active_engine(props.engine).requires_pack:
-            # drawn as a checked label, not the prop, so a stored False can't
-            # show an unchecked box next to packing that always runs
-            row = box.row()
-            row.enabled = False
-            row.label(text="Pack After Unwrap (required)", icon="CHECKBOX_HLT")
-        else:
-            box.prop(props, "pack_after_unwrap")
+        box.prop(props, "pack_after_unwrap")
 
 
 class UVGAMI_PT_misc(EnginePanel, bpy.types.Panel):

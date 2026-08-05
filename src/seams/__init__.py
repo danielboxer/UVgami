@@ -28,8 +28,6 @@ from .mesh import (
 )
 from .pipeline import is_hard_surface, seam_edges
 from .preseed import (
-    REPAIR_ITERATIONS,
-    REPAIR_ROUNDS,
     FlattenEngine,
     FlattenError,
     preseed_uvs,
@@ -51,8 +49,6 @@ __all__ = [
     "CREASE_ANGLE",
     "FLAT_ANGLE",
     "LOW_ANGLE",
-    "REPAIR_ITERATIONS",
-    "REPAIR_ROUNDS",
     "TURN_COST",
     "FlattenEngine",
     "FlattenError",

@@ -215,6 +215,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     pack_after_unwrap: bpy.props.BoolProperty(
         name="Pack After Unwrap",
         description="Automatically pack UVs after each unwrap finishes",
+        default=True,
     )
     transfer_uvs: bpy.props.BoolProperty(
         name="",

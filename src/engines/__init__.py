@@ -20,9 +20,6 @@ class Engine:
     supports_early_stop = False
     supports_preserve = False
     supports_import_uvs = False
-    # engines whose raw uvs overlap must be packed, so pack-after-unwrap is
-    # forced on rather than left to the user
-    requires_pack = False
 
     def is_available(self):
         """Whether this engine can run on the current platform."""
@@ -57,8 +54,8 @@ class Engine:
         """Split prepare_uvs for the start operator's worker thread: a
         (compute, apply) pair where compute touches no bpy data and runs off
         the main thread, and apply(compute()) writes the result back and
-        returns what prepare_uvs would have. None means there is no slow work
-        and prepare_uvs is used directly."""
+        returns whether the preseed applied uvs. None means there is no slow
+        work and prepare_uvs is used directly."""
         return None
 
     def piece_uses_uvs(self, obj, props, has_uvs):
