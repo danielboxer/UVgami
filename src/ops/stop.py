@@ -58,8 +58,8 @@ class UVGAMI_OT_stop(bpy.types.Operator):
                     stopped_pending = True
             elif unwrap.process is not None:
                 if manager.engine.supports_early_stop:
-                    # the flag re-sends the request each tick and arms the stop
-                    # timeout force kill
+                    # the flag re-sends the request each tick and arms the
+                    # manager's STOP_SECONDS force kill
                     unwrap.is_stopped = True
                     if not manager.engine.request_early_stop(unwrap.process):
                         self.report({"ERROR"}, "Could not stop unwrap")
