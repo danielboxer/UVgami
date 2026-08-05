@@ -50,6 +50,7 @@ from seams import (  # noqa: E402
     uv_topology,
     vertex_components,
 )
+from seams.islands import absorb_fragments, split_pieces  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -766,18 +767,31 @@ def island_count(faces, seams):
     return len({find(i) for i in range(len(faces))})
 
 
+def merge_islands(a, b):
+    """Two islands in one mesh, the second's verts reindexed after the first.
+    They share no edge, so they stay separate islands whatever their uvs do."""
+    verts_a, faces_a, uvs_a = a
+    verts_b, faces_b, uvs_b = b
+    shift = len(verts_a)
+    faces = faces_a + [[v + shift for v in f] for f in faces_b]
+    return verts_a + verts_b, faces, uvs_a + uvs_b
+
+
 def test_clean_long_island_splits_for_packing():
-    # flip-free but a 30:1 strip across the atlas packs badly, so it splits
-    # like a ruined strip would
+    # flip-free, but alone it is far longer than the square its own uv area
+    # needs, and one long island caps how far the pack can scale everything
     verts, faces, uvs = strip_island(30)
     extra = split_islands(verts, faces, set(), uvs)
-    assert island_count(faces, extra) == 5
+    assert island_count(faces, extra) == 4
 
 
 def test_clean_short_strip_is_not_split():
-    # same shape at 1/200 scale: thin but small, the kind a bevel band
-    # leaves, and cutting those would shatter every beveled model
-    verts, faces, uvs = strip_island(30, scale=1 / 200)
+    # a thin strip next to a much bigger island, the kind a bevel band
+    # leaves, and cutting those would shatter every beveled model. the big
+    # island sets the cap, and the strip is nowhere near it
+    verts, faces, uvs = merge_islands(
+        strip_island(30, scale=1 / 200), strip_island(2, scale=10.0)
+    )
     assert split_islands(verts, faces, set(), uvs) == set()
 
 
@@ -791,15 +805,15 @@ def test_folded_long_island_is_split_into_even_pieces():
     fold_face(uvs, 20)
     extra = split_islands(verts, faces, set(), uvs)
     assert extra
-    # aspect ~29, so 5 slices, each just under the bound
-    assert island_count(faces, extra) == 5
+    # 29.3 long against a cap of 7.7, so 4 slices, each under the cap
+    assert island_count(faces, extra) == 4
 
 
 def test_split_is_rotation_invariant():
     verts, faces, uvs = strip_island(30, angle=0.7)
     fold_face(uvs, 20)
     extra = split_islands(verts, faces, set(), uvs)
-    assert island_count(faces, extra) == 5
+    assert island_count(faces, extra) == 4
 
 
 def test_folded_compact_island_is_halved():
@@ -811,13 +825,13 @@ def test_folded_compact_island_is_halved():
     assert island_count(faces, extra) == 2
 
 
-def test_short_ruined_island_is_still_halved():
-    # same folded 30:1 shape at 1/200 scale: 0.15 of the atlas, under
-    # SPLIT_LENGTH, so it is halved instead of sliced into aspect bins
+def test_split_is_scale_invariant():
+    # the same folded shape at 1/200 scale: packing is scale blind, the cap
+    # shrinks with the area, so it slices into the same 4 pieces
     verts, faces, uvs = strip_island(30, scale=1 / 200)
     fold_face(uvs, 20)
     extra = split_islands(verts, faces, set(), uvs)
-    assert island_count(faces, extra) == 2
+    assert island_count(faces, extra) == 4
 
 
 def test_halving_cut_takes_the_shortest_path():
@@ -843,6 +857,241 @@ def test_painted_column_moves_the_halving_cut():
     assert not painted.keys() & {v for edge in extra for v in edge}
 
 
+def tube_island(rows, cols, shear):
+    """A triangulated tube cut open along one lengthwise column, unrolled with
+    a shear so the seam's two sides sit rows apart in uv. Returns the verts,
+    faces, per-face corner uvs, the cut seams and each vert's mesh row."""
+    radius = cols / (2 * math.pi)
+    verts, row_of = [], []
+    for r in range(rows + 1):
+        for c in range(cols):
+            a = 2 * math.pi * c / cols
+            verts.append((radius * math.cos(a), radius * math.sin(a), float(r)))
+            row_of.append(r)
+    faces, uvs = [], []
+    for r in range(rows):
+        for c in range(cols):
+            lo = r * cols
+            hi = (r + 1) * cols
+            a, b = lo + c, lo + (c + 1) % cols
+            d, e = hi + c, hi + (c + 1) % cols
+            # the wrapping column keeps counting in uv, which opens the cut
+            far = c + 1
+            uv = {
+                a: (float(c), r + shear * c),
+                b: (float(far), r + shear * far),
+                d: (float(c), r + 1 + shear * c),
+                e: (float(far), r + 1 + shear * far),
+            }
+            faces.append([a, b, d])
+            uvs.append([uv[a], uv[b], uv[d]])
+            faces.append([b, e, d])
+            uvs.append([uv[b], uv[e], uv[d]])
+    seams = {pair(r * cols, (r + 1) * cols) for r in range(rows)}
+    return verts, faces, uvs, seams, row_of
+
+
+def test_sheared_tube_splits_into_rings_not_slivers():
+    # 40 rows of 6 unit quads: uv area 240, cap sqrt(480) = 21.9, length 42.1
+    # and aspect 7.4, so it is a strip cut into 2 bins. the shear puts the
+    # seam's two sides 3 rows apart, so the bin cut reaches the boundary at
+    # two far apart points, and the shortest path between those runs
+    # lengthwise along the seam. taking it would shave off a 3 face sliver
+    # and leave the bins joined, so the straightener has to refuse it
+    verts, faces, uvs, seams, row_of = tube_island(40, 6, 0.5)
+    extra = split_islands(verts, faces, seams, uvs)
+    assert island_count(faces, seams | extra) == 2
+
+    groups = island_groups(faces, seams | extra, face_edges(faces))
+    assert min(len(g) for g in groups) >= len(faces) // 4
+
+    # a clean ring: the cut never wanders more than a quad row
+    rows_cut = [row_of[v] for edge in extra for v in edge]
+    assert max(rows_cut) - min(rows_cut) <= 2
+
+
+def cone_island(rows, cols, sector, inner):
+    """A cone frustum cut open along one column and unrolled exactly: uv is
+    an annulus sector spanning sector radians, slant radius inner to
+    inner + rows, unit quads. Returns the verts, faces, per-face corner
+    uvs, the cut seams and each vert's mesh column."""
+    k = sector / (2 * math.pi)
+    rise = math.sqrt(1 - k * k)
+    verts, col_of = [], []
+    for r in range(rows + 1):
+        s = inner + r
+        for c in range(cols):
+            a = 2 * math.pi * c / cols
+            verts.append((k * s * math.cos(a), k * s * math.sin(a), rise * s))
+            col_of.append(c)
+
+    def unrolled(r, c):
+        t = sector * c / cols
+        return ((inner + r) * math.cos(t), (inner + r) * math.sin(t))
+
+    faces, uvs = [], []
+    for r in range(rows):
+        for c in range(cols):
+            lo = r * cols
+            hi = (r + 1) * cols
+            a, b = lo + c, lo + (c + 1) % cols
+            d, e = hi + c, hi + (c + 1) % cols
+            # the wrapping column keeps counting in uv, which opens the cut
+            far = c + 1
+            uv = {
+                a: unrolled(r, c),
+                b: unrolled(r, far),
+                d: unrolled(r + 1, c),
+                e: unrolled(r + 1, far),
+            }
+            faces.append([a, b, d])
+            uvs.append([uv[a], uv[b], uv[d]])
+            faces.append([b, e, d])
+            uvs.append([uv[b], uv[e], uv[d]])
+    seams = {pair(r * cols, (r + 1) * cols) for r in range(rows)}
+    return verts, faces, uvs, seams, col_of
+
+
+def test_cone_fan_is_cut_along_radii():
+    # a cone frustum unrolls into a 300 degree fan of uv area 199 and arc
+    # length 50 against a cap of 20, so it fills with 2 cuts. a cut binned
+    # on the principal axis is a chord of the fan: on the mesh it climbs to
+    # the thin rim, runs along it, and comes back down, so each cut must
+    # instead hold to one column of the cone
+    verts, faces, uvs, seams, col_of = cone_island(4, 48, 5 * math.pi / 3, 7.5)
+    extra = split_islands(verts, faces, seams, uvs)
+    assert island_count(faces, seams | extra) == 3
+
+    remaining = set(extra)
+    spans = []
+    while remaining:
+        chain = {remaining.pop()}
+        grew = True
+        while grew:
+            grew = False
+            for other in list(remaining):
+                if any(set(other) & set(edge) for edge in chain):
+                    remaining.discard(other)
+                    chain.add(other)
+                    grew = True
+        cols_cut = [col_of[v] for edge in chain for v in edge]
+        spans.append(max(cols_cut) - min(cols_cut))
+    assert len(spans) == 2
+    assert max(spans) <= 1
+
+
+def test_boxed_in_fragment_rejoins_one_side():
+    # a chain of 9 faces with face 4 boxed in alone: the fragment reopens
+    # only its cuts toward the side it shares more cut edges with, and the
+    # halving cut between the two full-sized pieces stays
+    links = {f: [] for f in range(9)}
+    edge_names = iter("abcdefgh")
+    for f in range(8):
+        name = next(edge_names)
+        links[f].append((f + 1, name))
+        links[f + 1].append((f, name))
+    links[4].append((5, "x"))
+    links[5].append((4, "x"))
+    cuts = {"d", "e", "x"}
+    pieces = split_pieces(list(range(9)), links, cuts)
+    assert sorted(len(p) for p in pieces) == [1, 4, 4]
+    pieces = absorb_fragments(pieces, links, cuts)
+    assert cuts == {"d"}
+    assert sorted(sorted(p) for p in pieces) == [[0, 1, 2, 3], [4, 5, 6, 7, 8]]
+
+
+def test_split_pieces_among_tiny_pieces_keep_their_cut():
+    # halving a 4-face island leaves two pieces under the minimum: that is
+    # a cut made on purpose, so nothing rejoins
+    links = {f: [] for f in range(4)}
+    for f, name in zip(range(3), "abc"):
+        links[f].append((f + 1, name))
+        links[f + 1].append((f, name))
+    cuts = {"b"}
+    pieces = split_pieces(list(range(4)), links, cuts)
+    pieces = absorb_fragments(pieces, links, cuts)
+    assert cuts == {"b"}
+    assert len(pieces) == 2
+
+
+def blob_strip_island(blob, strip):
+    """A blob x blob quad square with a strip x 1 quad tail off its lower
+    right corner, uvs matching the grid, so the width profile steps hard at
+    the join."""
+    index = {}
+    verts = []
+
+    def vid(x, y):
+        key = (x, y)
+        if key not in index:
+            index[key] = len(verts)
+            verts.append((float(x), float(y), 0.0))
+        return index[key]
+
+    faces = []
+    for x in range(blob):
+        for y in range(blob):
+            faces.append([vid(x, y), vid(x + 1, y), vid(x + 1, y + 1), vid(x, y + 1)])
+    for x in range(blob, blob + strip):
+        faces.append([vid(x, 0), vid(x + 1, 0), vid(x + 1, 1), vid(x, 1)])
+    uvs = [[(verts[v][0], verts[v][1]) for v in f] for f in faces]
+    return verts, faces, uvs
+
+
+def test_long_island_cut_at_the_feature_neck():
+    # a 20x20 blob with a 20x1 tail: length ~39 passes half the cap
+    # (sqrt(840) / 2), the width step at the join is ~20x, and the tail
+    # alone stays under the cap, so the one cut lands at the neck
+    verts, faces, uvs = blob_strip_island(20, 20)
+    extra = split_islands(verts, faces, set(), uvs)
+    groups = sorted(island_groups(faces, extra, face_edges(faces)), key=len)
+    assert len(groups) == 2
+    # the small piece is the tail, give or take a slab of blob columns
+    assert 15 <= len(groups[0]) <= 60
+
+
+def test_neck_scan_needs_a_long_island():
+    # the same blob and tail next to a much larger island: now under half
+    # the cap, and blanket neck cutting measured worse than packing the
+    # concave island whole
+    verts, faces, uvs = merge_islands(
+        blob_strip_island(20, 20), strip_island(1, scale=60.0)
+    )
+    assert split_islands(verts, faces, set(), uvs) == set()
+
+
+def test_neck_and_fill_compose():
+    # a 45 long tail: the neck cut comes first, and the tail piece alone
+    # is still past the cap, so it also fills with one even cut
+    verts, faces, uvs = blob_strip_island(20, 45)
+    extra = split_islands(verts, faces, set(), uvs)
+    assert island_count(faces, extra) == 3
+
+
+def test_second_neck_found_on_the_piece():
+    # a second 12x12 blob on the far end of the tail: the first pass cuts
+    # the strongest neck, and only the re-scan of the leftover piece on its
+    # own axis finds the second one, freeing the strip from both
+    verts, faces, uvs = blob_strip_island(20, 20)
+
+    index = {(x, y): i for i, (x, y, _) in enumerate(verts)}
+
+    def vid(x, y):
+        key = (x, y)
+        if key not in index:
+            index[key] = len(verts)
+            verts.append((float(x), float(y), 0.0))
+        return index[key]
+
+    for x in range(40, 52):
+        for y in range(12):
+            faces.append([vid(x, y), vid(x + 1, y), vid(x + 1, y + 1), vid(x, y + 1)])
+    uvs = [[(verts[v][0], verts[v][1]) for v in f] for f in faces]
+    extra = split_islands(verts, faces, set(), uvs)
+    groups = sorted(island_groups(faces, extra, face_edges(faces)), key=len)
+    assert [len(g) for g in groups] == [20, 144, 400]
+
+
 def test_split_scan_restricted_to_given_groups():
     verts, faces, uvs = strip_island(30)
     fold_face(uvs, 20)
@@ -852,15 +1101,16 @@ def test_split_scan_restricted_to_given_groups():
 
 
 def test_split_respects_existing_seams():
-    # a seam already cuts the strip in half, so each folded island measures
-    # 15:1 and splits into 3, and the seam edge itself must not come back
+    # a seam already cuts the strip in half, so each folded island is 14.3
+    # against a cap of 7.7 and splits in two, and the seam edge itself must
+    # not come back
     verts, faces, uvs = strip_island(30)
     fold_face(uvs, 10)
     fold_face(uvs, 50)
     mid = pair(30, 31)
     extra = split_islands(verts, faces, {mid}, uvs)
     assert mid not in extra
-    assert island_count(faces, extra | {mid}) == 6
+    assert island_count(faces, extra | {mid}) == 4
 
 
 def test_uv_islands_follow_the_uv_map():
