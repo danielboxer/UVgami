@@ -4,9 +4,10 @@ A cut-open tube unrolls into a strip as long as the tube's ring, and
 the unwrap folds the longest of them, so the 3D shape does not
 predict the unwrapped one. This measures the unwrap itself: ruined
 islands are cut across and unwrapped again, non-disk islands are
-opened, and clean islands split only when they are strips too long to
-pack."""
+opened, and clean islands are cut at feature necks and when they are
+longer than the atlas their own area needs."""
 
+import bisect
 import collections
 import math
 
@@ -15,14 +16,44 @@ from .mesh import build, face_edges, find, island_groups, pair, signed_area
 
 
 # strip test: length squared over uv area, about length/width. a folded
-# strip is sliced into aspect-bound bins, anything else ruined is halved.
+# strip is sliced into bins, anything else ruined is halved.
 # close_rings reuses SPLIT_ASPECT, a closed ring past it would unroll into a
 # strip the split would cut back up anyway
 SPLIT_ASPECT = 6.0
-SPLIT_LENGTH = 0.25
+# length alone must not drag texture use under this, so strips are cut to the
+# side of the square that would hold the scanned uv area at this use
+SPLIT_TARGET = 0.5
+# a clean island is scanned for cuts once it passes this fraction of the cap
+SPLIT_NECK = 0.5
+# width ratio across a slab boundary that reads as a neck: a wide feature
+# turning into a strip, where an artist would put the seam
+SPLIT_STEP = 2.5
 # sweeps of sliding faces across a fresh bin cut while that shortens it,
 # capped so the cut cannot creep along a tapering strip
 STRAIGHTEN_SWEEPS = 4
+# centroids fitting a circle this much tighter than their principal axis
+# line read as an unrolled cone, and cuts go polar instead
+SPLIT_ARC_BAND = 0.65
+# an island thinner than this fraction of its outer distance is a disk,
+# not a band, and slicing a disk into sectors helps nothing
+SPLIT_ARC_ANNULUS = 0.3
+# a split piece below this many faces is a boxed-in fragment, not an
+# island, and rejoins a neighbor
+SPLIT_MIN_PIECE = 4
+
+
+def polygon_area(verts, face):
+    """3d area by fan, the same fan the flatten solves."""
+    x0, y0, z0 = verts[face[0]]
+    total = 0.0
+    for i in range(1, len(face) - 1):
+        ax, ay, az = verts[face[i]]
+        bx, by, bz = verts[face[i + 1]]
+        ux, uy, uz = ax - x0, ay - y0, az - z0
+        vx, vy, vz = bx - x0, by - y0, bz - z0
+        cx, cy, cz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+        total += math.sqrt(cx * cx + cy * cy + cz * cz) / 2.0
+    return total
 
 
 def uv_topology(group, faces, edges, seams):
@@ -162,33 +193,46 @@ def island_ruined(group, faces, uvs, edges, seams):
     return False
 
 
+def face_adjacency(group, faces, edges, seams):
+    """Face to face links inside one island, as {face: [(other, edge key)]}.
+    Only interior edges link, which is the same relation island_groups used
+    to build the island, so the graph is connected."""
+    adjacent = collections.defaultdict(list)
+    in_group = set(group)
+    for f in group:
+        face = faces[f]
+        n = len(face)
+        for i in range(n):
+            key = pair(face[i], face[(i + 1) % n])
+            owners = edges[key]
+            if key in seams or len(owners) != 2:
+                continue
+            other = owners[1] if owners[0] == f else owners[0]
+            if other != f and other in in_group:
+                adjacent[f].append((other, key))
+    return adjacent
+
+
 def straighten_cut(
-    verts, group, faces, edges, seams, bin_of, weights=None, relief=None
+    verts, group, faces, edges, adjacent, bin_of, weights=None, relief=None
 ):
     """Straighten an island's bin cut, returning its seam edges.
 
     The bin line zigzags on diagonal edge flow. Capped sweeps of sliding
     faces across the cut, strictly shortening, flatten single-face teeth.
     Then each connected run of cut edges is swapped for the shortest
-    interior path between its own two endpoints when strictly shorter,
-    which keeps the cut network separating the same way, so this can never
-    cut a tube wall lengthwise. Runs that loop or branch stay. Both passes
-    count a painted edge as longer, so the cut also moves out of restricted
-    areas.
+    interior path between its own two endpoints, when that path is strictly
+    shorter and the run's two sides still come out separated. That check is
+    what stops a path between two far apart boundary ends from running
+    lengthwise along a tube and carving off a sliver. Runs that loop or
+    branch stay. Both passes count a painted edge as longer, so the cut also
+    moves out of restricted areas.
     """
     lengths = {}
     interior = collections.defaultdict(set)
     neighbors = collections.defaultdict(list)
     for f in group:
-        face = faces[f]
-        for i in range(len(face)):
-            key = pair(face[i], face[(i + 1) % len(face)])
-            owners = edges[key]
-            if key in seams or len(owners) != 2:
-                continue
-            other = owners[1] if owners[0] == f else owners[0]
-            if other == f:
-                continue
+        for other, key in adjacent[f]:
             if key not in lengths:
                 lengths[key] = edge_cost(verts, weights, key[0], key[1], relief)
                 interior[key[0]].add(key[1])
@@ -217,6 +261,25 @@ def straighten_cut(
         a, b = edges[key]
         if bin_of[a] != bin_of[b]:
             cuts[pair(bin_of[a], bin_of[b])].add(key)
+
+    def separated(source, target, cut_set):
+        """Whether the two faces land in different pieces once cut_set is cut."""
+        seen = {source}
+        stack = [source]
+        while stack:
+            f = stack.pop()
+            for other, key in adjacent[f]:
+                if key in cut_set or other in seen:
+                    continue
+                if other == target:
+                    return False
+                seen.add(other)
+                stack.append(other)
+        return True
+
+    blocked = set()
+    for cut_edges in cuts.values():
+        blocked |= cut_edges
 
     extra = set()
     for cut_edges in cuts.values():
@@ -267,8 +330,171 @@ def straighten_cut(
                 better = straight and sum(lengths[k] for k in straight) < sum(
                     lengths[k] for k in run
                 )
+            if better:
+                candidate = (blocked - set(run)) | set(straight)
+                # the run's own two sides must stay apart, or the swap cut
+                # the island somewhere else and left the bins joined
+                a, b = edges[run[0]]
+                if separated(a, b, candidate):
+                    blocked = candidate
+                else:
+                    better = False
             extra.update(straight if better else run)
     return extra
+
+
+def arc_parameter(group, centroids, areas, size, cx, cy, xx, xy, yy):
+    """A polar cut parameter, for islands that unroll curved.
+
+    A cone or tapered tube unrolls into an annulus sector, and a cut at
+    one axis position is a chord there: on the mesh it climbs toward the
+    thin end, runs along the rim, and comes back down. When the centroids
+    fit a circle much tighter than their principal axis line, the cut
+    parameter goes polar around the fitted center, whichever direction
+    the sector runs longer: arc length when the strip circles the center,
+    so cuts are radii, one straight line across the tube on the mesh, or
+    distance from the center when the strip runs away from it, so cuts
+    are arcs, a flat ring around the tube. Returns (ts, lo, length), or
+    None to keep the axis.
+    """
+    det = xx * yy - xy * xy
+    if det <= 0:
+        return None
+    szx = szy = 0.0
+    for f in group:
+        dx, dy = centroids[f][0] - cx, centroids[f][1] - cy
+        sq = dx * dx + dy * dy
+        szx += areas[f] * sq * dx
+        szy += areas[f] * sq * dy
+    a = (szx * yy - szy * xy) / (2 * det)
+    b = (szy * xx - szx * xy) / (2 * det)
+    radius_sq = (xx + yy) / size + a * a + b * b
+    if radius_sq <= 0:
+        return None
+    radius = math.sqrt(radius_sq)
+    band = 0.0
+    dists = {}
+    angles = {}
+    for f in group:
+        dx, dy = centroids[f][0] - cx - a, centroids[f][1] - cy - b
+        dists[f] = math.hypot(dx, dy)
+        band += areas[f] * (dists[f] - radius) ** 2
+        angles[f] = math.atan2(dy, dx)
+    across = (xx + yy) / 2 - math.hypot((xx - yy) / 2, xy)
+    if across <= 0 or band > SPLIT_ARC_BAND**2 * across:
+        return None
+    ordered = sorted(angles.values())
+    gaps = [nxt - prev for prev, nxt in zip(ordered, ordered[1:])]
+    gaps.append(ordered[0] + 2 * math.pi - ordered[-1])
+    widest = max(range(len(gaps)), key=lambda i: gaps[i])
+    span = 2 * math.pi - gaps[widest]
+    r_lo, r_hi = min(dists.values()), max(dists.values())
+    if r_hi - r_lo >= span * radius:
+        return dists, r_lo, r_hi - r_lo
+    # a disk covers every distance down to its center, so binning it by
+    # angle would slice a compact island into sectors
+    if r_lo < SPLIT_ARC_ANNULUS * r_hi:
+        return None
+    start = ordered[(widest + 1) % len(ordered)]
+    ts = {f: ((t - start) % (2 * math.pi)) * radius for f, t in angles.items()}
+    return ts, 0.0, span * radius
+
+
+def split_pieces(group, links, cuts):
+    """The island's connected pieces once cuts are cut."""
+    unvisited = set(group)
+    pieces = []
+    while unvisited:
+        seed = unvisited.pop()
+        piece = [seed]
+        stack = [seed]
+        while stack:
+            f = stack.pop()
+            for other, key in links[f]:
+                if other in unvisited and key not in cuts:
+                    unvisited.discard(other)
+                    piece.append(other)
+                    stack.append(other)
+        pieces.append(piece)
+    return pieces
+
+
+def absorb_fragments(pieces, links, cuts):
+    """Rejoin boxed-in fragments, removing their cuts from cuts.
+
+    A replacement path and an existing seam can box in a mesh sliver,
+    leaving an island of a face or two that no packer can use. Such a
+    piece rejoins the full-sized neighbor it shares the most cut edges
+    with, and only those edges reopen, so the other pieces stay apart.
+    A tiny piece among only tiny pieces keeps its cut: that is a small
+    island split on purpose, not an accident."""
+    changed = True
+    while changed and len(pieces) > 1:
+        changed = False
+        for i, piece in enumerate(pieces):
+            if len(piece) >= SPLIT_MIN_PIECE:
+                continue
+            owner = {f: j for j, p in enumerate(pieces) for f in p}
+            shared = collections.defaultdict(set)
+            for f in piece:
+                for other, key in links[f]:
+                    j = owner[other]
+                    if key in cuts and j != i and len(pieces[j]) >= SPLIT_MIN_PIECE:
+                        shared[j].add(key)
+            if not shared:
+                continue
+            best = max(shared, key=lambda j: len(shared[j]))
+            cuts -= shared[best]
+            pieces[best].extend(piece)
+            del pieces[i]
+            changed = True
+            break
+    return pieces
+
+
+def strip_cuts(group, ts, lo, length, cap, areas):
+    """Cut positions along the axis for one clean island.
+
+    The width profile, uv area per slab of the axis, finds feature necks: a
+    hard local step in width is a wide area turning into a strip, where an
+    artist would cut. Only the strongest neck is returned: the caller
+    re-scans each piece on its own axis, which is what finds the necks a
+    bent island smears along its whole-shape axis. With no neck, a strip
+    past the cap fills with even cuts, and a compact island is never
+    filled, however long."""
+    slabs = 24
+    slab = [0.0] * slabs
+    for f in group:
+        slab[min(slabs - 1, int((ts[f] - lo) / length * slabs))] += areas[f]
+    width = [a * slabs / length for a in slab]
+    smooth = [
+        (width[max(0, i - 1)] + width[i] + width[min(slabs - 1, i + 1)]) / 3
+        for i in range(slabs)
+    ]
+
+    def median(xs):
+        xs = sorted(xs)
+        return xs[len(xs) // 2]
+
+    best = None
+    # the profile needs a few faces per slab to mean anything
+    if len(group) >= 2 * slabs:
+        for j in range(3, slabs - 2):
+            # windows local to j, a global median cannot place the step
+            left = median(smooth[max(0, j - 3) : j])
+            right = median(smooth[j : min(slabs, j + 3)])
+            if min(left, right) <= 0:
+                continue
+            ratio = max(left, right) / min(left, right)
+            if ratio > SPLIT_STEP and (best is None or ratio > best[0]):
+                best = (ratio, j)
+    if best is not None:
+        return [lo + best[1] / slabs * length]
+    size = sum(slab)
+    if size > 0 and length > cap and length * length / size > SPLIT_ASPECT:
+        n = math.ceil(length / cap)
+        return [lo + length * k / n for k in range(1, n)]
+    return []
 
 
 def split_islands(verts, faces, seams, uvs, weights=None, groups=None):
@@ -276,14 +502,17 @@ def split_islands(verts, faces, seams, uvs, weights=None, groups=None):
 
     Runs on the unwrap of the seams this package chose and measures the
     unwrap itself, the 3D shape does not predict it: per island, the extent
-    along the principal axis of its face centroids against its uv area. A
+    along the principal axis of its face centroids against its uv area,
+    measured as arc length instead when the island unrolled into a fan. A
     folded strip bins along that axis and the edges between bins are the
     seams for a second unwrap, a ruined island that is not a strip is
     halved, and a non-disk island is opened with a path joining two of its
-    boundary loops, splitting cannot fix topology. A clean island is left
-    whole unless it is a strip past the length and aspect bounds, those
-    pack badly and artists slice them too. groups restricts the scan, for
-    a caller that knows the rest is unchanged.
+    boundary loops, splitting cannot fix topology. A clean island long
+    enough to matter is cut at its strongest feature neck and its pieces
+    are scanned again on their own axes, and a neckless strip longer than
+    the atlas its scanned area needs is sliced even, since one long strip
+    caps how far everything can be scaled up. groups restricts the scan,
+    for a caller that knows the rest is unchanged.
     """
     edges = face_edges(faces)
     if groups is None:
@@ -300,8 +529,12 @@ def split_islands(verts, faces, seams, uvs, weights=None, groups=None):
         return relief
 
     extra = set()
-    # an island is what the unwrap made one: faces joined by unseamed edges
-    for group in groups:
+
+    # every length compares at even texel density, uv lengths scaled by
+    # sqrt(3d area over uv area): the engine packs each island at its own
+    # scale, and a long island exported small must not slip the gate it
+    # would fail once packing evens the densities out
+    def measure(group):
         centroids = {}
         areas = {}
         for f in group:
@@ -312,8 +545,9 @@ def split_islands(verts, faces, seams, uvs, weights=None, groups=None):
             )
             areas[f] = abs(signed_area(pts))
         size = sum(areas.values())
-        if len(group) < 2 or size <= 0:
-            continue
+        area3d = sum(polygon_area(verts, faces[f]) for f in group)
+        if len(group) < 2 or size <= 0 or area3d <= 0:
+            return None
         cx = sum(areas[f] * centroids[f][0] for f in group) / size
         cy = sum(areas[f] * centroids[f][1] for f in group) / size
         xx = xy = yy = 0.0
@@ -322,15 +556,41 @@ def split_islands(verts, faces, seams, uvs, weights=None, groups=None):
             xx += areas[f] * dx * dx
             xy += areas[f] * dx * dy
             yy += areas[f] * dy * dy
-        angle = 0.5 * math.atan2(2 * xy, xx - yy)
-        axis = (math.cos(angle), math.sin(angle))
-        ts = {f: centroids[f][0] * axis[0] + centroids[f][1] * axis[1] for f in group}
-        lo, hi = min(ts.values()), max(ts.values())
-        length = hi - lo
-        aspect = length * length / size
-        strip = length >= SPLIT_LENGTH and aspect > SPLIT_ASPECT
-        if not island_ruined(group, faces, uvs, edges, seams):
-            if not strip:
+        arc = arc_parameter(group, centroids, areas, size, cx, cy, xx, xy, yy)
+        if arc is not None:
+            ts, lo, length = arc
+        else:
+            angle = 0.5 * math.atan2(2 * xy, xx - yy)
+            axis = (math.cos(angle), math.sin(angle))
+            ts = {
+                f: centroids[f][0] * axis[0] + centroids[f][1] * axis[1] for f in group
+            }
+            lo, hi = min(ts.values()), max(ts.values())
+            length = hi - lo
+        return ts, lo, length, size, areas, math.sqrt(area3d / size)
+
+    # an island too small to cut still takes up the atlas
+    total = sum(polygon_area(verts, faces[f]) for g in groups for f in g)
+    if total <= 0:
+        return extra
+    cap = math.sqrt(total / SPLIT_TARGET)
+
+    # an island is what the unwrap made one: faces joined by unseamed edges
+    queue = collections.deque(groups)
+    while queue:
+        group = queue.popleft()
+        m = measure(group)
+        if m is None:
+            continue
+        ts, lo, length, size, areas, density = m
+        # the cap in this island's own uv units
+        local_cap = cap / density
+        clean = not island_ruined(group, faces, uvs, edges, seams)
+        if clean:
+            if length <= 0 or length <= local_cap * SPLIT_NECK:
+                continue
+            cuts_at = strip_cuts(group, ts, lo, length, local_cap, areas)
+            if not cuts_at:
                 continue
         elif len(loops := uv_topology(group, faces, edges, seams)[1]) > 1:
             # non-disk: open it with a path joining two boundary loops, only
@@ -346,12 +606,28 @@ def split_islands(verts, faces, seams, uvs, weights=None, groups=None):
                         adjacent[key[1]].add(key[0])
             extra |= connect_loops(verts, adjacent, loops, weights, cut_relief())
             continue
-        if length <= 0:
-            # every centroid projects to one point (doubled faces), no bin split
-            continue
-        bins = math.ceil(aspect / SPLIT_ASPECT) if strip else 2
-        bin_of = {f: min(bins - 1, int((ts[f] - lo) / length * bins)) for f in group}
-        extra |= straighten_cut(
-            verts, group, faces, edges, seams, bin_of, weights, cut_relief()
+        else:
+            if length <= 0:
+                # every centroid projects to one point (doubled faces), no cut
+                continue
+            # a ruined strip past the cap slices even, anything else halves
+            strip = length * length / size > SPLIT_ASPECT and length > local_cap
+            bins = math.ceil(length / local_cap) if strip else 2
+            cuts_at = [lo + length * k / bins for k in range(1, bins)]
+        links = face_adjacency(group, faces, edges, seams)
+        bin_of = {f: bisect.bisect(cuts_at, ts[f]) for f in group}
+        new = straighten_cut(
+            verts, group, faces, edges, links, bin_of, weights, cut_relief()
         )
+        if not new:
+            continue
+        pieces = split_pieces(group, links, new)
+        pieces = absorb_fragments(pieces, links, new)
+        if not new:
+            continue
+        extra |= new
+        # a bent island hides its next neck until each piece is measured on
+        # its own axis, so the pieces go back through the scan
+        if clean and len(pieces) > 1:
+            queue.extend(pieces)
     return extra
