@@ -10,7 +10,7 @@ from .batch import BatchProcess, last_meaningful_line
 from .job import Join, Result
 from .logger import logger
 from .ops.grid import add_grid, make_grid_img, make_grid_mat
-from .ops.uv import pack, should_pack, show_seams
+from .ops.uv import pack, show_seams
 from .progress_bar import progress_bar
 from .reroute_seams import reroute_seams
 from .utils.geometry import set_origin
@@ -372,12 +372,31 @@ class UnwrapManager:
         if unwrap.symmetrize_job is not None:
             unwrap.symmetrize_job.finish(output)
 
+        pieces = unwrap.join_job.finished if unwrap.join_job is not None else [unwrap]
+        if any(u.preseeded for u in pieces):
+            # imported here: ops.island imports this module back
+            from .ops.island import finish_preseed
+
+            ranges = None
+            if len(pieces) > 1:
+                ranges = []
+                start = 0
+                for u in pieces:
+                    # material_indices is the piece's own face count
+                    stop = start + len(u.material_indices)
+                    if u.preseeded:
+                        ranges.append((start, stop))
+                    start = stop
+                if start != len(output.data.polygons):
+                    ranges = None
+            finish_preseed(output, ranges)
+
         # automatically add grid material to final object
         if props.auto_grid:
             grid_img = make_grid_img()
             add_grid(output, make_grid_mat(grid_img))
 
-        if should_pack(props):
+        if props.pack_after_unwrap:
             self._pack_output_objects.append(output)
 
         edit_restore([output], show_seams)
@@ -397,7 +416,7 @@ class UnwrapManager:
             input_mesh = self.input[job]
             # locate output in the pack list before finish deletes output
             pack_index = None
-            if should_pack(props):
+            if props.pack_after_unwrap:
                 for i, obj in enumerate(self._pack_output_objects):
                     if obj == output:
                         pack_index = i
@@ -523,7 +542,7 @@ class UnwrapManager:
     def _finish_batch(self):
         """Called when all unwraps are done (completed, failed, or cancelled)."""
         props = bpy.context.scene.uvgami
-        if should_pack(props) and self._pack_output_objects:
+        if props.pack_after_unwrap and self._pack_output_objects:
             valid_objects = [o for o in self._pack_output_objects if check_exists(o)]
             if valid_objects:
                 if props.combine_uvs:

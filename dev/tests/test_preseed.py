@@ -16,7 +16,7 @@ from seams import (  # noqa: E402
     FlattenError,
     preseed_uvs,
 )
-from seams.preseed import _read_uvs, polygon_area, submesh  # noqa: E402
+from seams.preseed import _read_uvs, submesh  # noqa: E402
 
 BUNDLED = Path(__file__).parents[2] / "engines" / "windows" / "optcuts.exe"
 
@@ -42,15 +42,14 @@ CUBE_FACES = [
 
 class GridEngine:
     """Fake flatten: every face becomes its own unit quad on a grid, and the
-    first face comes back flipped so the island always reads as ruined and
-    the repair loop exercises without a binary."""
+    first face comes back flipped, so a ruined island is available to assert
+    it ships untouched for the engine to recut."""
 
     def __init__(self):
         self.flatten_calls = []
-        self.pack_calls = 0
 
-    def flatten(self, verts, faces, seams, iterations=10):
-        self.flatten_calls.append((len(faces), frozenset(seams), iterations))
+    def flatten(self, verts, faces, seams):
+        self.flatten_calls.append((len(faces), frozenset(seams)))
         out = []
         for i, face in enumerate(faces):
             x = float(i)
@@ -58,14 +57,6 @@ class GridEngine:
             corners = corners[: len(face)]
             out.append(corners[::-1] if i == 0 else corners)
         return out
-
-    def pack(self, verts, faces, uvs):
-        self.pack_calls += 1
-        return uvs
-
-
-def test_polygon_area_quad():
-    assert polygon_area(CUBE_VERTS, CUBE_FACES[0]) == pytest.approx(1.0)
 
 
 def test_submesh_compacts_and_remaps_seams():
@@ -110,13 +101,15 @@ def test_preseed_marked_only_uses_given_seams():
     )
     assert marked <= seams
     assert all(uv is not None for uv in uvs)
-    # the grid layout is ruined, so the loop repaired and packed
-    assert engine.pack_calls == 1
-    assert len(engine.flatten_calls) >= 2
+    # the ruined grid layout ships as-is, one flatten and no repair: the
+    # engine rejects the bad island and recuts it itself
+    assert len(engine.flatten_calls) == 1
     first = engine.flatten_calls[0]
     assert first[0] == len(CUBE_FACES)
     # marked seams reach the engine remapped but complete
     assert len(first[1]) == len(marked)
+    # the flipped first face comes back exactly as the fake produced it
+    assert uvs[0] == [(0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (0.0, 0.0)]
 
 
 def test_preseed_only_leaves_other_faces_alone():

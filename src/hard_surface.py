@@ -134,21 +134,21 @@ def build_seam_uvs(obj, angle=CREASE_ANGLE, marked="NONE", weights=None, only=No
     ADD detects as usual and forces the marks on top, cutting from the
     partition on so no merge pass can dissolve one: a detected seam running
     beside a marked one gives way instead of leaving a ribbon between the two.
-    The repair loop still adds cuts either way, but only inside islands the
-    engine would reject, so hand-placed seams on healthy islands come through
-    untouched.
+    An island the flatten ruins ships as-is: the engine rejects it and recuts
+    it with its own search, so hand-placed seams on healthy islands come
+    through untouched.
 
     weights are the painted restrictions, which steer every cut this module
     places, the same paint the engine reads for the cuts it makes itself.
 
     only restricts everything to those face indices, whole loose parts in
-    auto mode: detection, the flatten, the repair loop and the final pack all
-    skip the other parts, whose uvs are left exactly as they were.
+    auto mode: detection and the flatten skip the other parts, whose uvs are
+    left exactly as they were.
 
-    The solve, the repair decisions and the pack all run outside Blender, in
-    seams.preseed against the engine's flatten mode. This function only reads
-    the mesh into arrays and writes the result back. Returns False when the
-    seam set came out empty on a closed mesh, leaving the mesh untouched."""
+    The solve runs outside Blender, in seams.preseed against the engine's
+    flatten mode. This function only reads the mesh into arrays and writes
+    the result back. Returns False when the seam set came out empty on a
+    closed mesh, leaving the mesh untouched."""
     mesh = obj.data
     verts = [tuple(v.co) for v in mesh.vertices]
     faces = [tuple(p.vertices) for p in mesh.polygons]

@@ -92,8 +92,6 @@ class PartuvEngine(Engine):
     icon = "MOD_EXPLODE"
     property_group = UVGAMI_PG_partuv
     classes = (UVGAMI_PG_partuv, UVGAMI_OT_install_partuv, UVGAMI_OT_uninstall_partuv)
-    # partuv writes every chart at the origin, so unpacked output overlaps
-    requires_pack = True
 
     def is_available(self):
         return platform.system() in PARTUV_PLATFORMS
