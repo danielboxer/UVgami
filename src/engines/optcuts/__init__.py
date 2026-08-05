@@ -8,9 +8,7 @@ from ...hard_surface import (
     preseed_work,
     seam_restrictions,
 )
-from ...seams import FlattenError
 from ...utils.io import print_stdin
-from ...utils.mesh import deselect_all, validate_obj
 from ...utils.ui import only_active
 from ..binary_engine import BinaryEngine
 from .install import OPTCUTS, UVGAMI_OT_install_optcuts
@@ -27,20 +25,6 @@ class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
             "Automatically unwrap sharp objects in hard surface mode and"
             " otherwise in normal mode"
         ),
-    )
-    hard_surface_marked: bpy.props.EnumProperty(
-        name="",
-        description="What to do with the seams already marked on the mesh",
-        items=(
-            ("NONE", "Detect", "Detect every seam, marked edges are ignored"),
-            ("ADD", "Both", "Detect seams and cut the marked edges too"),
-            (
-                "ONLY",
-                "Marked",
-                "Marked edges are the whole seam set, nothing is detected",
-            ),
-        ),
-        default="NONE",
     )
     hard_surface_angle: bpy.props.FloatProperty(
         name="Angle",
@@ -67,68 +51,6 @@ class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
     @property
     def is_auto(self):
         return self.use_hard_surface and self.hard_surface_auto
-
-
-class UVGAMI_OT_preview_seams(bpy.types.Operator):
-    bl_idname = "uvgami.preview_seams"
-    bl_label = "Mark Seams (Dev)"
-    bl_description = (
-        "Preview the hard surface seams with Blender's unwrap, no engine run"
-    )
-    bl_options = {"UNDO"}
-
-    def execute(self, context):
-        props = context.scene.uvgami
-        optcuts = props.optcuts
-        angle = math.degrees(optcuts.hard_surface_angle)
-        marked = optcuts.hard_surface_marked
-        guided = props.avoid_seams
-        selected = list(context.selected_objects)
-        active = context.view_layer.objects.active
-        mode = active.mode if active is not None else "OBJECT"
-        if mode != "OBJECT":
-            bpy.ops.object.mode_set(mode="OBJECT")
-
-        counts = []
-        flatten_error = None
-        for obj in selected:
-            if not validate_obj(self, obj):
-                continue
-            only = None
-            if optcuts.is_auto:
-                only = auto_hard_faces(obj, marked)
-                if not only:
-                    counts.append("organic")
-                    continue
-                if len(only) == len(obj.data.polygons):
-                    only = None
-            weights = seam_restrictions(obj) if guided else None
-            try:
-                applied = build_seam_uvs(obj, angle, marked, weights, only)
-            except FlattenError as error:
-                flatten_error = str(error)
-                break
-            if not applied:
-                counts.append("no seams")
-                continue
-            counts.append(str(sum(1 for edge in obj.data.edges if edge.use_seam)))
-
-        deselect_all()
-        for obj in selected:
-            obj.select_set(True)
-        context.view_layer.objects.active = active
-        if active is not None and mode != "OBJECT":
-            bpy.ops.object.mode_set(mode=mode)
-
-        if flatten_error is not None:
-            self.report({"ERROR"}, flatten_error)
-            # FINISHED so the undo step covers meshes already written
-            return {"FINISHED"}
-        if not counts:
-            self.report({"ERROR"}, "Select a mesh with faces")
-            return {"CANCELLED"}
-        self.report({"INFO"}, f"Seams: {', '.join(counts)}")
-        return {"FINISHED"}
 
 
 class UVGAMI_PT_hard_surface(bpy.types.Panel):
@@ -162,18 +84,9 @@ class UVGAMI_PT_hard_surface(bpy.types.Panel):
 
         box.prop(optcuts, "hard_surface_auto")
 
-        split = box.split(factor=0.7)
-        split.label(icon="EDGESEL", text="Marked Seams")
-        split.prop(optcuts, "hard_surface_marked", text="")
-
         row = box.row()
-        row.active = optcuts.hard_surface_marked != "ONLY"
         row.label(icon="DRIVER_ROTATIONAL_DIFFERENCE", text="Angle")
         row.prop(optcuts, "hard_surface_angle", text="")
-
-        row = box.row()
-        row.scale_y = 1.5
-        row.operator("uvgami.preview_seams", icon="UV_EDGESEL")
 
 
 class OptcutsEngine(BinaryEngine):
@@ -189,7 +102,6 @@ class OptcutsEngine(BinaryEngine):
     classes = (
         UVGAMI_PG_optcuts,
         UVGAMI_OT_install_optcuts,
-        UVGAMI_OT_preview_seams,
         UVGAMI_PT_hard_surface,
     )
     supports_guided = True
@@ -231,7 +143,7 @@ class OptcutsEngine(BinaryEngine):
             return props.import_uvs
         only = None
         if optcuts.is_auto:
-            only = auto_hard_faces(obj, optcuts.hard_surface_marked)
+            only = auto_hard_faces(obj)
             if not only:
                 return props.import_uvs
             if len(only) == len(obj.data.polygons):
@@ -239,9 +151,8 @@ class OptcutsEngine(BinaryEngine):
         applied = build_seam_uvs(
             obj,
             math.degrees(optcuts.hard_surface_angle),
-            optcuts.hard_surface_marked,
-            seam_restrictions(obj) if props.avoid_seams else None,
-            only,
+            weights=seam_restrictions(obj) if props.avoid_seams else None,
+            only=only,
         )
         return applied or props.import_uvs
 
@@ -252,8 +163,7 @@ class OptcutsEngine(BinaryEngine):
         compute, apply = preseed_work(
             obj,
             math.degrees(optcuts.hard_surface_angle),
-            optcuts.hard_surface_marked,
-            seam_restrictions(obj) if props.avoid_seams else None,
+            weights=seam_restrictions(obj) if props.avoid_seams else None,
             auto=optcuts.is_auto,
         )
         # an auto run that finds nothing hard falls back to prepare_uvs' answer
