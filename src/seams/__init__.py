@@ -30,6 +30,7 @@ from .pipeline import is_hard_surface, seam_edges
 from .preseed import (
     FlattenEngine,
     FlattenError,
+    check_manifold,
     preseed_uvs,
 )
 from .regions import (
@@ -55,6 +56,7 @@ __all__ = [
     "absorb",
     "boundary_edges",
     "build",
+    "check_manifold",
     "close_rings",
     "crease_relief",
     "cross",
