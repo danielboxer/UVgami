@@ -947,6 +947,74 @@ int main(int argc, char *argv[]) {
 
     hasUV = !ignoreUV && (UV.rows() != 0);
     if (!hasUV) {
+        // a bowtie vertex joins two face fans at a point. split it into one
+        // vertex per fan so the mesh passes the manifold check below, the
+        // position is unchanged and the fans were only touching anyway
+        {
+            std::vector<std::vector<int>> vertTris(V.rows());
+            for (int triI = 0; triI < F.rows(); ++triI) {
+                for (int i = 0; i < 3; ++i) {
+                    vertTris[F(triI, i)].emplace_back(triI);
+                }
+            }
+            int bowtieAmt = 0;
+            const int vAmt = static_cast<int>(vertTris.size());
+            for (int vI = 0; vI < vAmt; ++vI) {
+                const std::vector<int> &tris = vertTris[vI];
+                if (tris.size() < 2) {
+                    continue;
+                }
+                // fans are the connected groups of incident triangles,
+                // joined when two share an edge through vI
+                std::map<int, std::vector<int>> edgeTris;
+                for (const auto triI : tris) {
+                    for (int i = 0; i < 3; ++i) {
+                        if (F(triI, i) != vI) {
+                            edgeTris[F(triI, i)].emplace_back(triI);
+                        }
+                    }
+                }
+                std::set<int> left(tris.begin(), tris.end());
+                bool firstFan = true;
+                while (!left.empty()) {
+                    std::vector<int> fan({*left.begin()});
+                    left.erase(fan[0]);
+                    for (size_t fanI = 0; fanI < fan.size(); ++fanI) {
+                        for (int i = 0; i < 3; ++i) {
+                            const int u = F(fan[fanI], i);
+                            if (u == vI) {
+                                continue;
+                            }
+                            for (const auto nbTriI : edgeTris[u]) {
+                                if (left.erase(nbTriI)) {
+                                    fan.emplace_back(nbTriI);
+                                }
+                            }
+                        }
+                    }
+                    if (firstFan) {
+                        firstFan = false;
+                        continue;
+                    }
+                    const int nV = static_cast<int>(V.rows());
+                    V.conservativeResize(nV + 1, 3);
+                    V.row(nV) = V.row(vI);
+                    for (const auto triI : fan) {
+                        for (int i = 0; i < 3; ++i) {
+                            if (F(triI, i) == vI) {
+                                F(triI, i) = nV;
+                            }
+                        }
+                    }
+                    ++bowtieAmt;
+                }
+            }
+            if (bowtieAmt) {
+                std::cerr << "split " << bowtieAmt
+                          << " non-manifold vertices into per-fan copies"
+                          << std::endl;
+            }
+        }
         vertAmt_input = V.rows();
         Eigen::VectorXi B;
         bool isManifoldVertices = igl::is_vertex_manifold(F, B);
@@ -1281,6 +1349,53 @@ int main(int argc, char *argv[]) {
                 F_component[C[triI]].bottomRows(1) = temp.F.row(triI);
                 for (int i = 0; i < 3; ++i) {
                     V_ind_component[C[triI]].insert(temp.F(triI, i));
+                }
+            }
+        }
+
+        // cutting through a boundary vertex can orphan the original row,
+        // every face reassigned to its duplicate. an orphan poisons what
+        // follows: its zero laplacian row makes the tutte solve singular,
+        // and the scaffold seeds a triangle hole at its position, so drop
+        // orphan rows and remap before flattening
+        {
+            std::vector<int> vMap(temp.V.rows(), -1);
+            for (int triI = 0; triI < temp.F.rows(); ++triI) {
+                for (int i = 0; i < 3; ++i) {
+                    vMap[temp.F(triI, i)] = 0;
+                }
+            }
+            int vNew = 0;
+            for (int vI = 0; vI < temp.V.rows(); ++vI) {
+                if (vMap[vI] == 0) {
+                    vMap[vI] = vNew++;
+                }
+            }
+            if (vNew < temp.V.rows()) {
+                for (int vI = 0; vI < temp.V.rows(); ++vI) {
+                    if (vMap[vI] >= 0 && vMap[vI] != vI) {
+                        temp.V_rest.row(vMap[vI]) = temp.V_rest.row(vI);
+                        temp.V.row(vMap[vI]) = temp.V.row(vI);
+                        temp.vertWeight[vMap[vI]] = temp.vertWeight[vI];
+                    }
+                }
+                temp.V_rest.conservativeResize(vNew, 3);
+                temp.V.conservativeResize(vNew, 2);
+                temp.vertWeight.conservativeResize(vNew);
+                for (int triI = 0; triI < temp.F.rows(); ++triI) {
+                    for (int i = 0; i < 3; ++i) {
+                        temp.F(triI, i) = vMap[temp.F(triI, i)];
+                    }
+                }
+                F_component.assign(n_components, Eigen::MatrixXi());
+                V_ind_component.assign(n_components, std::set<int>());
+                for (int triI = 0; triI < temp.F.rows(); ++triI) {
+                    F_component[C[triI]].conservativeResize(
+                        F_component[C[triI]].rows() + 1, 3);
+                    F_component[C[triI]].bottomRows(1) = temp.F.row(triI);
+                    for (int i = 0; i < 3; ++i) {
+                        V_ind_component[C[triI]].insert(temp.F(triI, i));
+                    }
                 }
             }
         }
