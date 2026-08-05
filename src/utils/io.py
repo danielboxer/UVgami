@@ -185,6 +185,8 @@ def import_obj(path, name=""):
     starts = numpy.cumsum(totals) - totals
     mesh.polygons.foreach_set("loop_start", starts)
     mesh.polygons.foreach_set("loop_total", totals)
+    # some meshes have no sharp_face attribute
+    mesh.polygons.foreach_set("use_smooth", numpy.zeros(len(totals), dtype=bool))
     if len(uvs):
         layer = mesh.uv_layers.new()
         layer.data.foreach_set("uv", uvs[loop_vts].ravel())
