@@ -87,7 +87,7 @@ def apply_face_uvs(mesh, uvs, only=None):
                 layer[li].uv = uv
 
 
-def preseed_work(obj, angle, marked, weights, auto=False):
+def preseed_work(obj, angle, marked="NONE", weights=None, auto=False):
     """build_seam_uvs split for a worker thread: compute is bpy-free and safe
     off the main thread, apply(compute()) writes the result back. compute
     returns None when there is nothing to preseed (no hard parts in auto, or
