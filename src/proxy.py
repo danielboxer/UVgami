@@ -25,7 +25,7 @@ from .hard_surface import (
     marked_seams,
     seam_restrictions,
 )
-from .seams import face_edges, snap_paths
+from .seams import check_manifold, face_edges, snap_paths
 from .utils.mesh import new_bmesh, set_bmesh
 
 # candidates to pick a facing match from when snapping a cut vertex
@@ -149,5 +149,6 @@ def transfer_cuts(input_mesh, output):
     # the proxy already settled which cuts the shape needs, so the dense mesh
     # only has to flatten and pack once
     faces = [tuple(poly.vertices) for poly in data.polygons]
+    check_manifold(faces)
     uvs = flatten_engine().flatten(verts, faces, seams)
     apply_face_uvs(data, uvs)

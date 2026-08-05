@@ -19,6 +19,15 @@ class FlattenError(RuntimeError):
     pass
 
 
+def check_manifold(faces):
+    """Guard for flattens whose result ships as the final map. The engine
+    doesn't validate in flatten mode: a non-manifold mesh comes back as
+    degenerate uvs with exit 0. The unwrap path skips this on purpose, a
+    ruined island there is recut by the engine."""
+    if any(len(owners) > 2 for owners in face_edges(faces).values()):
+        raise FlattenError("Non Manifold Edges")
+
+
 class FlattenEngine:
     """Client for the engine's flatten mode. Each call gets its own subdir of
     workdir: the preview operator, a builder thread and transfer_cuts can all
@@ -30,10 +39,6 @@ class FlattenEngine:
 
     def flatten(self, verts, faces, seams):
         """Per-face corner uvs for faces cut along seams, packed."""
-        # the engine doesn't validate in flatten mode: a non-manifold mesh
-        # comes back as degenerate uvs with exit 0
-        if any(len(owners) > 2 for owners in face_edges(faces).values()):
-            raise FlattenError("Non Manifold Edges")
         return self._run(verts, faces, seams)
 
     def _run(self, verts, faces, seams):
@@ -141,11 +146,6 @@ def preseed_uvs(
     subset = list(range(len(faces))) if only is None else sorted(only)
     in_subset = set(subset)
     edges = face_edges(faces)
-    # the engine rejects non manifold meshes anyway, fail here with a clear
-    # error instead of flattening it into degenerate uvs
-    if any(len(owners) > 2 for owners in edges.values() if owners[0] in in_subset):
-        raise FlattenError("Non Manifold Edges")
-
     if marked == "ONLY":
         seams = set(marked_seams)
     else:

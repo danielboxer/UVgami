@@ -14,6 +14,7 @@ spec.loader.exec_module(sys.modules["seams"])
 from seams import (  # noqa: E402
     FlattenEngine,
     FlattenError,
+    check_manifold,
     preseed_uvs,
 )
 from seams.preseed import _read_uvs, submesh  # noqa: E402
@@ -85,12 +86,10 @@ def test_engine_failure_raises(tmp_path):
         engine.flatten(CUBE_VERTS, CUBE_FACES, set())
 
 
-def test_flatten_rejects_non_manifold(tmp_path):
-    # an edge with 3 faces fails before the binary is even resolved
-    engine = FlattenEngine(tmp_path / "missing.exe", tmp_path)
+def test_check_manifold_rejects_three_owner_edge():
     faces = list(CUBE_FACES) + [(0, 3, 6)]
     with pytest.raises(FlattenError, match="Non Manifold"):
-        engine.flatten(CUBE_VERTS, faces, set())
+        check_manifold(faces)
 
 
 def test_preseed_marked_only_uses_given_seams():
