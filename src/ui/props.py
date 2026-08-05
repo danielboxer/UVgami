@@ -7,11 +7,9 @@ from ..utils.paths import get_addon_id
 
 # built once so the item strings stay referenced, which blender requires for
 # dynamic enum callbacks. explicit numbers keep saved files stable as the
-# installed set changes, and numbering by id keeps them stable when the ui
-# order changes too
+# installed set changes
 _ENGINE_ITEMS = {
-    e.id: (e.id, e.label, e.description, number)
-    for number, e in enumerate(sorted(ENGINES.values(), key=lambda e: e.id))
+    e.id: (e.id, e.label, e.description, e.enum_value) for e in ENGINES.values()
 }
 
 
