@@ -178,6 +178,7 @@ class UVGAMI_PT_hard_surface(bpy.types.Panel):
 
 class OptcutsEngine(BinaryEngine):
     id = "OPTCUTS"
+    enum_value = 0
     label = "Optcuts"
     description = (
         "Default CPU engine. Highest quality but can be slow."

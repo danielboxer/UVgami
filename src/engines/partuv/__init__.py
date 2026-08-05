@@ -16,6 +16,7 @@ from .install import (
     PARTUV_PLATFORMS,
     UVGAMI_OT_install_partuv,
     UVGAMI_OT_uninstall_partuv,
+    get_installed_partuv_version,
     partuv_update_pending,
 )
 from .paths import (
@@ -85,6 +86,7 @@ class PartuvRun:
 
 class PartuvEngine(Engine):
     id = "PARTUV"
+    enum_value = 1
     label = "PartUV"
     description = "GPU engine. Fewer islands and can be faster on dense meshes"
     icon = "MOD_EXPLODE"
@@ -108,6 +110,9 @@ class PartuvEngine(Engine):
         if is_partuv_installed():
             return PartuvRun("installed", get_partuv_venv_path()), None
         return None, "PartUV is not installed. Download it in the add-on preferences"
+
+    def invalidate_caches(self):
+        get_installed_partuv_version.cache_clear()
 
     def draw_settings(self, layout, props):
         row = layout.row()

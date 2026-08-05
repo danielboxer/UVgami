@@ -1,3 +1,5 @@
+import importlib.util
+
 from ..utils.paths import get_preferences
 
 
@@ -6,6 +8,10 @@ class Engine:
     label = ""
     description = ""
     icon = "TOOL_SETTINGS"
+    # the engine enum value saved in blend files. must be unique and must never
+    # change or be reused, and it can't be derived from ENGINES because not
+    # every build ships every engine
+    enum_value = 0
     # every bpy class the engine needs (its property group plus any operators)
     property_group = None
     classes = ()
@@ -30,6 +36,9 @@ class Engine:
         """Return (ctx, None) if usable, else (None, error_message). ctx is an
         engine-defined run context passed back to the build_* and stop methods."""
         raise NotImplementedError
+
+    def invalidate_caches(self):
+        """Drop anything the engine cached about its own install."""
 
     def draw_settings(self, layout, props):
         """Draw this engine's settings rows in the main panel."""
@@ -105,10 +114,18 @@ class Engine:
 
 
 # imported after Engine because each module subclasses it
-from . import optcuts, partuv, xatlas  # noqa: E402
+from . import optcuts, xatlas  # noqa: E402
 
 # order sets the enum/ui order
-ENGINES = {e.id: e for e in (optcuts.ENGINE, xatlas.ENGINE, partuv.ENGINE)}
+_engines = [optcuts.ENGINE, xatlas.ENGINE]
+
+# partuv is optional, some builds ship without its folder
+if importlib.util.find_spec(f"{__name__}.partuv") is not None:
+    from . import partuv  # noqa: E402
+
+    _engines.append(partuv.ENGINE)
+
+ENGINES = {e.id: e for e in _engines}
 
 
 def get_engine(engine_id):
@@ -124,7 +141,8 @@ _installed_cache = None
 def invalidate_engine_caches():
     global _installed_cache
     _installed_cache = None
-    partuv.install.get_installed_partuv_version.cache_clear()
+    for engine in ENGINES.values():
+        engine.invalidate_caches()
 
 
 def installed_engines():

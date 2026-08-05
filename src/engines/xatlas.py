@@ -31,6 +31,7 @@ class UVGAMI_PG_xatlas(bpy.types.PropertyGroup):
 
 class XatlasEngine(BinaryEngine):
     id = "XATLAS"
+    enum_value = 2
     label = "xatlas"
     description = "Fast CPU engine for baking lightmaps and texture painting"
     icon = "MESH_GRID"

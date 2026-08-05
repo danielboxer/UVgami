@@ -81,6 +81,19 @@ jobs:
       - name: Zip the addon
         run: zip -r ${ADDON_NAME}.zip $INCLUDED_FILES
 
+      # partuv bundles PartField, whose license allows non-commercial use only.
+      # artifact rather than a release asset, only the zip above is public
+      - name: Zip the addon without partuv
+        # the trailing * without a slash also drops the directory entry, which
+        # python would otherwise import as an empty namespace package
+        run: zip -r ${ADDON_NAME}-no-partuv.zip $INCLUDED_FILES -x 'src/engines/partuv*'
+
+      - name: Upload the addon without partuv
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ADDON_NAME }}-no-partuv
+          path: ${{ env.ADDON_NAME }}-no-partuv.zip
+
       - name: Determine TAG
         run: echo "TAG=${{ needs.prepare.outputs.tag }}" >> $GITHUB_ENV
 
