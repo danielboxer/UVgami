@@ -27,6 +27,7 @@ def unwrap_settings(props):
                 engine.supports_guided and props.use_weights,
             ),
             ("MOD_DECIM", "Proxy", "use_proxy", props.use_proxy),
+            ("MOD_ARRAY", "Stack Similar", "stack_similar", props.stack_similar),
             ("MOD_MIRROR", "Symmetry", "use_symmetry", props.use_symmetry),
             (
                 "CON_ROTLIKE",
@@ -308,6 +309,10 @@ class UVGAMI_PT_speed(EnginePanel, bpy.types.Panel):
             row = sub.row()
             row.label(text="Proxy Faces", icon="MESH_DATA")
             row.prop(props, "proxy_faces")
+
+        split = box.split(factor=0.7)
+        split.label(icon="MOD_ARRAY", text="Stack Similar")
+        split.prop(props, "stack_similar")
 
         draw_timeout(box, props)
 
