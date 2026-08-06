@@ -34,6 +34,6 @@ This is a different engine that requires an NVIDIA GPU. Install the add-on, then
 
 UVgami has three unwrapping engines, see the [docs](docs/docs.md) for more info:
 
-- OptCuts (CPU): [OptCuts](https://github.com/liminchen/OptCuts) by Minchen Li (MIT License), modified to work in Blender
-- PartUV (GPU): [PartUV](https://github.com/EricWang12/PartUV) by Zhaoning Wang (Apache 2.0)
-- xatlas (CPU): [xatlas](https://github.com/jpcy/xatlas) by Jonathan Young (MIT License)
+- OptCuts (CPU): [OptCuts](https://github.com/liminchen/OptCuts) by Minchen Li et al. ([paper](https://www.cs.ubc.ca/labs/imager/tr/2018/OptCuts/))
+- PartUV (GPU): [PartUV](https://github.com/EricWang12/PartUV) by Zhaoning Wang et al. ([paper](https://arxiv.org/abs/2511.16659))
+- xatlas (CPU): [xatlas](https://github.com/jpcy/xatlas) by Jonathan Young
