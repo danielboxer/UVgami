@@ -47,6 +47,10 @@ class UnwrapManager:
         # pieces still being written by exporters that add unwraps incrementally;
         # blocks finalizing the session until every exporter is done
         self.hold_count = 0
+        # input names still preseeding, shown as placeholder rows in the queue
+        # ui until their pieces exist. builders manage their own entries, so a
+        # session reset must not clear it
+        self.preparing = []
         # session progress as (done, running, remaining) fractions
         self.progress = numpy.zeros(3)
         # last session's summary, shown as a banner until dismissed
@@ -73,6 +77,7 @@ class UnwrapManager:
         self.exit_viewer = False
         self.viewer_done = False
         self._pack_output_objects = []
+        self._drawn_panel_state = None
 
     @property
     def active(self):
@@ -278,11 +283,36 @@ class UnwrapManager:
         # unexported pieces sit at (0, 0, 1) until they start reporting
         progress = [numpy.array(unwrap.progress) for unwrap in self.active]
         progress += [numpy.array((1, 0, 0))] * len(self.results)
-        if progress:
-            self.progress = sum(progress) / len(progress)
-            if get_preferences().show_progress_bar:
-                progress_bar.update(self.progress)
-            tag_redraw()
+        if not progress:
+            return
+        self.progress = sum(progress) / len(progress)
+        if get_preferences().show_progress_bar:
+            progress_bar.update(self.progress)
+            tag_redraw(("WINDOW",))
+        # the sidebar only redraws when what it draws changed, a 10 per second
+        # rebuild makes its buttons drop most clicks
+        state = self._panel_state()
+        if state != self._drawn_panel_state:
+            self._drawn_panel_state = state
+            tag_redraw(("UI",))
+
+    def _panel_state(self):
+        """Everything the queue ui draws, as a comparable value."""
+        return (
+            len(self.results),
+            self.is_viewer_active,
+            tuple(self.preparing),
+            tuple(
+                (
+                    unwrap.path.stem,
+                    unwrap.is_active,
+                    unwrap.is_exported,
+                    unwrap.progress != (0, 0, 1),
+                    unwrap.join_job.is_expanded if unwrap.join_job else False,
+                )
+                for unwrap in self.active
+            ),
+        )
 
     def record_result(self, unwrap, result):
         """Every piece ends here as finished, invalid, or cancelled."""
@@ -631,6 +661,10 @@ class UnwrapManager:
             logger.change_status("Cancelled")
             self.clear_summary()
 
+        # the dispatch timer is gone, so the queue ui and banner need one
+        # last repaint
+        tag_redraw()
+
     def _show_status(self):
         """Put the summary in the status bar. A clean run clears itself, a run
         with problems stays until the next one so it can't be missed."""
@@ -684,6 +718,8 @@ class UnwrapManager:
             unwrap.cleanup()
         self._running.clear()
         self._queue.clear()
+        # a file load kills the builder timers that would remove their entries
+        self.preparing.clear()
         self._unregister_dispatch()
         progress_bar.remove()
         # the viewer modal dies with a file load, so remove its handler here

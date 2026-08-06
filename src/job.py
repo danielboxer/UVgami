@@ -144,6 +144,8 @@ class Preserve:
 class Join:
     def __init__(self, expected):
         self.expected = expected
+        # every piece in creation order, settled or not, for the queue ui
+        self.members = []
         # finished unwraps in completion order, the merge concatenates in this
         # order so material indices and vertex groups line up
         self.finished = []

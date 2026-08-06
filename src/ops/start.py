@@ -417,6 +417,9 @@ class SessionBuilder:
         self.piece_unwrap = {}
         self.piece_has_uvs = {}
         self.pending = None
+        # queue ui placeholders until each object's pieces exist
+        self.preparing = [names[obj.name][0] for _, obj in self.remaining]
+        manager.preparing.extend(self.preparing)
 
     def tick(self):
         # separation and uv writes need object mode
@@ -431,6 +434,9 @@ class SessionBuilder:
             if check_exists(self.temp_collection):
                 bpy.data.collections.remove(self.temp_collection)
             manager.hold_count -= 1
+            for name in self.preparing:
+                manager.preparing.remove(name)
+            self.preparing.clear()
             # settle the pieces already added, none of them exported yet
             for unwrap in self.piece_unwrap.values():
                 if unwrap.result is None:
@@ -588,6 +594,10 @@ class SessionBuilder:
                 obj, unwrap_name, unwrap_name, jobs, has_uvs, props, preseeded
             )
             added.append(obj)
+
+        if unwrap_name in self.preparing:
+            self.preparing.remove(unwrap_name)
+            manager.preparing.remove(unwrap_name)
 
         deselect_all()
         for piece in added:
