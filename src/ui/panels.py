@@ -2,6 +2,7 @@ import bpy
 
 from ..engines import active_engine, get_engine, installed_engines
 from ..engines.install_task import draw_progress, task_state
+from ..job import Result
 from ..logger import logger
 from ..manager import manager
 from ..utils.ui import draw_active, newline_label, only_active, toggle
@@ -116,7 +117,7 @@ def draw_summary(layout):
 def draw_queue(box):
     """The running and queued unwraps, with their stop and cancel buttons."""
     active_unwraps = manager.active
-    if not active_unwraps:
+    if not active_unwraps and not manager.preparing:
         return
     row = box.box().row()
     row.alignment = "CENTER"
@@ -129,6 +130,15 @@ def draw_queue(box):
 
     groups, active_groups = _build_unwrap_groups(active_unwraps)
     _draw_unwrap_groups(box, groups, active_groups)
+
+    # objects still preseeding, their pieces don't exist yet
+    for name in manager.preparing:
+        row = box.box().row()
+        row.label(text=name, icon="SORTTIME")
+
+    if len(groups) > 1:
+        row = box.row()
+        row.operator("uvgami.cancel_all", icon="TRASH")
     box.separator()
 
 
@@ -185,33 +195,55 @@ def _draw_unwrap_groups(box, groups, active_groups):
             cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
             cancel_op.stem = group[0].path.stem
             cancel_op.whole_group = True
+            if group_id.is_expanded:
+                _draw_group_pieces(display_box, group_id)
+        else:
+            _draw_piece_buttons(row, group[0])
 
-        if not expand_layout or group_id.is_expanded:
-            for item in group:
-                if expand_layout:
-                    row = display_box.row()
-                    row.label(
-                        text=item.name,
-                        icon=f"LAYER_{'ACTIVE' if item.is_active else 'USED'}",
-                    )
 
-                # viewer button, only once the unwrap has started producing
-                if item.progress != (0, 0, 1) and manager.engine.supports_viewer:
-                    view_op = row.operator(
-                        "uvgami.view_unwrap", text="", icon="HIDE_OFF"
-                    )
-                    view_op.stem = item.path.stem
-                # stop button, only a running mesh on an engine that can
-                # finish early with a result
-                if manager.engine.supports_early_stop and item.is_active:
-                    stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
-                    stop_op.stem = item.path.stem
-                cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
-                cancel_op.stem = item.path.stem
+# a group over this size only lists its running pieces
+PIECE_ROW_LIMIT = 10
 
-    if len(groups) > 1:
+_RESULT_ICONS = {
+    Result.FINISHED: "CHECKMARK",
+    Result.INVALID: "ERROR",
+    Result.CANCELLED: "X",
+}
+
+
+def _draw_group_pieces(box, job):
+    """One row per piece. Settled pieces keep their rows until the whole group
+    finishes, so the panel height only changes per group, not per piece."""
+    small = job.expected <= PIECE_ROW_LIMIT
+    for item in job.members:
+        if item.result is not None:
+            if small:
+                box.row().label(text=item.name, icon=_RESULT_ICONS[item.result])
+            continue
+        if not small and not item.is_active:
+            continue
         row = box.row()
-        row.operator("uvgami.cancel_all", icon="TRASH")
+        row.label(
+            text=item.name,
+            icon=f"LAYER_{'ACTIVE' if item.is_active else 'USED'}",
+        )
+        _draw_piece_buttons(row, item)
+    if not small:
+        box.row().label(text=f"{job.reported} of {job.expected} done", icon="INFO")
+
+
+def _draw_piece_buttons(row, item):
+    # viewer button, only once the unwrap has started producing
+    if item.progress != (0, 0, 1) and manager.engine.supports_viewer:
+        view_op = row.operator("uvgami.view_unwrap", text="", icon="HIDE_OFF")
+        view_op.stem = item.path.stem
+    # stop button, only a running mesh on an engine that can finish early
+    # with a result
+    if manager.engine.supports_early_stop and item.is_active:
+        stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
+        stop_op.stem = item.path.stem
+    cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
+    cancel_op.stem = item.path.stem
 
 
 class UVGAMI_PT_main(bpy.types.Panel):

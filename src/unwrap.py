@@ -36,6 +36,8 @@ class Unwrap:
         # jobs
         self.preserve_job = jobs[0]
         self.join_job = jobs[1]
+        if self.join_job is not None:
+            self.join_job.members.append(self)
         self.hide_job = jobs[2]
         self.symmetrize_job = jobs[3]
         self.transfer_uvs_job = jobs[4]
@@ -208,7 +210,7 @@ class Unwrap:
             self.is_uv_data_ready = False
             if uvs and uv_idcs:
                 set_snapshot(uvs, uv_idcs)
-                tag_redraw()
+                tag_redraw(("WINDOW",))
 
     def cleanup(self):
         """Clean up input files."""

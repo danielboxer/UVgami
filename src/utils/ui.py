@@ -38,15 +38,19 @@ def draw_active(layout, settings):
         op.path = path
 
 
-def tag_redraw():
+def tag_redraw(region_types=("WINDOW", "UI")):
     """Repaint the editors that show unwrap progress. Goes through bpy.data
     because the manager calls this from a timer, where the context has no
-    window or area. Whole areas, so the sidebar panel updates too."""
+    window or area. High frequency callers pass WINDOW only: rebuilding the
+    sidebar mid click makes Blender drop the click, so the UI region only
+    redraws when what it shows changed."""
     for wm in bpy.data.window_managers:
         for window in wm.windows:
             for area in window.screen.areas:
                 if area.type in {"VIEW_3D", "IMAGE_EDITOR"}:
-                    area.tag_redraw()
+                    for region in area.regions:
+                        if region.type in region_types:
+                            region.tag_redraw()
 
 
 _status = None
