@@ -40,7 +40,7 @@ from ..utils.mesh import (
     set_bmesh,
     triangulate,
 )
-from ..utils.paths import get_extension_dir_path, get_preferences
+from ..utils.paths import clear_io_dir, get_io_dir_paths, get_preferences
 from ..utils.ui import tag_redraw
 from .guides import SEAM_RESTRICTIONS_GROUP
 
@@ -817,15 +817,9 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 bpy.ops.object.modifier_apply(modifier=modifier.name)
 
     def prepare_io_folders(self):
-        input_path = get_extension_dir_path() / "input"
-        input_path.mkdir(exist_ok=True)
-        output_path = input_path.parent / "output"
-        output_path.mkdir(exist_ok=True)
-        # io folder clean up
+        input_path, output_path = get_io_dir_paths()
         if not manager.is_active:
-            for file in input_path.iterdir():
-                file.unlink()
-            for file in output_path.iterdir():
-                file.unlink()
+            clear_io_dir(input_path)
+            clear_io_dir(output_path)
 
         return input_path, output_path

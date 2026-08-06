@@ -22,7 +22,7 @@ from .utils.mesh import (
     edit_restore,
     move_to_collection,
 )
-from .utils.paths import get_extension_dir_path, get_preferences
+from .utils.paths import clear_io_dir, get_io_dir_paths, get_preferences
 from .utils.ui import popup, set_status, switch_shading, tag_redraw
 
 # how long a clean run's status bar message stays up
@@ -670,10 +670,8 @@ class UnwrapManager:
         if props.auto_grid and self._result_counts()[Result.FINISHED] > 0:
             switch_shading("MATERIAL")
 
-        for file in (get_extension_dir_path() / "input").iterdir():
-            file.unlink()
-        for file in (get_extension_dir_path() / "output").iterdir():
-            file.unlink()
+        for path in get_io_dir_paths():
+            clear_io_dir(path)
 
     def stop_all(self):
         # late import: ops.viewer imports the manager

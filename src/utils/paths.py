@@ -25,6 +25,36 @@ def get_extension_dir_path():
     return pathlib.Path(bpy.utils.extension_path_user(get_root_package(), create=True))
 
 
+ENGINE_FILE_SUFFIXES = (
+    ".obj",
+    "_weights",
+    "_importance",
+    "_edges",
+    "_fixed",
+    "_inputs.txt",
+)
+
+
+def get_io_dir_paths():
+    """The engine input and output folders, created if missing."""
+    input_path = get_extension_dir_path() / "input"
+    output_path = get_extension_dir_path() / "output"
+    input_path.mkdir(exist_ok=True)
+    output_path.mkdir(exist_ok=True)
+    return input_path, output_path
+
+
+def clear_io_dir(path):
+    """Delete the engine files in path, leaving anything else alone. Never
+    recurses, and refuses a path outside the extension dir."""
+    root = get_extension_dir_path()
+    if not path.is_relative_to(root):
+        raise ValueError(f"refusing to clear {path}, outside {root}")
+    for file in path.iterdir():
+        if file.is_file() and file.name.endswith(ENGINE_FILE_SUFFIXES):
+            file.unlink()
+
+
 def get_platform_tag():
     """Platform name used for both the local engine folders and the engine
     release asset names, or None on an unsupported platform."""
