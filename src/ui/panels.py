@@ -95,6 +95,10 @@ def draw_missing_engine(layout):
     split.operator("uvgami.open_preferences", text="", icon="PREFERENCES")
 
 
+SUCCESS_ICON = "COLORSET_03_VEC"
+FAILED_ICON = "COLORSET_01_VEC"
+
+
 def draw_summary(layout):
     """Banner with the last session's summary, until dismissed or the next run."""
     if not manager.summary:
@@ -103,16 +107,20 @@ def draw_summary(layout):
     # a split, not a row: a label sizes to its text and leaves the x stranded
     # at the far end of an empty row, a full width one centers the message
     split = box.split(factor=0.9)
-    split.alert = manager.summary_failed
     split.operator(
         "uvgami.clear_summary",
         text=manager.summary[0],
-        icon="ERROR" if manager.summary_failed else "CHECKMARK",
+        icon=FAILED_ICON if manager.summary_failed else SUCCESS_ICON,
         emboss=False,
     )
     split.operator("uvgami.clear_summary", text="", icon="X", emboss=False)
-    if len(manager.summary) > 1:
-        newline_label(manager.summary[1:], box.column())
+    notes = manager.summary[1:] or [f"Finished in {logger.get_latest().time:.1f}s"]
+    column = box.column(align=True)
+    column.active = False
+    for note in notes:
+        row = column.row()
+        row.alignment = "CENTER"
+        row.label(text=note)
 
 
 def draw_queue(box):

@@ -809,8 +809,8 @@ class AreaOperator:
             notes.append(f"{rings} area(s) around holes skipped")
         if seam_skipped:
             notes.append(f"{seam_skipped} area(s) on both sides of a seam skipped")
-        skipped = f", {', '.join(notes)}" if notes else ""
-        self.report({"INFO"}, f"Fixing {len(targets)} area(s){skipped}")
+        if notes:
+            self.report({"WARNING"}, ", ".join(notes))
         return {"FINISHED"}
 
 
