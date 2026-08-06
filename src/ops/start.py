@@ -27,6 +27,7 @@ from ..seams import (
     signed_area,
     uv_island_groups,
 )
+from ..similar import find_twins, write_twin_output
 from ..unwrap import Unwrap
 from ..utils.geometry import apply_transforms, calc_center
 from ..utils.io import export_obj
@@ -157,6 +158,9 @@ class InputExporter:
             # cancelled while waiting to export
             bpy.data.objects.remove(obj, do_unlink=True)
             return
+        if unwrap.copy_of is not None:
+            self._export_twin(obj, unwrap, props)
+            return
 
         path = unwrap.path
         edge_path, new_edges = self._triangulate_mesh(obj, unwrap, path, props)
@@ -191,6 +195,52 @@ class InputExporter:
         )
 
         bpy.data.objects.remove(obj, do_unlink=True)
+
+    def _export_twin(self, obj, unwrap, props):
+        """A twin writes no engine input, but its metadata must line up with
+        the representative's output faces: an index-matched twin triangulates
+        the same way, a reordered one reuses the representative's data
+        outright since its own indices point at the wrong vertices."""
+        representative = unwrap.copy_of
+        if unwrap.copy_reordered:
+            unwrap.set_export_data(
+                edge_path=representative.edge_path,
+                origin=representative.origin,
+                materials=representative.materials,
+                added_edges=representative.added_edges,
+                vertex_count=representative.vertex_count,
+                material_indices=representative.material_indices,
+                vertex_groups=representative.vertex_groups,
+                shade_smooth=representative.shade_smooth,
+            )
+        else:
+            edge_path, new_edges = self._triangulate_mesh(
+                obj, unwrap, unwrap.path, props
+            )
+            materials, material_indices, vertex_groups, shade_smooth = (
+                self._get_mesh_metadata(obj)
+            )
+            unwrap.set_export_data(
+                edge_path=edge_path,
+                # pieces of one object share a transform, and the
+                # representative exported before this twin
+                origin=representative.origin,
+                materials=materials,
+                added_edges=new_edges,
+                vertex_count=len(obj.data.vertices),
+                material_indices=material_indices,
+                vertex_groups=vertex_groups,
+                shade_smooth=shade_smooth,
+            )
+
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+        # the representative finished before this twin was ready, settle now
+        if representative.result is Result.FINISHED:
+            write_twin_output(
+                representative.output_path, unwrap.output_path, unwrap.copy_matrix
+            )
+            manager.record_result(unwrap, Result.FINISHED)
 
     def _finish(self):
         # a session with no valid pieces never started in _separate; start it
@@ -517,6 +567,18 @@ class SessionBuilder:
                     o, unwrap_name, piece_name, jobs, has_uvs, props, preseeded
                 )
                 added.append(o)
+            if props.stack_similar:
+                # the new pieces' matrix_world needs an evaluation first
+                bpy.context.view_layer.update()
+                # a representative always precedes its twins in valid order,
+                # so it exports and settles first
+                for twin_obj, (rep_obj, matrix, exact) in find_twins(valid).items():
+                    twin = self.piece_unwrap[twin_obj]
+                    representative = self.piece_unwrap[rep_obj]
+                    twin.copy_of = representative
+                    twin.copy_matrix = matrix
+                    twin.copy_reordered = not exact
+                    representative.twins.append(twin)
         else:
             # object didn't need to be separated
             unwrap_name = self.names[obj.name][0]

@@ -40,6 +40,15 @@ class Unwrap:
         self.symmetrize_job = jobs[3]
         self.transfer_uvs_job = jobs[4]
 
+        # a detected duplicate piece skips the engine and takes copy_of's
+        # output moved by copy_matrix, settling when copy_of does. a
+        # reordered copy's own indices don't line up with that output, so it
+        # exports copy_of's metadata instead of its own
+        self.copy_of = None
+        self.copy_matrix = None
+        self.copy_reordered = False
+        self.twins = []
+
         # snapshot: the edge file was written for this mode, so a later change
         # must not reach the untriangulate pass
         self.maintain_mode = maintain_mode

@@ -13,6 +13,7 @@ from .ops.grid import add_grid, make_grid_img, make_grid_mat
 from .ops.uv import pack, show_seams
 from .progress_bar import progress_bar
 from .reroute_seams import reroute_seams
+from .similar import write_twin_output
 from .utils.geometry import set_origin
 from .utils.io import import_obj
 from .utils.mesh import (
@@ -118,21 +119,26 @@ class UnwrapManager:
             max_concurrent = props.max_cores
         else:
             max_concurrent = 1
-        # pieces export in queue order, so an unexported head means everything
-        # behind it is unexported too
-        while (
-            len(self._running) < max_concurrent
-            and self._queue
-            and self._queue[0].is_exported
-        ):
-            unwrap = self._queue.popleft()
+        # pieces export in queue order, so an unexported piece means everything
+        # behind it is unexported too. copy twins never run, they stay queued
+        # until their representative settles them
+        for unwrap in list(self._queue):
+            if len(self._running) >= max_concurrent:
+                break
+            if not unwrap.is_exported:
+                break
+            if unwrap.copy_of is not None:
+                continue
+            self._queue.remove(unwrap)
             unwrap.start_unwrap()
             self._running.append(unwrap)
 
     def _start_batch_process(self, engine, props):
         """Unwrap every queued mesh in one engine process."""
-        unwraps = list(self._queue)
-        self._queue.clear()
+        # copy twins never run, they stay queued until their representative
+        # settles them
+        unwraps = [u for u in self._queue if u.copy_of is None]
+        self._queue = deque(u for u in self._queue if u.copy_of is not None)
         args = engine.build_batch_args(
             self.engine_ctx, [u.path for u in unwraps], props
         )
@@ -297,6 +303,22 @@ class UnwrapManager:
             group.record(unwrap, result)
             if group.is_settled() and group.finished and not group.discard:
                 self._to_import.append(group)
+
+        for twin in unwrap.twins:
+            self._settle_twin(twin, result)
+
+    def _settle_twin(self, twin, result):
+        """A copy twin ends however its representative ended. One that hasn't
+        exported yet can't finish (no metadata), the exporter settles it."""
+        if twin.result is not None:
+            return
+        if result is Result.FINISHED:
+            if not twin.is_exported:
+                return
+            write_twin_output(
+                twin.copy_of.output_path, twin.output_path, twin.copy_matrix
+            )
+        self.record_result(twin, result)
 
     def _drain_imports(self):
         """Every result imports here on the timer."""

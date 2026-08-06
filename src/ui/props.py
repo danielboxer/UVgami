@@ -101,6 +101,12 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         max=10,
         default=1,
     )
+    stack_similar: bpy.props.BoolProperty(
+        name="",
+        description=(
+            "Stack repeated mesh pieces by only unwrapping one and copying it."
+        ),
+    )
     use_proxy: bpy.props.BoolProperty(
         name="",
         description=(
