@@ -1,6 +1,7 @@
 import bpy
 
 from ..engines import active_engine, get_engine, installed_engines
+from ..engines.optcuts import QUALITY_LABELS
 from ..engines.install_task import draw_progress, task_state
 from ..job import Result
 from ..logger import logger
@@ -55,9 +56,9 @@ def fix_settings(props):
         (
             (
                 "SOLO_OFF",
-                f"Quality {props.optcuts.quality.title()}",
+                QUALITY_LABELS[props.optcuts.quality],
                 "optcuts.quality",
-                props.optcuts.quality != "MEDIUM",
+                props.optcuts.quality != "BALANCED",
             ),
             ("CON_ROTLIKE", "Concurrent", "concurrent", props.concurrent),
             ("TIME", "Timeout", "unwrap_timeout", props.unwrap_timeout > 0),
@@ -534,7 +535,7 @@ class UVGAMI_PT_island_settings(bpy.types.Panel):
         box = self.layout.box()
 
         row = box.row()
-        row.label(icon="SOLO_OFF", text="Quality")
+        row.label(icon="SOLO_OFF", text="Priority")
         row.prop(props.optcuts, "quality", text="")
 
         # these operators always run optcuts, whatever the main panel is set to

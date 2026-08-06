@@ -56,21 +56,23 @@ def popen_recorder(monkeypatch, **process_kwargs):
 
 def test_build_args_quality_and_weight_mapping(fake_engine):
     args = optcuts.build_args(
-        fake_engine, Path("in.obj"), Path("out"), "high", 5, False
+        fake_engine, Path("in.obj"), Path("out"), "less-stretch", 5, False
     )
     assert args[args.index("-u") + 1] == "4.05"
     assert args[args.index("-s") + 1] == "200"
     assert "-g" in args
 
-    args = optcuts.build_args(fake_engine, Path("in.obj"), Path("out"), "low", 1, True)
-    assert args[args.index("-u") + 1] == "4.2"
+    args = optcuts.build_args(
+        fake_engine, Path("in.obj"), Path("out"), "fewer-seams", 1, True
+    )
+    assert args[args.index("-u") + 1] == "5.0"
     assert args[args.index("-s") + 1] == "25"
     assert "-g" not in args
 
 
 def test_output_dir_arg_has_trailing_separator(fake_engine):
     args = optcuts.build_args(
-        fake_engine, Path("in.obj"), Path("out"), "medium", 3, False
+        fake_engine, Path("in.obj"), Path("out"), "balanced", 3, False
     )
     out_arg = args[args.index("-o") + 1]
     assert out_arg.endswith(("/", "\\"))
@@ -79,7 +81,7 @@ def test_output_dir_arg_has_trailing_separator(fake_engine):
 def test_run_success(triangle, tmp_path, fake_engine, monkeypatch):
     popen_recorder(monkeypatch)
     output = tmp_path / "result.obj"
-    optcuts.run(triangle, output, "medium", False, None, 3, fake_engine)
+    optcuts.run(triangle, output, "balanced", False, None, 3, fake_engine)
     assert output.is_file()
     assert "vt 0 0" in output.read_text()
 
@@ -89,7 +91,7 @@ def test_run_copies_weights_sidecar(triangle, tmp_path, fake_engine, monkeypatch
     weights = tmp_path / "weights.txt"
     weights.write_text("0,1.0")
     optcuts.run(
-        triangle, tmp_path / "out.obj", "medium", False, weights, 3, fake_engine
+        triangle, tmp_path / "out.obj", "balanced", False, weights, 3, fake_engine
     )
     argv = calls[0].argv
     assert Path(argv[argv.index("-i") + 1]).name == "triangle.obj"
@@ -112,7 +114,7 @@ def test_run_copies_sidecars_next_to_the_input(
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     (tmp_path / "triangle_fixed").write_text("0,1")
 
-    optcuts.run(triangle, tmp_path / "out.obj", "medium", False, None, 3, fake_engine)
+    optcuts.run(triangle, tmp_path / "out.obj", "balanced", False, None, 3, fake_engine)
     assert "triangle_fixed" in seen[0]
 
 
@@ -120,7 +122,7 @@ def test_run_engine_failure(triangle, tmp_path, fake_engine, monkeypatch):
     popen_recorder(monkeypatch, returncode=7)
     with pytest.raises(UnwrapError) as error:
         optcuts.run(
-            triangle, tmp_path / "out.obj", "medium", False, None, 3, fake_engine
+            triangle, tmp_path / "out.obj", "balanced", False, None, 3, fake_engine
         )
     assert error.value.exit_code == 4
 
@@ -147,7 +149,14 @@ def test_run_timeout_kills_the_engine(triangle, tmp_path, fake_engine, monkeypat
     monkeypatch.setattr(subprocess, "Popen", HangingProcess)
     with pytest.raises(UnwrapError) as error:
         optcuts.run(
-            triangle, tmp_path / "out.obj", "medium", False, None, 3, fake_engine, 0.05
+            triangle,
+            tmp_path / "out.obj",
+            "balanced",
+            False,
+            None,
+            3,
+            fake_engine,
+            0.05,
         )
     assert error.value.exit_code == 4
     assert "timed out" in str(error.value)
@@ -157,7 +166,7 @@ def test_run_output_missing_uvs(triangle, tmp_path, fake_engine, monkeypatch):
     popen_recorder(monkeypatch, output_text="v 0 0 0\nf 1 1 1\n")
     with pytest.raises(UnwrapError) as error:
         optcuts.run(
-            triangle, tmp_path / "out.obj", "medium", False, None, 3, fake_engine
+            triangle, tmp_path / "out.obj", "balanced", False, None, 3, fake_engine
         )
     assert error.value.exit_code == 5
 
@@ -172,7 +181,7 @@ def test_find_engine_explicit_path_missing(tmp_path):
 @pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
 def test_optcuts_smoke(cube, tmp_path):
     output = tmp_path / "cube_uv.obj"
-    optcuts.run(cube, output, "low", False, None, 3, None)
+    optcuts.run(cube, output, "fewer-seams", False, None, 3, None)
     text = output.read_text()
     assert "vt " in text
     assert "f " in text
