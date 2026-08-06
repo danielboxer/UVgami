@@ -5,7 +5,13 @@ islands, pipeline."""
 
 from .boundaries import boundary_edges, flatten_teeth, reroute_boundaries
 from .cuts import TURN_COST, crease_relief, cut_path, disk_cuts, path_cost, snap_paths
-from .islands import crosses, island_ruined, split_islands, uv_topology
+from .islands import (
+    crosses,
+    island_ruined,
+    split_islands,
+    split_moves,
+    uv_topology,
+)
 from .mesh import (
     LOW_ANGLE,
     build,
@@ -87,6 +93,7 @@ __all__ = [
     "signed_area",
     "snap_paths",
     "split_islands",
+    "split_moves",
     "split_sweeps",
     "turn_angle",
     "uv_area_fit",
