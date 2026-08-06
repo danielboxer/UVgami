@@ -26,7 +26,9 @@ class EngineSpec:
 
 def _add_optcuts_args(group):
     group.add_argument(
-        "--quality", choices=["high", "medium", "low"], help="default: medium"
+        "--quality",
+        choices=["less-stretch", "balanced", "fewer-seams"],
+        help="default: balanced",
     )
     group.add_argument(
         "--import-uvs",
@@ -61,7 +63,7 @@ OPTCUTS_FLAGS = {
 
 
 def _validate_optcuts(args):
-    args.quality = args.quality or "medium"
+    args.quality = args.quality or "balanced"
     args.import_uvs = bool(args.import_uvs)
     args.seam_weight = args.seam_weight or 3
     if args.seam_weights is not None and not args.seam_weights.is_file():

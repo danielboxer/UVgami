@@ -14,7 +14,7 @@ from .common import (
     log,
 )
 
-QUALITY_UPPER_BOUND = {"high": "4.05", "medium": "4.1", "low": "4.2"}
+QUALITY_UPPER_BOUND = {"less-stretch": "4.05", "balanced": "4.2", "fewer-seams": "5.0"}
 SEAM_WEIGHT_LEVELS = {1: "25", 2: "50", 3: "100", 4: "150", 5: "200"}
 
 

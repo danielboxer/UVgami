@@ -93,7 +93,7 @@ def test_optcuts_defaults(triangle, fake_optcuts):
         engine_path,
         timeout,
     ) = fake_optcuts[0]
-    assert quality == "medium"
+    assert quality == "balanced"
     assert import_uvs is False
     assert seam_weights is None
     assert seam_weight == 3
@@ -419,7 +419,7 @@ def test_max_cost_rejected_for_optcuts(triangle, capsys):
 
 def test_optcuts_flag_rejected_for_xatlas(triangle, capsys):
     code = cli.main(
-        ["unwrap", str(triangle), "--engine", "xatlas", "--quality", "high"]
+        ["unwrap", str(triangle), "--engine", "xatlas", "--quality", "less-stretch"]
     )
     assert code == 2
     assert "--quality" in capsys.readouterr().err
@@ -441,7 +441,7 @@ def test_partuv_flag_rejected_for_optcuts(triangle, capsys):
 
 def test_optcuts_flag_rejected_for_partuv(triangle, capsys):
     code = cli.main(
-        ["unwrap", str(triangle), "--engine", "partuv", "--quality", "high"]
+        ["unwrap", str(triangle), "--engine", "partuv", "--quality", "less-stretch"]
     )
     assert code == 2
     assert "--quality" in capsys.readouterr().err
