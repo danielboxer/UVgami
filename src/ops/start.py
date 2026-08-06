@@ -92,8 +92,6 @@ class InputExporter:
         piece_unwrap,
         piece_has_uvs,
         separated_objects,
-        old_active,
-        old_mode,
         start_objects,
         temp_collection,
     ):
@@ -102,8 +100,6 @@ class InputExporter:
         self.piece_unwrap = piece_unwrap
         self.piece_has_uvs = piece_has_uvs
         self.remaining = deque(separated_objects)
-        self.old_active = old_active
-        self.old_mode = old_mode
         self.start_objects = start_objects
         self.temp_collection = temp_collection
 
@@ -120,8 +116,6 @@ class InputExporter:
             for obj in self.remaining:
                 bpy.data.objects.remove(obj, do_unlink=True)
             bpy.data.collections.remove(self.temp_collection)
-            bpy.context.view_layer.objects.active = self.old_active
-            bpy.ops.object.mode_set(mode=self.old_mode)
             return None
 
         try:
@@ -249,8 +243,6 @@ class InputExporter:
             manager.engine = self.engine
             manager.engine_ctx = self.engine_ctx
             manager.start()
-        bpy.context.view_layer.objects.active = self.old_active
-        bpy.ops.object.mode_set(mode=self.old_mode)
         bpy.data.collections.remove(self.temp_collection)
         manager.hold_count -= 1
 
@@ -398,8 +390,6 @@ class SessionBuilder:
         names,
         input_objs,
         objects,
-        old_active,
-        old_mode,
         start_objects,
         temp_collection,
     ):
@@ -409,8 +399,6 @@ class SessionBuilder:
         self.names = names
         self.input_objs = input_objs
         self.remaining = deque(enumerate(objects))
-        self.old_active = old_active
-        self.old_mode = old_mode
         self.start_objects = start_objects
         self.temp_collection = temp_collection
         self.separated_objects = []
@@ -620,8 +608,6 @@ class SessionBuilder:
             piece_unwrap=self.piece_unwrap,
             piece_has_uvs=self.piece_has_uvs,
             separated_objects=self.separated_objects,
-            old_active=self.old_active,
-            old_mode=self.old_mode,
             start_objects=self.start_objects,
             temp_collection=self.temp_collection,
         )
@@ -644,8 +630,6 @@ class UVGAMI_OT_start(bpy.types.Operator):
         self.engine_ctx = None
         self.input_path = None
 
-        self.old_active = None
-        self.old_mode = None
         self.input_objs = None
 
         self.objects = None
@@ -686,8 +670,6 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 names=self.names,
                 input_objs=self.input_objs,
                 objects=self.objects,
-                old_active=self.old_active,
-                old_mode=self.old_mode,
                 start_objects=start_objects,
                 temp_collection=self.temp_collection,
             )
@@ -703,9 +685,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
             tag_redraw()
 
             if self.report_msg:
-                self.report({"WARNING"}, f"UV unwrap in progress. {self.report_msg}")
-            else:
-                self.report({"INFO"}, "UV unwrap in progress")
+                self.report({"WARNING"}, self.report_msg)
 
         except Exception as e:
             handle_error(e, "START", objects=start_objects)
@@ -719,27 +699,20 @@ class UVGAMI_OT_start(bpy.types.Operator):
         return {"FINISHED"}
 
     def _prepare_unwrap_session(self, context):
-        self.old_active = context.active_object
+        # the builder's separation ops need object mode, and leaving edit mode
+        # flushes the mesh so the copies below don't take pre-edit geometry
+        active = context.active_object
+        if active is not None and active.mode != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
+
         self.input_objs = context.selected_objects
-
-        # check if there is an active object selected
-        if not (self.old_active and self.old_active in self.input_objs):
-            self.report({"ERROR"}, "No active object selected")
-            return {"CANCELLED"}
-
-        self.old_mode = self.old_active.mode
         self.objects, self.names, self.report_msg = self.prepare_meshes(context)
         if len(self.objects) == 0:
             # there are no valid meshes
-            self.report({"ERROR"}, self.report_msg)
+            self.report({"ERROR"}, self.report_msg or "No object selected")
             return {"CANCELLED"}
 
         self.input_path, _ = self.prepare_io_folders()
-
-        # the builder's separation ops need object mode
-        context.view_layer.objects.active = self.old_active
-        if self.old_mode == "EDIT":
-            bpy.ops.object.mode_set(mode="OBJECT")
         deselect_all()
 
         # stash the copies in a collection not linked to the scene so they
