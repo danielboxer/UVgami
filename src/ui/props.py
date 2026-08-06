@@ -285,6 +285,11 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         description="Display a progress bar in the 3D view and UV editor during an unwrap",
         default=True,
     )
+    show_warnings: bpy.props.BoolProperty(
+        name="Warnings",
+        description="Show warning if modifier is applied before unwrap",
+        default=True,
+    )
 
     def draw(self, context):
         layout = self.layout
@@ -322,6 +327,10 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         row = grid.row()
         row.label(icon="OUTLINER_COLLECTION")
         row.prop(self, "invalid_collection")
+
+        row = grid.row()
+        row.label(icon="INFO")
+        row.prop(self, "show_warnings")
 
         box.separator()
 

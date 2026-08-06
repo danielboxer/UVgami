@@ -634,7 +634,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         self.objects = None
         self.names = None
-        self.report_msg = None
+        self.reports = []
 
         self.temp_collection = None
 
@@ -684,8 +684,8 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 progress_bar.start()
             tag_redraw()
 
-            if self.report_msg:
-                self.report({"WARNING"}, self.report_msg)
+            for level, text in self.reports:
+                self.report({level}, text)
 
         except Exception as e:
             handle_error(e, "START", objects=start_objects)
@@ -706,10 +706,11 @@ class UVGAMI_OT_start(bpy.types.Operator):
             bpy.ops.object.mode_set(mode="OBJECT")
 
         self.input_objs = context.selected_objects
-        self.objects, self.names, self.report_msg = self.prepare_meshes(context)
+        self.objects, self.names, self.reports = self.prepare_meshes(context)
         if len(self.objects) == 0:
             # there are no valid meshes
-            self.report({"ERROR"}, self.report_msg or "No object selected")
+            reason = self.reports[0][1] if self.reports else "No object selected"
+            self.report({"ERROR"}, reason)
             return {"CANCELLED"}
 
         self.input_path, _ = self.prepare_io_folders()
@@ -759,6 +760,11 @@ class UVGAMI_OT_start(bpy.types.Operator):
         objects = []
         names = {}
         skipped = set()
+        applied_modifiers = False
+        warn = get_preferences().show_warnings
+        # the result comes from the input mesh itself, so the engine has to see
+        # that mesh and not a modifier bake of it
+        keep_modifiers = input_job(props) is not None
         for obj in self.input_objs:
             if obj.type != "MESH":
                 skipped.add("non mesh objects")
@@ -774,7 +780,11 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
             obj.users_collection[0].objects.link(copy_object)
 
-            self._apply_modifiers(context, copy_object)
+            if keep_modifiers:
+                copy_object.modifiers.clear()
+            elif self._apply_modifiers(context, copy_object):
+                applied_modifiers = True
+
             if props.use_proxy:
                 make_proxy(copy_object, props.proxy_faces)
 
@@ -782,14 +792,18 @@ class UVGAMI_OT_start(bpy.types.Operator):
             names[copy_object.name] = [obj.name, obj.name]
             objects.append(copy_object)
 
-        report_msg = ""
+        reports = []
         if skipped:
-            report_msg = f"Input contains {', '.join(sorted(skipped))}"
+            reports.append(("WARNING", f"Input contains {', '.join(sorted(skipped))}"))
+        if warn and applied_modifiers:
+            reports.append(("INFO", "Modifiers were applied to the unwrapped copy"))
 
-        return objects, names, report_msg
+        return objects, names, reports
 
     def _apply_modifiers(self, context, obj):
+        """True when anything was baked into the copy."""
         context.view_layer.objects.active = obj
+        applied = False
         for modifier in obj.modifiers:
             if "Smooth by Angle" in modifier.name:
                 # don't apply auto smooth modifier
@@ -798,6 +812,8 @@ class UVGAMI_OT_start(bpy.types.Operator):
             # a disabled modifier can't be applied
             with contextlib.suppress(RuntimeError):
                 bpy.ops.object.modifier_apply(modifier=modifier.name)
+                applied = True
+        return applied
 
     def prepare_io_folders(self):
         input_path, output_path = get_io_dir_paths()
