@@ -7,7 +7,8 @@ def pack():
     select_uvs()
     if bpy.context.scene.uvgami.fix_scale:
         bpy.ops.uv.average_islands_scale()
-    bpy.ops.uv.pack_islands(margin=bpy.context.scene.uvgami.margin)
+    # keep stacked islands together
+    bpy.ops.uv.pack_islands(margin=bpy.context.scene.uvgami.margin, merge_overlap=True)
     bpy.ops.uv.select_all(action="DESELECT")
 
 
