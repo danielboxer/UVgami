@@ -415,7 +415,7 @@ def enclosed_faces(faces, edges, group_set, patch):
         if sum(1 for fi in owners if fi in group_set) == 1
     }
     unvisited = group_set - patch
-    enclosed = set()
+    stranded = []
     while unvisited:
         seed = unvisited.pop()
         component = {seed}
@@ -434,7 +434,14 @@ def enclosed_faces(faces, edges, group_set, patch):
                         component.add(nb)
                         stack.append(nb)
         if not touches_boundary:
-            enclosed |= component
+            stranded.append(component)
+    if not boundary and stranded:
+        # a closed island has no boundary edges, so nothing can touch one:
+        # the largest piece is the outside, not a pocket
+        stranded.remove(max(stranded, key=len))
+    enclosed = set()
+    for component in stranded:
+        enclosed |= component
     return enclosed
 
 
