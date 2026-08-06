@@ -9,6 +9,7 @@ from .objfile import merge_obj_files
 from .proxy import transfer_cuts
 from .seams import FlattenError, uv_area_fit
 from .uv_transfer import plan_transfer
+from .utils.geometry import cut_on_axes
 from .utils.mesh import check_exists, new_bmesh, set_bmesh, triangulate
 
 TransferReport = namedtuple("TransferReport", ["applied", "split_count", "detail"])
@@ -573,6 +574,10 @@ class Symmetrise:
         self.z = "Z" in axes
         self.center = center
         self.overlap = overlap
+
+    def cut(self, obj):
+        axes = [axis for axis, used in zip("XYZ", (self.x, self.y, self.z)) if used]
+        cut_on_axes(obj, self.center, axes)
 
     def finish(self, output):
         mirror = output.modifiers.new("Mirror", "MIRROR")

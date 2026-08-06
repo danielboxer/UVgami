@@ -28,7 +28,7 @@ from ..seams import (
     uv_island_groups,
 )
 from ..unwrap import Unwrap
-from ..utils.geometry import apply_transforms, calc_center, cut_on_axes
+from ..utils.geometry import apply_transforms, calc_center
 from ..utils.io import export_obj
 from ..utils.mesh import (
     check_collection,
@@ -401,6 +401,8 @@ class SessionBuilder:
                 raise RuntimeError("Undo removed the working copy mid unwrap")
             props = bpy.context.scene.uvgami
             preseeded = apply(box.get("result"))
+            if symmetrize_job is not None:
+                symmetrize_job.cut(obj)
             has_uvs = preseeded or (
                 props.import_uvs and self.engine.supports_import_uvs
             )
@@ -413,18 +415,20 @@ class SessionBuilder:
         props = bpy.context.scene.uvgami
         symmetrize_job = None
         if props.use_symmetry:
-            axes = props.sym_axes
             apply_transforms(obj)
-            obj_center = calc_center(obj)
-            symmetrize_job = Symmetrise(1, axes, obj_center, props.sym_merge)
-            cut_on_axes(obj, obj_center, axes)
+            symmetrize_job = Symmetrise(
+                props.sym_axes, calc_center(obj), props.sym_merge
+            )
 
-        # seams and uvs are built on the whole mesh before separation:
-        # the seams package reads region widths off the full model, and a small
-        # loose part run alone shatters (auto width tunes to the piece)
+        # seams and uvs are built on the whole mesh, before the symmetry cut
+        # and separation: the seams package reads region widths off the full
+        # model, a bisected half merges its regions away, and a small loose
+        # part run alone shatters (auto width tunes to the piece)
         work = self.engine.preseed_work(obj, props)
         if work is None:
             has_uvs = self.engine.prepare_uvs(obj, props)
+            if symmetrize_job is not None:
+                symmetrize_job.cut(obj)
             self._separate(obj, index, has_uvs, symmetrize_job)
             return 0.0
         compute, apply = work

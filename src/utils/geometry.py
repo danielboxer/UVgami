@@ -28,6 +28,12 @@ def apply_transforms(obj):
     obj.matrix_basis = mathutils.Matrix()
 
 
+# verts this close to the plane, relative to object size, count as on it:
+# bisecting just past a near-plane vert shaves off needle faces, which the
+# engine later sheds as single face uv islands
+PLANE_SNAP = 0.0001
+
+
 def cut_on_axes(obj, obj_center, axes):
     bm = new_bmesh(obj)
     cuts = []
@@ -38,7 +44,12 @@ def cut_on_axes(obj, obj_center, axes):
     if "Z" in axes:
         cuts.append((0, 0, 1))
 
+    snap = PLANE_SNAP * obj.dimensions.length
     for direction in cuts:
+        axis = direction.index(1)
+        for vert in bm.verts:
+            if abs(vert.co[axis] - obj_center[axis]) < snap:
+                vert.co[axis] = obj_center[axis]
         bmesh.ops.bisect_plane(
             bm,
             geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
