@@ -42,6 +42,7 @@ from seams import (  # noqa: E402
     signed_area,
     snap_paths,
     split_islands,
+    split_moves,
     split_sweeps,
     turn_angle,
     uv_area_fit,
@@ -827,6 +828,34 @@ def test_split_accepts_shared_edges_and_relief_cache():
     extra = split_islands(verts, faces, set(), uvs, None, groups, edges, relief_cache)
     assert extra == split_islands(verts, faces, set(), uvs)
     assert relief_cache
+
+
+def test_split_moves_part_the_sliced_strips():
+    # the whole scan on plain data: the long strip slices into 4, and the
+    # returned uv moves shrink each piece so blender reads them as islands
+    verts, faces, uvs = strip_island(30)
+    starts = []
+    base = 0
+    for face in faces:
+        starts.append(base)
+        base += len(face)
+    edges = face_edges(faces)
+    assert len(uv_island_groups(faces, uvs, edges)) == 1
+
+    moves = split_moves(verts, faces, uvs, starts)
+    assert moves
+    face_of = {}
+    for face_index, start in enumerate(starts):
+        for corner in range(len(faces[face_index])):
+            face_of[start + corner] = (face_index, corner)
+    moved = [list(corners) for corners in uvs]
+    for loop_index, u, v in moves:
+        face_index, corner = face_of[loop_index]
+        moved[face_index][corner] = (u, v)
+    assert len(uv_island_groups(faces, moved, edges)) == 4
+
+    # one range covering everything scans exactly like the whole-mesh path
+    assert split_moves(verts, faces, uvs, starts, [(0, len(faces))]) == moves
 
 
 def test_folded_compact_island_is_halved():
