@@ -80,6 +80,7 @@ class UVGAMI_OT_draw_guides(bpy.types.Operator):
     def execute(self, context):
         active_obj = context.active_object
         if active_obj is None:
+            self.report({"ERROR"}, "No object selected")
             return {"CANCELLED"}
         if not validate_obj(self, active_obj, report=True):
             return {"CANCELLED"}
