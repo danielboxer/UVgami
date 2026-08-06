@@ -228,16 +228,19 @@ def finish_preseed(obj, ranges=None):
     groups = [g for g in groups if not island_ruined(g, faces, uvs, edges, seams)]
     if ranges is None:
         scanned = groups
-        extra = split_islands(verts, faces, seams, uvs, None, groups)
+        extra = split_islands(verts, faces, seams, uvs, None, groups, edges)
     else:
         # one call per piece: each piece's engine output has its own uv scale,
         # so its length cap has to come from its own area alone
         scanned = []
         extra = set()
+        relief_cache = []
         for start, stop in ranges:
             scoped = [g for g in groups if start <= g[0] < stop]
             scanned += scoped
-            extra |= split_islands(verts, faces, seams, uvs, None, scoped)
+            extra |= split_islands(
+                verts, faces, seams, uvs, None, scoped, edges, relief_cache
+            )
     if not extra:
         return
     touched = {f for e in extra for f in edges[e]}

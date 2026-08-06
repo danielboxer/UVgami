@@ -497,7 +497,9 @@ def strip_cuts(group, ts, lo, length, cap, areas):
     return []
 
 
-def split_islands(verts, faces, seams, uvs, weights=None, groups=None):
+def split_islands(
+    verts, faces, seams, uvs, weights=None, groups=None, edges=None, relief_cache=None
+):
     """Extra seam edges that cut ruined uv islands into smaller pieces.
 
     Runs on the unwrap of the seams this package chose and measures the
@@ -514,19 +516,21 @@ def split_islands(verts, faces, seams, uvs, weights=None, groups=None):
     caps how far everything can be scaled up. groups restricts the scan,
     for a caller that knows the rest is unchanged.
     """
-    edges = face_edges(faces)
+    if edges is None:
+        edges = face_edges(faces)
     if groups is None:
         groups = island_groups(faces, seams, edges)
-    relief = None
+    if relief_cache is None:
+        relief_cache = []
 
     def cut_relief():
         # the normals and relief only pay off once a cut is actually needed,
-        # and most calls find nothing to cut
-        nonlocal relief
-        if relief is None:
+        # and most calls find nothing to cut. a caller scanning many pieces
+        # of one mesh shares the cache so the whole-mesh build runs once
+        if not relief_cache:
             weighted, _, _ = build(verts, faces)
-            relief = crease_relief(verts, faces, weighted, edges)
-        return relief
+            relief_cache.append(crease_relief(verts, faces, weighted, edges))
+        return relief_cache[0]
 
     extra = set()
 

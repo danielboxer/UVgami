@@ -816,6 +816,19 @@ def test_split_is_rotation_invariant():
     assert island_count(faces, extra) == 4
 
 
+def test_split_accepts_shared_edges_and_relief_cache():
+    # a caller scanning a joined mesh piece by piece passes one edge map and
+    # one relief cache, the cuts must match a default full scan
+    verts, faces, uvs = strip_island(30)
+    fold_face(uvs, 20)
+    edges = face_edges(faces)
+    groups = island_groups(faces, set(), edges)
+    relief_cache = []
+    extra = split_islands(verts, faces, set(), uvs, None, groups, edges, relief_cache)
+    assert extra == split_islands(verts, faces, set(), uvs)
+    assert relief_cache
+
+
 def test_folded_compact_island_is_halved():
     # not a strip, but ruined is ruined: the engine would re-cut it anyway,
     # so it gets one cut and each half a fresh chance to unwrap clean
