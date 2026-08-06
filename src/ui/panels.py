@@ -234,7 +234,11 @@ def _draw_group_pieces(box, job):
 
 def _draw_piece_buttons(row, item):
     # viewer button, only once the unwrap has started producing
-    if item.progress != (0, 0, 1) and manager.engine.supports_viewer:
+    if (
+        item.progress != (0, 0, 1)
+        and manager.engine.supports_viewer
+        and not manager.is_viewer_active
+    ):
         view_op = row.operator("uvgami.view_unwrap", text="", icon="HIDE_OFF")
         view_op.stem = item.path.stem
     # stop button, only a running mesh on an engine that can finish early
