@@ -513,7 +513,10 @@ class SessionBuilder:
         while path.is_file() or path in claimed:
             path = path.parent / f"{path.stem}1.obj"
 
-        uses_uvs = self.engine.piece_uses_uvs(obj, props, has_uvs)
+        uses_uvs = (
+            self.engine.piece_uses_uvs(obj, props, has_uvs)
+            and obj.data.uv_layers.active is not None
+        )
         unwrap = Unwrap(
             name=piece_name,
             input_name=input_name,
