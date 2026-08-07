@@ -614,10 +614,17 @@ class UnwrapManager:
             logger.change_status("Complete")
             msg = []
 
+            # problems that don't fail a mesh but shouldn't read as a clean run
+            had_error = bool(
+                self.transfer_uv_failed or self.error_code or self.error_messages
+            )
+
             # headline first, the banner shows it alone on the top row
             finished, invalid = counts[Result.FINISHED], counts[Result.INVALID]
             if finished and invalid:
                 msg.append(f"{invalid} of {finished + invalid} meshes failed")
+            elif finished and had_error:
+                msg.append("UV unwrap finished with errors")
             elif finished:
                 msg.append("UV unwrap complete!")
             else:
@@ -651,12 +658,7 @@ class UnwrapManager:
                 logger.add_data("errors", err)
 
             self.summary = msg
-            self.summary_failed = bool(
-                invalid
-                or self.transfer_uv_failed
-                or self.error_code
-                or self.error_messages
-            )
+            self.summary_failed = bool(invalid or had_error)
             self._show_status()
 
             if get_preferences().show_popup:
