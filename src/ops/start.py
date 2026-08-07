@@ -174,9 +174,10 @@ class InputExporter:
             return None
 
         except Exception as e:
-            # handle_error removes objects created since start, incl the temp
-            # pieces, so only the collection data-block is left to remove
             handle_error(e, "START", objects=self.start_objects)
+            # handle_error leaves these alone during a live session
+            for piece in list(self.temp_collection.objects):
+                bpy.data.objects.remove(piece, do_unlink=True)
             bpy.data.collections.remove(self.temp_collection)
             manager.hold_count -= 1
             # settle the pieces that never got exported so their groups and
@@ -463,6 +464,9 @@ class SessionBuilder:
             # an undo past the session start kills the collection datablock,
             # and a second ReferenceError here would wedge the hold count
             if check_exists(self.temp_collection):
+                # handle_error leaves these alone during a live session
+                for piece in list(self.temp_collection.objects):
+                    bpy.data.objects.remove(piece, do_unlink=True)
                 bpy.data.collections.remove(self.temp_collection)
             manager.hold_count -= 1
             for name in self.preparing:
