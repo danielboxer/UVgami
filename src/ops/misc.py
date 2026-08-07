@@ -17,6 +17,12 @@ _AXIS_COLORS = {
 }
 
 
+def reset_prop(group, prop):
+    group.property_unset(prop)
+    if prop in group:
+        del group[prop]
+
+
 def reset_group(group):
     # property_unset is a no-op on pointer props, recurse into nested groups
     for prop in group.__annotations__:
@@ -24,7 +30,7 @@ def reset_group(group):
         if isinstance(value, bpy.types.PropertyGroup):
             reset_group(value)
         else:
-            group.property_unset(prop)
+            reset_prop(group, prop)
 
 
 class UVGAMI_OT_expand(bpy.types.Operator):
@@ -59,7 +65,7 @@ class UVGAMI_OT_reset_setting(bpy.types.Operator):
         if "." in path:
             name, path = path.split(".", 1)
             group = getattr(group, name)
-        group.property_unset(path)
+        reset_prop(group, path)
         # unset skips the notifier a normal click sends, so the viewport
         # wouldn't repaint the symmetry preview without this
         tag_redraw()
