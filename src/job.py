@@ -3,6 +3,7 @@ from enum import Enum
 
 import bmesh
 import bpy
+import numpy
 
 from .logger import logger
 from .objfile import merge_obj_files
@@ -23,29 +24,58 @@ class Result(Enum):
     CANCELLED = "cancelled"
 
 
+def world_positions(obj):
+    """Vertex positions in world space, read in bulk."""
+    mesh = obj.data
+    flat = numpy.empty(len(mesh.vertices) * 3)
+    mesh.vertices.foreach_get("co", flat)
+    matrix = numpy.array(obj.matrix_world)
+    return flat.reshape(-1, 3) @ matrix[:3, :3].T + matrix[:3, 3]
+
+
+def _loop_totals(mesh):
+    totals = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
+    mesh.polygons.foreach_get("loop_total", totals)
+    return totals.tolist()
+
+
+def _split_per_face(values, totals):
+    """Slice one entry per loop into one list per face. Polygons own a
+    contiguous run of loops, so the totals alone place every face."""
+    faces = []
+    start = 0
+    for total in totals:
+        faces.append(values[start : start + total])
+        start += total
+    return faces
+
+
+def face_vertices(mesh):
+    """Per-face vertex index lists, read in bulk."""
+    corners = numpy.empty(len(mesh.loops), dtype=numpy.int64)
+    mesh.loops.foreach_get("vertex_index", corners)
+    return _split_per_face(corners.tolist(), _loop_totals(mesh))
+
+
 def output_mesh_data(output, output_uv):
     """World positions, polygons, per-face loop uvs and seams of an engine
     output object, in the plain form plan_transfer takes."""
     output_data = output.data
-    output_matrix = output.matrix_world
 
-    output_positions = [tuple(output_matrix @ v.co) for v in output_data.vertices]
-    output_polygons = []
-    output_uvs = []
-    for poly in output_data.polygons:
-        output_polygons.append(list(poly.vertices))
-        output_uvs.append(
-            [
-                tuple(output_uv.uv[poly.loop_start + c].vector)
-                for c in range(poly.loop_total)
-            ]
-        )
+    output_positions = world_positions(output)
+    output_polygons = face_vertices(output_data)
 
-    output_seams = [
-        (edge.vertices[0], edge.vertices[1])
-        for edge in output_data.edges
-        if edge.use_seam
-    ]
+    coords = numpy.empty(len(output_data.loops) * 2)
+    output_uv.uv.foreach_get("vector", coords)
+    output_uvs = _split_per_face(
+        coords.reshape(-1, 2).tolist(), _loop_totals(output_data)
+    )
+
+    seamed = numpy.empty(len(output_data.edges), dtype=bool)
+    output_data.edges.foreach_get("use_seam", seamed)
+    edge_verts = numpy.empty(len(output_data.edges) * 2, dtype=numpy.int64)
+    output_data.edges.foreach_get("vertices", edge_verts)
+    output_seams = edge_verts.reshape(-1, 2)[seamed].tolist()
 
     return output_positions, output_polygons, output_uvs, output_seams
 
@@ -239,11 +269,8 @@ class TransferUVs:
         return TransferReport(True, len(plan.split_faces), "")
 
     def _extract(self, input_mesh, output, output_uv):
-        input_data = input_mesh.data
-        input_matrix = input_mesh.matrix_world
-
-        input_positions = [tuple(input_matrix @ v.co) for v in input_data.vertices]
-        input_polygons = [list(poly.vertices) for poly in input_data.polygons]
+        input_positions = world_positions(input_mesh)
+        input_polygons = face_vertices(input_mesh.data)
 
         return (input_positions, input_polygons) + output_mesh_data(output, output_uv)
 
