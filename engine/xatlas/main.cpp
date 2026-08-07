@@ -262,6 +262,9 @@ int main(int argc, char **argv) {
         return CODE_INVALID_GEOMETRY;
     }
 
+    // without this the parameterization leaves whole charts mirrored. the
+    // packer mirrored them too until xatlas.cpp's chart rotation was fixed
+    chart_options.fixWinding = true;
     xatlas::Generate(atlas, chart_options);
 
     if (atlas->meshCount == 0 || atlas->width == 0 || atlas->height == 0) {

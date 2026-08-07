@@ -8589,7 +8589,10 @@ struct Atlas
 				Vector2 t = texcoord;
 				if (best_r) {
 					XA_DEBUG_ASSERT(options.rotateCharts);
-					swap(t.x, t.y);
+					// uvgami: quarter turn matching the rotated chart image.
+					// best_cw is the unrotated chart height when best_r is set
+					t.x = (float)best_cw - texcoord.y;
+					t.y = texcoord.x;
 				}
 				texcoord.x = best_x + t.x;
 				texcoord.y = best_y + t.y;
@@ -8833,8 +8836,9 @@ private:
 				continue;
 			setPixel:
 				dest->set(x, y);
+				// uvgami: must match drawTriangleCallback's quarter turn
 				if (destRotated)
-					destRotated->set(y, x);
+					destRotated->set(dest->height() - 1 - y, x);
 			}
 		}
 	}
@@ -8848,8 +8852,9 @@ private:
 	{
 		auto args = (DrawTriangleCallbackArgs *)param;
 		args->chartBitImage->set(x, y);
+		// uvgami: quarter turn, not a transpose, which would mirror the chart
 		if (args->chartBitImageRotated)
-			args->chartBitImageRotated->set(y, x);
+			args->chartBitImageRotated->set(args->chartBitImage->height() - 1 - y, x);
 		return true;
 	}
 
