@@ -492,6 +492,10 @@ class UnwrapManager:
                 # transfer failed, restore pack list if we changed it
                 if pack_replaced:
                     self._pack_output_objects[pack_index] = output
+                # no hide job exists when a transfer job holds the slot, so
+                # without this the original sits on top of the kept output
+                if check_exists(input_mesh):
+                    input_mesh.hide_set(True)
                 self.transfer_uv_failed = True
                 self.transfer_uv_fail_detail = report.detail
                 logger.add_data(
