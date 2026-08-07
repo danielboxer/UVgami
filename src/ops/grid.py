@@ -45,16 +45,43 @@ def make_grid_mat(grid_img):
     return grid_mat
 
 
+SAVED_INDICES = "uvgami_material_indices"
+
+
 def add_grid(obj, grid_mat):
     materials = [slot.material for slot in obj.material_slots]
+    if grid_mat in materials:
+        return
 
-    if grid_mat not in materials:
-        obj.data.materials.clear()
+    mesh = obj.data
+    if len(materials) > 1:
+        # clearing the slots resets every face to index 0
+        indices = [0] * len(mesh.polygons)
+        mesh.polygons.foreach_get("material_index", indices)
+        mesh[SAVED_INDICES] = indices
 
-        # grid goes first so it's the active material
-        obj.data.materials.append(grid_mat)
-        for m in materials:
-            obj.data.materials.append(m)
+    mesh.materials.clear()
+
+    # grid goes first so it's the active material
+    mesh.materials.append(grid_mat)
+    for m in materials:
+        mesh.materials.append(m)
+
+
+def remove_grid(obj):
+    mesh = obj.data
+    for material_idx, material in enumerate(mesh.materials):
+        if material is not None and material.name == "UVgami_grid":
+            mesh.materials.pop(index=material_idx)
+            break
+
+    indices = mesh.get(SAVED_INDICES)
+    if indices is None:
+        return
+    del mesh[SAVED_INDICES]
+
+    if len(indices) == len(mesh.polygons):
+        mesh.polygons.foreach_set("material_index", indices)
 
 
 class UVGAMI_OT_add_grid(bpy.types.Operator):
@@ -89,9 +116,7 @@ class UVGAMI_OT_remove_grid(bpy.types.Operator):
     def execute(self, context):
         for obj in context.selected_objects:
             if validate_obj(self, obj):
-                for material_idx, material in enumerate(obj.data.materials):
-                    if material.name == "UVgami_grid":
-                        obj.data.materials.pop(index=material_idx)
+                remove_grid(obj)
 
         switch_shading("SOLID")
 
