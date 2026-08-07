@@ -4,6 +4,7 @@ import time
 from collections import deque
 
 import bpy
+import numpy
 
 from ..engines import active_engine
 from ..handler import handle_error
@@ -24,7 +25,6 @@ from ..seams import (
     face_edges,
     island_layout,
     islands_overlap,
-    signed_area,
     uv_island_groups,
 )
 from ..similar import find_twins, write_twin_output
@@ -53,32 +53,75 @@ def normalize_uvs(mesh):
     self-intersecting, and re-cuts those charts, losing their seams. Mirror
     them back and lay the islands side by side, the output layout is the
     engine's repack either way."""
-    faces = [tuple(p.vertices) for p in mesh.polygons]
     layer = mesh.uv_layers.active
-    uvs = [
-        [tuple(layer.uv[p.loop_start + c].vector) for c in range(p.loop_total)]
-        for p in mesh.polygons
-    ]
+    face_count = len(mesh.polygons)
+    totals = numpy.empty(face_count, dtype=numpy.int64)
+    mesh.polygons.foreach_get("loop_total", totals)
+    starts = numpy.empty(face_count, dtype=numpy.int64)
+    mesh.polygons.foreach_get("loop_start", starts)
+    loop_verts = numpy.empty(len(mesh.loops), dtype=numpy.int64)
+    mesh.loops.foreach_get("vertex_index", loop_verts)
+    coords = numpy.empty(len(mesh.loops) * 2)
+    layer.uv.foreach_get("vector", coords)
+    coords = coords.reshape(-1, 2)
+
+    # the grouping helpers walk plain lists, so convert in bulk once instead of
+    # indexing the rna collections per loop
+    vert_list = loop_verts.tolist()
+    uv_list = coords.tolist()
+    faces = []
+    uvs = []
+    for start, total in zip(starts.tolist(), totals.tolist()):
+        faces.append(tuple(vert_list[start : start + total]))
+        uvs.append(uv_list[start : start + total])
+
     groups = uv_island_groups(faces, uvs, face_edges(faces))
+
+    # shoelace per face, each loop paired with the next one around its own face
+    following = numpy.arange(1, len(coords) + 1)
+    following[starts + totals - 1] = starts
+    cross = coords[:, 0] * coords[following, 1] - coords[following, 0] * coords[:, 1]
+    face_areas = 0.5 * numpy.add.reduceat(cross, starts) if face_count else []
+
+    island_of_face = numpy.empty(face_count, dtype=numpy.int64)
+    for index, group in enumerate(groups):
+        island_of_face[group] = index
+    loop_island = numpy.repeat(island_of_face, totals)
+    order = numpy.argsort(loop_island, kind="stable")
+    counts = numpy.bincount(loop_island, minlength=len(groups))
+    island_loops = numpy.split(order, numpy.cumsum(counts)[:-1])
+
     boxes = []
     areas = []
-    for group in groups:
-        points = [uv for fi in group for uv in uvs[fi]]
-        xs = [u for u, _ in points]
-        ys = [v for _, v in points]
-        boxes.append((min(xs), min(ys), max(xs), max(ys)))
-        areas.append(sum(signed_area(uvs[fi]) for fi in group))
+    for group, loops in zip(groups, island_loops):
+        points = coords[loops]
+        boxes.append(
+            (
+                float(points[:, 0].min()),
+                float(points[:, 1].min()),
+                float(points[:, 0].max()),
+                float(points[:, 1].max()),
+            )
+        )
+        areas.append(float(face_areas[group].sum()))
+
     if all(a >= 0 for a in areas) and not islands_overlap(boxes):
         return
+
+    # nan marks an island that keeps its handedness, so it is left alone below
+    flips = numpy.full(face_count, numpy.nan)
+    offsets = numpy.empty((face_count, 2))
     for group, (flip, du, dv) in zip(groups, island_layout(boxes, areas)):
-        for fi in group:
-            poly = mesh.polygons[fi]
-            for c in range(poly.loop_total):
-                uv = layer.uv[poly.loop_start + c]
-                u, v = uv.vector
-                if flip is not None:
-                    u = flip - u
-                uv.vector = (u + du, v + dv)
+        if flip is not None:
+            flips[group] = flip
+        offsets[group] = (du, dv)
+
+    loop_flip = numpy.repeat(flips, totals)
+    mirrored = ~numpy.isnan(loop_flip)
+    coords[mirrored, 0] = loop_flip[mirrored] - coords[mirrored, 0]
+    coords += numpy.repeat(offsets, totals, axis=0)
+    layer.uv.foreach_set("vector", coords.ravel())
+    mesh.update()
 
 
 class InputExporter:
