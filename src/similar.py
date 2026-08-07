@@ -147,7 +147,8 @@ def _plane_alignments(rep, piece, plane, unique, cell):
 def _alignments(rep, piece, cell):
     """Aligned copies of piece's local coords to try against rep's: the axis
     sign flips when the pca frame is stable, the rotation search when two
-    eigenvalues coincide, nothing when all three do."""
+    eigenvalues coincide, the axis permutations and sign flips when all three
+    do, which covers a box but not a freely rotated ball-like shape."""
     scale = rep.spread[2]
     low_gap = (rep.spread[1] - rep.spread[0]) / scale
     high_gap = (rep.spread[2] - rep.spread[1]) / scale
@@ -158,6 +159,10 @@ def _alignments(rep, piece, cell):
         plane = (1, 2) if high_gap < DEGENERATE_GAP else (0, 1)
         unique = 0 if high_gap < DEGENERATE_GAP else 2
         yield from _plane_alignments(rep, piece, plane, unique, cell)
+    else:
+        for order in itertools.permutations((0, 1, 2)):
+            for signs in itertools.product((1.0, -1.0), repeat=3):
+                yield piece.local[:, order] * signs
 
 
 def _face_keys(totals, corners):

@@ -179,6 +179,37 @@ def test_find_twins_matches_symmetric_rotated_copy():
     )
 
 
+CUBE_COORDS = [(x, y, z) for x in (-1.0, 1.0) for y in (-1.0, 1.0) for z in (-1.0, 1.0)]
+CUBE_FACES = [
+    (0, 1, 3, 2),
+    (4, 6, 7, 5),
+    (0, 4, 5, 1),
+    (2, 3, 7, 6),
+    (0, 2, 6, 4),
+    (1, 5, 7, 3),
+]
+
+
+# all three pca axes are arbitrary on a cube, needs the permutation search
+def test_find_twins_matches_symmetric_reordered_copy():
+    rep = FakeObject(CUBE_COORDS, CUBE_FACES)
+    moved = [tuple(ROTATE_Z @ co + (5.0, 0.0, 0.0)) for co in CUBE_COORDS]
+    order = [(index * 3 + 1) % 8 for index in range(8)]
+    twin_coords, twin_faces = reordered(moved, CUBE_FACES, order)
+    twin = FakeObject(twin_coords, twin_faces)
+
+    twins = similar.find_twins([rep, twin])
+
+    assert set(twins) == {twin}
+    matched_rep, matrix, exact = twins[twin]
+    assert matched_rep is rep
+    assert not exact
+    fitted = numpy.array(CUBE_COORDS) @ matrix[:3, :3].T + matrix[:3, 3]
+    assert sorted(map(tuple, numpy.round(fitted, 6))) == sorted(
+        map(tuple, numpy.round(numpy.array(twin_coords), 6))
+    )
+
+
 # same quad region and vertex positions, opposite diagonal: not a duplicate
 def test_find_twins_rejects_different_topology():
     coords = [(0, 0, 0), (3, 0, 0), (2, 1, 0), (0, 1, 0)]
