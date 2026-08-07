@@ -30,7 +30,10 @@ def handle_error(error, location, **kwargs):
 
 def cleanup(location, objects=frozenset()):
     if location == "START":
-        # everything created since the operator started is scrap
+        # the delete below would take a live session's objects too
+        if manager.is_active:
+            return
+        # every object created since the operator started is temporary
         for obj in set(bpy.data.objects).difference(objects):
             bpy.data.objects.remove(obj, do_unlink=True)
 
