@@ -4,7 +4,7 @@ import bpy
 import numpy
 
 
-def export_obj(obj, path, export_uv):
+def export_obj(obj, path, export_uv, flip_mirrored=False):
     """Write the mesh as an obj in world space, 9 decimals.
 
     The built-in exporter rounds to 6 decimals, which can flip tiny uv
@@ -16,7 +16,11 @@ def export_obj(obj, path, export_uv):
 
     Returns the source vertex index per vt, in vt order, when uvs were
     written, else None. Sidecars for a uv-carrying obj must be keyed by vt
-    (the engine's rebuilt vertices), this is the mapping."""
+    (the engine's rebuilt vertices), this is the mapping.
+
+    flip_mirrored is for callers that keep the engine result as the user's
+    mesh. Callers that write the uvs back onto the original leave it off, so
+    the uvs stay wound the way that object's own faces are."""
     mesh = obj.data
     matrix = numpy.array(obj.matrix_world)
     co = numpy.empty(len(mesh.vertices) * 3)
@@ -27,6 +31,16 @@ def export_obj(obj, path, export_uv):
     mesh.loops.foreach_get("vertex_index", loop_verts)
     totals = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
     mesh.polygons.foreach_get("loop_total", totals)
+
+    # a mirroring matrix bakes the faces in inside out, since the positions
+    # flip but the corner order doesn't. reverse each face to put the normals
+    # back out, and permute anything else read per loop the same way
+    loop_order = None
+    if flip_mirrored and numpy.linalg.det(matrix[:3, :3]) < 0:
+        starts = numpy.cumsum(totals) - totals
+        within = numpy.arange(len(loop_verts)) - numpy.repeat(starts, totals)
+        loop_order = numpy.repeat(starts + totals - 1, totals) - within
+        loop_verts = loop_verts[loop_order]
 
     layer = mesh.uv_layers.active
     export_uv = export_uv and layer is not None
@@ -41,9 +55,12 @@ def export_obj(obj, path, export_uv):
         if export_uv:
             uvs = numpy.empty(len(mesh.loops) * 2)
             layer.data.foreach_get("uv", uvs)
+            uvs = uvs.reshape(-1, 2)
+            if loop_order is not None:
+                uvs = uvs[loop_order]
             # dedupe at written precision so vt values and indices agree,
             # grouped by hand since numpy.unique(axis=0) is far slower
-            scaled = numpy.rint(uvs.reshape(-1, 2) * 1e9).astype(numpy.int64)
+            scaled = numpy.rint(uvs * 1e9).astype(numpy.int64)
             order = numpy.lexsort((scaled[:, 1], scaled[:, 0], loop_verts))
             sv = loop_verts[order]
             su = scaled[order, 0]

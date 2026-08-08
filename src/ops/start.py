@@ -217,11 +217,14 @@ class InputExporter:
         has_uvs = self.piece_has_uvs[obj]
         if has_uvs:
             normalize_uvs(obj.data)
-        vt_verts = export_obj(obj, path, has_uvs)
+        # a transfer or proxy puts the uvs back on the original, which keeps
+        # its own transform, so only the plain path owns the result's winding
+        keeps_output = input_job(props) is None
+        vt_verts = export_obj(obj, path, has_uvs, flip_mirrored=keeps_output)
 
         guide_path = self._create_guide_file(obj, path, props, vt_verts)
 
-        materials, material_indices, vertex_groups, shade_smooth = (
+        materials, material_indices, vertex_groups, face_smooth = (
             self._get_mesh_metadata(obj)
         )
 
@@ -234,7 +237,7 @@ class InputExporter:
             vertex_count=len(obj.data.vertices),
             material_indices=material_indices,
             vertex_groups=vertex_groups,
-            shade_smooth=shade_smooth,
+            face_smooth=face_smooth,
         )
 
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -254,13 +257,13 @@ class InputExporter:
                 vertex_count=representative.vertex_count,
                 material_indices=representative.material_indices,
                 vertex_groups=representative.vertex_groups,
-                shade_smooth=representative.shade_smooth,
+                face_smooth=representative.face_smooth,
             )
         else:
             edge_path, new_edges = self._triangulate_mesh(
                 obj, unwrap, unwrap.path, props
             )
-            materials, material_indices, vertex_groups, shade_smooth = (
+            materials, material_indices, vertex_groups, face_smooth = (
                 self._get_mesh_metadata(obj)
             )
             unwrap.set_export_data(
@@ -273,7 +276,7 @@ class InputExporter:
                 vertex_count=len(obj.data.vertices),
                 material_indices=material_indices,
                 vertex_groups=vertex_groups,
-                shade_smooth=shade_smooth,
+                face_smooth=face_smooth,
             )
 
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -406,7 +409,9 @@ class InputExporter:
         material_indices = [0] * len(obj.data.polygons)
         obj.data.polygons.foreach_get("material_index", material_indices)
 
-        shade_smooth = obj.data.polygons[0].use_smooth
+        # per face too, a mesh can mix smooth and flat shading
+        face_smooth = [False] * len(obj.data.polygons)
+        obj.data.polygons.foreach_get("use_smooth", face_smooth)
 
         vertex_groups = {}
         for group in obj.vertex_groups:
@@ -418,7 +423,7 @@ class InputExporter:
                         break
             vertex_groups[group.name] = weights
 
-        return materials, material_indices, vertex_groups, shade_smooth
+        return materials, material_indices, vertex_groups, face_smooth
 
 
 def input_job(props):

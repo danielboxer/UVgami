@@ -70,7 +70,7 @@ class Unwrap:
         self.vertex_count = 0
         self.material_indices = []
         self.vertex_groups = {}
-        self.shade_smooth = False
+        self.face_smooth = []
 
         # unwrap state
         self.is_active = False
@@ -101,7 +101,7 @@ class Unwrap:
         added_edges=(),
         material_indices=(),
         vertex_groups=None,
-        shade_smooth=False,
+        face_smooth=(),
     ):
         """The defaults cover a fix export, which carries no mesh metadata."""
         self.guide_path = guide_path
@@ -112,7 +112,7 @@ class Unwrap:
         self.vertex_count = vertex_count
         self.material_indices = material_indices
         self.vertex_groups = vertex_groups or {}
-        self.shade_smooth = shade_smooth
+        self.face_smooth = face_smooth
         self.is_exported = True
 
     def start_unwrap(self):

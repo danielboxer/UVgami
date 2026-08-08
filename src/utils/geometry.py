@@ -23,6 +23,10 @@ def apply_transforms(obj):
         @ mathutils.Matrix.Diagonal(scale).to_4x4()
     )
     obj.data.transform(actual)
+    if actual.determinant() < 0:
+        # transform mirrors the vertices and leaves the corner order alone,
+        # unlike the transform_apply operator
+        obj.data.flip_normals()
     for c in obj.children:
         c.matrix_local = actual @ c.matrix_local
     obj.matrix_basis = mathutils.Matrix()
