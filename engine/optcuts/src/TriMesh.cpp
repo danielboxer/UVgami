@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <stdexcept>
 #include <streambuf>
 
 extern std::vector<std::pair<double, double>> energyChanges_bSplit,
@@ -1808,7 +1809,8 @@ int TriMesh::cutPath(std::vector<int> path, bool makeCoh, int changePos,
         int vI_new = path[0];
         while (1) {
             auto finder = edge2Tri.find(std::pair<int, int>(vI, vI_new));
-            assert(finder != edge2Tri.end());
+            if (finder == edge2Tri.end())
+                throw std::runtime_error("cut path leaves the surface");
             tri_left.emplace_back(finder->second);
             const Eigen::RowVector3i &triVInd = F.row(finder->second);
             for (int i = 0; i < 3; i++) {
@@ -1821,7 +1823,8 @@ int TriMesh::cutPath(std::vector<int> path, bool makeCoh, int changePos,
             if (vI_new == path[2])
                 break;
             if (vI_new == path[0])
-                assert(0 && "not a valid path!");
+                throw std::runtime_error(
+                    "cut path circles its vertex without splitting it");
         }
 
         int nV = static_cast<int>(V_rest.rows());

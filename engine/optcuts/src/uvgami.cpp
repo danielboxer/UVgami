@@ -590,8 +590,19 @@ void converge_preDrawFunc(void) {
     outerLoopFinished = true;
 }
 
+// solve() only reports convergence on the gradient tolerance or a line
+// search stall at a healthy step size. degenerate geometry can decrease the
+// energy by denormal amounts at tiny steps forever, hitting neither, so a
+// long flat run counts as stationary
+// measured: a dead solve decreases by exactly zero for thousands of
+// iterations, a healthy one never below ~4e-8, so 1e-12 clears both
+const int SOLVE_STALL_ITERATION_CAP = 100;
+const double SOLVE_STALL_RELATIVE_TOLERANCE = 1.0e-12;
+
 bool preDrawFunc(void) {
     if (optimization_on) {
+        static int stalledSolveIterations = 0;
+        static double stalledSolveEnergy = -1.0;
         while (!converged) {
             proceedOptimization(1);
             // check per iteration, not per phase: a stop or viewer request
@@ -601,7 +612,18 @@ bool preDrawFunc(void) {
                 return false;
             if (snapshot)
                 reportProgress();
+            const double energy = optimizer->getLastEnergyVal(true);
+            if (std::abs(energy - stalledSolveEnergy) <=
+                SOLVE_STALL_RELATIVE_TOLERANCE * std::abs(stalledSolveEnergy)) {
+                if (++stalledSolveIterations >= SOLVE_STALL_ITERATION_CAP)
+                    converged = 1;
+            } else {
+                stalledSolveIterations = 0;
+                stalledSolveEnergy = energy;
+            }
         }
+        stalledSolveIterations = 0;
+        stalledSolveEnergy = -1.0;
         reportProgress();
 
         // give postDraw option to save mesh
@@ -1028,6 +1050,19 @@ int main(int argc, char *argv[]) {
             std::cerr << "input mesh contains non-manifold edges" << std::endl;
             return UVGAMI_RC_NON_MANIFOLD_EDGES;
         }
+        // igl's manifold checks ignore winding, and a repeated directed
+        // edge corrupts the edge2Tri adjacency built on unique directions
+        std::set<std::pair<int, int>> directedEdges;
+        for (int triI = 0; triI < F.rows(); ++triI) {
+            for (int i = 0; i < 3; ++i) {
+                if (!directedEdges.emplace(F(triI, i), F(triI, (i + 1) % 3))
+                         .second) {
+                    std::cerr << "input mesh has inconsistently oriented faces"
+                              << std::endl;
+                    return UVGAMI_RC_FLIPPED_FACES;
+                }
+            }
+        }
     }
 
     // with input UV the components are the UV charts, so the cutting below
@@ -1280,62 +1315,68 @@ int main(int argc, char *argv[]) {
                 break;
             }
 
-            for (auto componentI : components_to_cut) {
-                if (componentI < 0) {
-                    // cut high genus
-                    componentI = -componentI - 1;
+            try {
+                for (auto componentI : components_to_cut) {
+                    if (componentI < 0) {
+                        // cut high genus
+                        componentI = -componentI - 1;
 
-                    // meshes with boundary are supported; boundary edges
-                    // will be included as cuts
-                    std::vector<std::vector<int>> cuts;
-                    igl::cut_to_disk(F_component[componentI], cuts);
+                        // meshes with boundary are supported; boundary edges
+                        // will be included as cuts
+                        std::vector<std::vector<int>> cuts;
+                        igl::cut_to_disk(F_component[componentI], cuts);
 
-                    // only cut one seam each time to avoid seam vertex id
-                    // inconsistency
-                    int cuts_made = 0;
-                    for (auto &seamI : cuts) {
-                        if (seamI.front() == seamI.back()) {
-                            // cutPath() does not support closed-loop cuts,
-                            // split it into two cuts
-                            cuts_made += temp.cutPath(
-                                std::vector<int>({seamI[seamI.size() - 3],
-                                                  seamI[seamI.size() - 2],
-                                                  seamI[seamI.size() - 1]}),
-                                true);
+                        // only cut one seam each time to avoid seam vertex id
+                        // inconsistency
+                        int cuts_made = 0;
+                        for (auto &seamI : cuts) {
+                            if (seamI.front() == seamI.back()) {
+                                // cutPath() does not support closed-loop cuts,
+                                // split it into two cuts
+                                cuts_made += temp.cutPath(
+                                    std::vector<int>({seamI[seamI.size() - 3],
+                                                      seamI[seamI.size() - 2],
+                                                      seamI[seamI.size() - 1]}),
+                                    true);
+                                temp.initSeams = temp.cohE;
+                                seamI.resize(seamI.size() - 2);
+                            }
+                            cuts_made += temp.cutPath(seamI, true);
                             temp.initSeams = temp.cohE;
-                            seamI.resize(seamI.size() - 2);
+                            if (cuts_made) {
+                                break;
+                            }
                         }
-                        cuts_made += temp.cutPath(seamI, true);
-                        temp.initSeams = temp.cohE;
-                        if (cuts_made) {
+
+                        if (!cuts_made) {
+                            std::cerr << "no cuts made when cutting input "
+                                         "geometry to disk-topology"
+                                      << std::endl;
+                            return UVGAMI_RC_CUT_FAILED;
+                        }
+                    } else {
+                        // cut the topological sphere into a topological disk;
+                        // seed at the component's smallest vertex index so a
+                        // single-component mesh cuts at vertex 0
+                        int seedVI = *V_ind_component[componentI].begin();
+                        switch (initCutOption) {
+                        case 0:
+                            temp.onePointCut(seedVI);
+                            rand1PInitCut = (n_components == 1);
+                            break;
+                        case 1:
+                            temp.farthestPointCut(seedVI);
+                            break;
+                        default:
+                            assert(0);
                             break;
                         }
                     }
-
-                    if (!cuts_made) {
-                        std::cerr << "no cuts made when cutting input "
-                                     "geometry to disk-topology"
-                                  << std::endl;
-                        return UVGAMI_RC_CUT_FAILED;
-                    }
-                } else {
-                    // cut the topological sphere into a topological disk;
-                    // seed at the component's smallest vertex index so a
-                    // single-component mesh cuts at vertex 0
-                    int seedVI = *V_ind_component[componentI].begin();
-                    switch (initCutOption) {
-                    case 0:
-                        temp.onePointCut(seedVI);
-                        rand1PInitCut = (n_components == 1);
-                        break;
-                    case 1:
-                        temp.farthestPointCut(seedVI);
-                        break;
-                    default:
-                        assert(0);
-                        break;
-                    }
                 }
+            } catch (const std::exception &e) {
+                std::cerr << "initial cut failed: " << e.what()
+                          << std::endl;
+                return UVGAMI_RC_CUT_FAILED;
             }
 
             // data update on each component for identifying a new cut
