@@ -4,6 +4,8 @@ import math
 import sys
 from pathlib import Path
 
+import pytest
+
 # loaded from file so it doesn't need the bpy-only addon package
 PKG = Path(__file__).parents[2] / "src" / "seams"
 spec = importlib.util.spec_from_file_location(
@@ -54,6 +56,7 @@ from seams import (  # noqa: E402
 from seams.islands import absorb_fragments, split_pieces  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
+HEX_HEAD = Path(__file__).parents[1] / "bench/models/hard-surface/sharp/fastener_03.obj"
 
 
 def read_obj(path):
@@ -164,13 +167,12 @@ def test_faceted_tube_keeps_its_facets():
     assert len(seam_edges(verts, faces)) == 8
 
 
+@pytest.mark.skipif(not HEX_HEAD.exists(), reason="needs the bench models")
 def test_seamless_closed_mesh_retries_at_the_floor():
     # a hex head smears every feature to just under 60, so at 66 close_rings
     # seals the closed mesh into one seamless region nothing can flatten:
     # detection must fall back to CREASE_ANGLE instead of returning nothing
-    verts, faces = read_obj(
-        Path(__file__).parents[1] / "bench/models/hard-surface/sharp/fastener_03.obj"
-    )
+    verts, faces = read_obj(HEX_HEAD)
     faces = [tuple(f) for f in faces]
     at_floor = seam_edges(verts, faces, CREASE_ANGLE)
     assert at_floor

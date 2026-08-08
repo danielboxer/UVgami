@@ -9,7 +9,7 @@ __pycache__/
 input/
 output/
 
-.todo
+*.todo
 
 # bundled engine binaries
 /engines/
@@ -17,12 +17,11 @@ output/
 # agent notes
 docs/agents/
 
+# benchmark
+dev/bench/
+
 # local test builds from dev/build.ps1
 /dist/
-
-# benchmark artifacts. every model is committed
-dev/bench/out/
-dev/bench/results.csv
 
 build-perf/
 build-asan/
