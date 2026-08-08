@@ -160,7 +160,7 @@ class InputExporter:
         # remaining pieces instead of exporting into a dead session
         if self.piece_unwrap and not manager.is_active:
             # release the hold first so a failure below can't wedge the manager
-            manager.hold_count -= 1
+            manager.release_hold()
             for obj in self.remaining:
                 bpy.data.objects.remove(obj, do_unlink=True)
             bpy.data.collections.remove(self.temp_collection)
@@ -184,7 +184,7 @@ class InputExporter:
             for piece in list(self.temp_collection.objects):
                 bpy.data.objects.remove(piece, do_unlink=True)
             bpy.data.collections.remove(self.temp_collection)
-            manager.hold_count -= 1
+            manager.release_hold()
             # settle the pieces that never got exported so their groups and
             # the session can still finish
             for unwrap in self.piece_unwrap.values():
@@ -296,7 +296,7 @@ class InputExporter:
             manager.engine_ctx = self.engine_ctx
             manager.start()
         bpy.data.collections.remove(self.temp_collection)
-        manager.hold_count -= 1
+        manager.release_hold()
 
     def _triangulate_mesh(self, obj, unwrap, path, props):
         """Triangulate the mesh if needed, tracking added edges for untriangulation."""
@@ -482,7 +482,7 @@ class SessionBuilder:
                 for piece in list(self.temp_collection.objects):
                     bpy.data.objects.remove(piece, do_unlink=True)
                 bpy.data.collections.remove(self.temp_collection)
-            manager.hold_count -= 1
+            manager.release_hold()
             for name in self.preparing:
                 manager.preparing.remove(name)
             self.preparing.clear()

@@ -713,6 +713,12 @@ class UnwrapManager:
         for path in get_io_dir_paths():
             clear_io_dir(path)
 
+    def release_hold(self):
+        """A builder or exporter letting go of the session. Clamped because
+        stop_all drops every hold at once, and a timer that outlives it would
+        otherwise take the count negative and wedge the session open."""
+        self.hold_count = max(0, self.hold_count - 1)
+
     def stop_all(self):
         # late import: ops.viewer imports the manager
         from .ops.viewer import stop_viewer_draw
@@ -725,7 +731,10 @@ class UnwrapManager:
         self._running.clear()
         self._queue.clear()
         # a file load kills the builder timers that would remove their entries
+        # or release their hold, and a hold left behind means no later session
+        # can ever reach the end
         self.preparing.clear()
+        self.hold_count = 0
         self._unregister_dispatch()
         progress_bar.remove()
         # the viewer modal dies with a file load, so remove its handler here
