@@ -25,6 +25,13 @@ def get_extension_dir_path():
     return pathlib.Path(bpy.utils.extension_path_user(get_root_package(), create=True))
 
 
+def engine_file_stem(name):
+    """A mesh name reduced to an engine input file stem. The engine binaries
+    read argv in the ansi codepage, so a non-ascii path arrives as question
+    marks and never opens."""
+    return "".join(c if c.isascii() else "_" for c in bpy.path.clean_name(name))
+
+
 ENGINE_FILE_SUFFIXES = (
     ".obj",
     "_weights",

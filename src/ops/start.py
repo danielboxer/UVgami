@@ -40,7 +40,12 @@ from ..utils.mesh import (
     set_bmesh,
     triangulate,
 )
-from ..utils.paths import clear_io_dir, get_io_dir_paths, get_preferences
+from ..utils.paths import (
+    clear_io_dir,
+    engine_file_stem,
+    get_io_dir_paths,
+    get_preferences,
+)
 from ..utils.ui import tag_redraw
 from .guides import SEAM_RESTRICTIONS_GROUP
 
@@ -391,7 +396,11 @@ class InputExporter:
 
     def _get_mesh_metadata(self, obj):
         """Gather materials and shading info from the mesh."""
-        materials = [slot.material.name for slot in obj.material_slots if slot.material]
+        # empty slots are kept as None so the per-face indices below still
+        # point at the same material once the output rebuilds the slots
+        materials = [
+            slot.material.name if slot.material else None for slot in obj.material_slots
+        ]
 
         # per-face indices, so they can be restored after import
         material_indices = [0] * len(obj.data.polygons)
@@ -552,7 +561,7 @@ class SessionBuilder:
     def _add_piece(self, obj, input_name, piece_name, jobs, has_uvs, props, preseeded):
         """Create the piece's session record before its input file exists, so
         cancels and the queue ui see the whole session upfront."""
-        path = self.input_path / f"{bpy.path.clean_name(piece_name)}.obj"
+        path = self.input_path / f"{engine_file_stem(piece_name)}.obj"
         # names can repeat across pieces and session extends, and the output
         # file is keyed by stem, so claim a stem no other unwrap holds
         claimed = {u.path for u in manager.active}

@@ -395,13 +395,10 @@ class UnwrapManager:
 
         set_origin(output, unwrap.origin)
 
-        materials = [
-            bpy.data.materials.get(m_name)
-            for m_name in unwrap.materials
-            if m_name is not None
-        ]
-        for m in materials:
-            output.data.materials.append(m)
+        for m_name in unwrap.materials:
+            output.data.materials.append(
+                None if m_name is None else bpy.data.materials.get(m_name)
+            )
 
         # restore per-face material indices
         if unwrap.join_job is not None and len(unwrap.join_job.finished) > 1:
@@ -443,11 +440,6 @@ class UnwrapManager:
                     ranges = None
             finish_preseed(output, ranges)
 
-        # automatically add grid material to final object
-        if props.auto_grid:
-            grid_img = make_grid_img()
-            add_grid(output, make_grid_mat(grid_img))
-
         if props.pack_after_unwrap:
             self._pack_output_objects.append(output)
 
@@ -482,6 +474,8 @@ class UnwrapManager:
                 self.transfer_uv_split_count += report.split_count
                 replacement = getattr(job, "replacement", None)
                 if replacement is None:
+                    # the output is gone, the input mesh is the result now
+                    self._add_auto_grid(props, input_mesh)
                     return
                 # proxy with transfer off: a duplicate of the original takes
                 # the deleted output's place in packing and collecting
@@ -503,8 +497,16 @@ class UnwrapManager:
                     f"UV transfer failed ({report.detail}), keeping output",
                 )
 
+        self._add_auto_grid(props, output)
+
         collection = check_collection("UVgami Unwrapped", bpy.context.scene.collection)
         move_to_collection(output, collection)
+
+    def _add_auto_grid(self, props, obj):
+        """Grid goes on whichever object survives the run, which is the input
+        mesh once a transfer has deleted the output."""
+        if props.auto_grid:
+            add_grid(obj, make_grid_mat(make_grid_img()))
 
     def _restore_vertex_groups(self, unwrap, output):
         if unwrap.join_job is not None and len(unwrap.join_job.finished) > 1:
