@@ -3,9 +3,7 @@ import sys
 import types
 from pathlib import Path
 
-# paths.py imports bpy at module level, so stand in a stub with just the one
-# call it makes. clean_name keeps non-ascii, which is the case under test. the
-# stub only lives for the load, other test dirs collect against a real bpy
+# the stub must not outlive the load, other test dirs collect a real bpy
 bpy_stub = types.ModuleType("bpy")
 bpy_stub.path = types.SimpleNamespace(clean_name=lambda name: name)
 

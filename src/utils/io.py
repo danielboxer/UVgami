@@ -19,8 +19,7 @@ def export_obj(obj, path, export_uv, flip_mirrored=False):
     (the engine's rebuilt vertices), this is the mapping.
 
     flip_mirrored is for callers that keep the engine result as the user's
-    mesh. Callers that write the uvs back onto the original leave it off, so
-    the uvs stay wound the way that object's own faces are."""
+    mesh. Ones that write the uvs back onto the original leave it off."""
     mesh = obj.data
     matrix = numpy.array(obj.matrix_world)
     co = numpy.empty(len(mesh.vertices) * 3)
@@ -32,9 +31,7 @@ def export_obj(obj, path, export_uv, flip_mirrored=False):
     totals = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
     mesh.polygons.foreach_get("loop_total", totals)
 
-    # a mirroring matrix bakes the faces in inside out, since the positions
-    # flip but the corner order doesn't. reverse each face to put the normals
-    # back out, and permute anything else read per loop the same way
+    # a mirror flips positions but not corner order, so faces bake in inside out
     loop_order = None
     if flip_mirrored and numpy.linalg.det(matrix[:3, :3]) < 0:
         starts = numpy.cumsum(totals) - totals
