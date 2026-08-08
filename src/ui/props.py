@@ -136,7 +136,6 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
                 "Prioritize the painted faces to have less stretching."
                 " This also allows other faces to have more stretching.",
             ),
-            ("BOTH", "Both", "Avoid seams on the painted faces and stretch them less"),
         ),
         default="SEAMS",
     )
@@ -235,11 +234,11 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
 
     @property
     def avoid_seams(self):
-        return self.use_weights and self.weight_mode in {"SEAMS", "BOTH"}
+        return self.use_weights and self.weight_mode == "SEAMS"
 
     @property
     def reduce_stretching(self):
-        return self.use_weights and self.weight_mode in {"STRETCH", "BOTH"}
+        return self.use_weights and self.weight_mode == "STRETCH"
 
 
 # each engine contributes a pointer to its own settings group, keyed by engine id
