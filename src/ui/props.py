@@ -275,8 +275,7 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
     )
     invalid_collection: bpy.props.BoolProperty(
         name="Not Unwrapped Collection",
-        description="Add meshes that failed to unwrap, were cancelled, or were"
-        " stopped to a collection",
+        description="Add meshes that failed to unwrap or were stopped to a collection",
         default=True,
     )
     show_progress_bar: bpy.props.BoolProperty(

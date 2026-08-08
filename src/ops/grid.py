@@ -49,23 +49,20 @@ SAVED_INDICES = "uvgami_material_indices"
 
 
 def add_grid(obj, grid_mat):
-    materials = [slot.material for slot in obj.material_slots]
-    if grid_mat in materials:
+    if any(slot.material is grid_mat for slot in obj.material_slots):
         return
 
+    # appending and pointing every face at the new slot leaves the existing
+    # slots alone, where rebuilding them drops each one's object level material
     mesh = obj.data
-    if len(materials) > 1:
-        # clearing the slots resets every face to index 0
-        indices = [0] * len(mesh.polygons)
-        mesh.polygons.foreach_get("material_index", indices)
-        mesh[SAVED_INDICES] = indices
+    indices = [0] * len(mesh.polygons)
+    mesh.polygons.foreach_get("material_index", indices)
+    mesh[SAVED_INDICES] = indices
 
-    mesh.materials.clear()
-
-    # grid goes first so it's the active material
     mesh.materials.append(grid_mat)
-    for m in materials:
-        mesh.materials.append(m)
+    grid_index = len(mesh.materials) - 1
+    mesh.polygons.foreach_set("material_index", [grid_index] * len(mesh.polygons))
+    obj.active_material_index = grid_index
 
 
 def remove_grid(obj):

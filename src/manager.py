@@ -620,8 +620,11 @@ class UnwrapManager:
 
             # headline first, the banner shows it alone on the top row
             finished, invalid = counts[Result.FINISHED], counts[Result.INVALID]
+            cancelled = counts[Result.CANCELLED]
             if finished and invalid:
                 msg.append(f"{invalid} of {finished + invalid} meshes failed")
+            elif finished and cancelled:
+                msg.append(f"{cancelled} of {finished + cancelled} meshes cancelled")
             elif finished and had_error:
                 msg.append("UV unwrap finished with errors")
             elif finished:
