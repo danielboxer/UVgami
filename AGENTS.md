@@ -5,10 +5,9 @@ Blender addon that does automatic UV unwrapping. Three engines: optcuts (C++ bin
 ## Layout
 
 - `src/`: the addon. `manager.py` runs the unwrap queue, `src/engines/` is one module per engine, listed in `src/engines/__init__.py`.
-- `dev/`: everything that isn't shipped. `dev/uvgami_cli/`: dev-only CLI driving every engine via `--engine`. `dev/tests/`: the test suite. `dev/bench/`: the benchmark.
-- `docs/agents/development.md`: dev CLI, tests, benchmarks. `docs/agents/partuv.md`: everything partuv, build setup, options, packaging. Append every benchmark run to `docs/agents/bench-results.md`.
-- `docs/docs.md` (user guide) and `README.md` are human only. Never edit them, propose the change instead. Anything an agent writes goes in `docs/agents/`.
-- Keep this file and `docs/agents/` short: only what an agent would get wrong without it.
+- `dev/`: everything that isn't shipped. `dev/uvgami_cli/`: dev-only CLI driving every engine via `--engine`. `dev/tests/`: the test suite.
+- `docs/docs.md` (user guide) and `README.md` are human only. Never edit them, propose the change instead. Anything an agent writes goes in the agent notes folder.
+- Keep this file and the agent notes short: only what an agent would get wrong without it.
 
 ## Commands
 

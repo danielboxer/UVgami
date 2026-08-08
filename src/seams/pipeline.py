@@ -2,8 +2,7 @@
 merges (feature_labels), boundary cleanup, then the surviving region
 boundaries plus disk cuts are the seams. is_hard_surface reads the
 same region structure to decide whether a loose part has features
-worth preseeding. Benchmarks against the per-edge test:
-docs/agents/bench-results.md."""
+worth preseeding."""
 
 import collections
 
@@ -45,7 +44,7 @@ def feature_labels(
     return weighted, areas, edges, label
 
 
-# auto mode guards, tuned on the bench sets (docs/agents/bench-results.md).
+# auto mode guards, tuned on the bench sets.
 # a part is hard surface only when every one holds:
 # one region covering the part means no structure, a smooth blob,
 ORGANIC_SHARE = 0.9

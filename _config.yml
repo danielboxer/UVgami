@@ -12,7 +12,6 @@ exclude:
   - src
   - engine
   - dev
-  - docs/agents
   - __init__.py
   - pyproject.toml
   - uv.lock
