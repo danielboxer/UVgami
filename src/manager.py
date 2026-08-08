@@ -44,12 +44,9 @@ class UnwrapManager:
         # the session was started from the uv editor, so its queue ui goes there
         self.in_uv_editor = False
         self._dispatch_handle = None
-        # pieces still being written by exporters that add unwraps incrementally;
-        # blocks finalizing the session until every exporter is done
-        self.hold_count = 0
-        # input names still preseeding, shown as placeholder rows in the queue
-        # ui until their pieces exist. builders manage their own entries, so a
-        # session reset must not clear it
+        # one per Unwrap still feeding pieces in, blocks the session finishing
+        self.pieces_still_arriving = 0
+        # _reset_session must not clear this, builders own their own entries
         self.preparing = []
         # session progress as (done, running, remaining) fractions
         self.progress = numpy.zeros(3)
@@ -109,7 +106,7 @@ class UnwrapManager:
         props = bpy.context.scene.uvgami
         engine = self.engine
         if engine.batches_queue(props):
-            if self.hold_count > 0:
+            if self.pieces_still_arriving > 0:
                 # batch needs the whole queue at once; wait for every exporter to
                 # finish exporting (the dispatch timer retries each tick)
                 return
@@ -264,9 +261,12 @@ class UnwrapManager:
 
             self._fill_slots()
 
-            # check if everything is done; an exporter still adding pieces holds the
-            # session open even when nothing is running or queued yet
-            if not self._running and not self._queue and self.hold_count == 0:
+            # an empty queue is not the end, an exporter may still be writing
+            if (
+                not self._running
+                and not self._queue
+                and self.pieces_still_arriving == 0
+            ):
                 self._finish_batch()
                 return None
 
@@ -365,7 +365,7 @@ class UnwrapManager:
                 # checkpoint each applied result while the session keeps
                 # running, so a mid-session ctrl z can't discard it. the last
                 # one is finish()'s push
-                if self._running or self._queue or self.hold_count:
+                if self._running or self._queue or self.pieces_still_arriving:
                     bpy.ops.ed.undo_push(message="UVgami Unwrap")
             except Exception:
                 error_list = traceback.format_exc().split("\n")[:-1]
@@ -461,7 +461,6 @@ class UnwrapManager:
                 self.transfer_uv_split_count += report.split_count
                 replacement = getattr(job, "replacement", None)
                 if replacement is None:
-                    # the output is gone, the input mesh is the result now
                     self._add_auto_grid(props, input_mesh)
                     return
                 # proxy with transfer off: a duplicate of the original takes
@@ -714,17 +713,14 @@ class UnwrapManager:
             clear_io_dir(path)
 
     def drop_preparing(self, name):
-        """A builder placeholder leaving the queue ui. Tolerant because
-        stop_all clears the whole list at once, and the error path that calls
-        it runs before the builder gets to drop its own names."""
+        """Tolerant: stop_all clears the list before the builder gets here."""
         if name in self.preparing:
             self.preparing.remove(name)
 
-    def release_hold(self):
-        """A builder or exporter letting go of the session. Clamped because
-        stop_all drops every hold at once, and a timer that outlives it would
-        otherwise take the count negative and wedge the session open."""
-        self.hold_count = max(0, self.hold_count - 1)
+    def finished_adding(self):
+        """Clamped: stop_all zeroes the count, so a timer that outlives it
+        would otherwise go negative and the session could never finish."""
+        self.pieces_still_arriving = max(0, self.pieces_still_arriving - 1)
 
     def stop_all(self):
         # late import: ops.viewer imports the manager
@@ -737,11 +733,9 @@ class UnwrapManager:
             unwrap.cleanup()
         self._running.clear()
         self._queue.clear()
-        # a file load kills the builder timers that would remove their entries
-        # or release their hold, and a hold left behind means no later session
-        # can ever reach the end
+        # a file load kills the builder timers that would have cleared these
         self.preparing.clear()
-        self.hold_count = 0
+        self.pieces_still_arriving = 0
         self._unregister_dispatch()
         progress_bar.remove()
         # the viewer modal dies with a file load, so remove its handler here

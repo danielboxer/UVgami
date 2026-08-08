@@ -159,8 +159,8 @@ class InputExporter:
         # the session we joined was cancelled mid-export (Cancel All), so drop the
         # remaining pieces instead of exporting into a dead session
         if self.piece_unwrap and not manager.is_active:
-            # release the hold first so a failure below can't wedge the manager
-            manager.release_hold()
+            # report it first so a failure below can't leave the count stuck
+            manager.finished_adding()
             for obj in self.remaining:
                 bpy.data.objects.remove(obj, do_unlink=True)
             bpy.data.collections.remove(self.temp_collection)
@@ -184,7 +184,7 @@ class InputExporter:
             for piece in list(self.temp_collection.objects):
                 bpy.data.objects.remove(piece, do_unlink=True)
             bpy.data.collections.remove(self.temp_collection)
-            manager.release_hold()
+            manager.finished_adding()
             # settle the pieces that never got exported so their groups and
             # the session can still finish
             for unwrap in self.piece_unwrap.values():
@@ -217,8 +217,7 @@ class InputExporter:
         has_uvs = self.piece_has_uvs[obj]
         if has_uvs:
             normalize_uvs(obj.data)
-        # a transfer or proxy puts the uvs back on the original, which keeps
-        # its own transform, so only the plain path owns the result's winding
+        # only the plain path owns the winding, a transfer writes onto the original
         keeps_output = input_job(props) is None
         vt_verts = export_obj(obj, path, has_uvs, flip_mirrored=keeps_output)
 
@@ -296,7 +295,7 @@ class InputExporter:
             manager.engine_ctx = self.engine_ctx
             manager.start()
         bpy.data.collections.remove(self.temp_collection)
-        manager.release_hold()
+        manager.finished_adding()
 
     def _triangulate_mesh(self, obj, unwrap, path, props):
         """Triangulate the mesh if needed, tracking added edges for untriangulation."""
@@ -399,8 +398,7 @@ class InputExporter:
 
     def _get_mesh_metadata(self, obj):
         """Gather materials and shading info from the mesh."""
-        # empty slots are kept as None so the per-face indices below still
-        # point at the same material once the output rebuilds the slots
+        # keep empty slots as None so the per-face indices below stay valid
         materials = [
             slot.material.name if slot.material else None for slot in obj.material_slots
         ]
@@ -409,7 +407,6 @@ class InputExporter:
         material_indices = [0] * len(obj.data.polygons)
         obj.data.polygons.foreach_get("material_index", material_indices)
 
-        # per face too, a mesh can mix smooth and flat shading
         face_smooth = [False] * len(obj.data.polygons)
         obj.data.polygons.foreach_get("use_smooth", face_smooth)
 
@@ -476,13 +473,13 @@ class SessionBuilder:
         except Exception as e:
             handle_error(e, "START", objects=self.start_objects)
             # an undo past the session start kills the collection datablock,
-            # and a second ReferenceError here would wedge the hold count
+            # and a second ReferenceError here would leave the count stuck
             if check_exists(self.temp_collection):
                 # handle_error leaves these alone during a live session
                 for piece in list(self.temp_collection.objects):
                     bpy.data.objects.remove(piece, do_unlink=True)
                 bpy.data.collections.remove(self.temp_collection)
-            manager.release_hold()
+            manager.finished_adding()
             for name in self.preparing:
                 manager.drop_preparing(name)
             self.preparing.clear()
@@ -675,7 +672,7 @@ class SessionBuilder:
             start_objects=self.start_objects,
             temp_collection=self.temp_collection,
         )
-        # the exporter takes over the session hold this builder was carrying
+        # the exporter takes over the count entry this builder was carrying
         bpy.app.timers.register(exporter.tick)
         return None
 
@@ -739,9 +736,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
             )
             bpy.app.timers.register(builder.tick)
             builder_registered = True
-            # the builder, then the exporter it hands off to, hold the session
-            # open until every piece is added
-            manager.hold_count += 1
+            manager.pieces_still_arriving += 1
 
             # show the progress bar now instead of after every piece exports
             if get_preferences().show_progress_bar:
