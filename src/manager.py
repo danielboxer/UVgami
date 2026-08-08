@@ -400,17 +400,9 @@ class UnwrapManager:
                 None if m_name is None else bpy.data.materials.get(m_name)
             )
 
-        # restore per-face material indices
-        if unwrap.join_job is not None and len(unwrap.join_job.finished) > 1:
-            # concatenate material indices from all joined unwraps
-            combined_indices = []
-            for u in unwrap.join_job.finished:
-                combined_indices.extend(u.material_indices)
-            if len(combined_indices) == len(output.data.polygons):
-                output.data.polygons.foreach_set("material_index", combined_indices)
-        elif len(unwrap.material_indices) == len(output.data.polygons):
-            # single object (no join), restore directly
-            output.data.polygons.foreach_set("material_index", unwrap.material_indices)
+        # before the preserve job, so untriangulated faces carry these along
+        self._restore_face_data(unwrap, output, "material_index", "material_indices")
+        self._restore_face_data(unwrap, output, "use_smooth", "face_smooth")
 
         if unwrap.preserve_job is not None:
             unwrap.preserve_job.finish(unwrap, output, added_edges)
@@ -444,11 +436,6 @@ class UnwrapManager:
             self._pack_output_objects.append(output)
 
         edit_restore([output], show_seams)
-
-        if unwrap.shade_smooth:
-            output.data.polygons.foreach_set(
-                "use_smooth", [True] * len(output.data.polygons)
-            )
 
         self._restore_vertex_groups(unwrap, output)
 
@@ -507,6 +494,16 @@ class UnwrapManager:
         mesh once a transfer has deleted the output."""
         if props.auto_grid:
             add_grid(obj, make_grid_mat(make_grid_img()))
+
+    def _restore_face_data(self, unwrap, output, attribute, field):
+        """Put a per-face list captured at export back on the output, in piece
+        order when the mesh was separated."""
+        pieces = unwrap.join_job.finished if unwrap.join_job is not None else [unwrap]
+        values = []
+        for piece in pieces:
+            values.extend(getattr(piece, field))
+        if len(values) == len(output.data.polygons):
+            output.data.polygons.foreach_set(attribute, values)
 
     def _restore_vertex_groups(self, unwrap, output):
         if unwrap.join_job is not None and len(unwrap.join_job.finished) > 1:
