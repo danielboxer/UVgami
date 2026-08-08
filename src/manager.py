@@ -567,16 +567,17 @@ class UnwrapManager:
                         print(line)
 
         if move_to_invalid:
+            label = f"{unwrap.input_name}: {msg}"
             if prefs.invalid_collection:
                 invalid_obj = import_obj(unwrap.path)
                 collection = check_collection(
                     "UVgami Not Unwrapped", bpy.context.scene.collection
                 )
                 move_to_collection(invalid_obj, collection)
-                invalid_name = f"{invalid_obj.name}: {msg}"
-                invalid_obj.name = invalid_name
+                label = f"{invalid_obj.name}: {msg}"
+                invalid_obj.name = label
                 invalid_obj.hide_set(True)
-                logger.add_data("errors", invalid_name)
+            logger.add_data("errors", label)
 
         self.record_result(unwrap, Result.INVALID)
 
