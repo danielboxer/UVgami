@@ -484,7 +484,7 @@ class SessionBuilder:
                 bpy.data.collections.remove(self.temp_collection)
             manager.release_hold()
             for name in self.preparing:
-                manager.preparing.remove(name)
+                manager.drop_preparing(name)
             self.preparing.clear()
             # settle the pieces already added, none of them exported yet
             for unwrap in self.piece_unwrap.values():
@@ -649,7 +649,7 @@ class SessionBuilder:
 
         if unwrap_name in self.preparing:
             self.preparing.remove(unwrap_name)
-            manager.preparing.remove(unwrap_name)
+            manager.drop_preparing(unwrap_name)
 
         deselect_all()
         for piece in added:

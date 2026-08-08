@@ -713,6 +713,13 @@ class UnwrapManager:
         for path in get_io_dir_paths():
             clear_io_dir(path)
 
+    def drop_preparing(self, name):
+        """A builder placeholder leaving the queue ui. Tolerant because
+        stop_all clears the whole list at once, and the error path that calls
+        it runs before the builder gets to drop its own names."""
+        if name in self.preparing:
+            self.preparing.remove(name)
+
     def release_hold(self):
         """A builder or exporter letting go of the session. Clamped because
         stop_all drops every hold at once, and a timer that outlives it would
