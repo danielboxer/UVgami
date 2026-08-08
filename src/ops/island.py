@@ -15,7 +15,12 @@ from ..seams import (
 from ..unwrap import Unwrap
 from ..utils.io import export_obj
 from ..utils.mesh import new_bmesh, set_bmesh, triangulate
-from ..utils.paths import clear_io_dir, get_io_dir_paths, get_preferences
+from ..utils.paths import (
+    clear_io_dir,
+    engine_file_stem,
+    get_io_dir_paths,
+    get_preferences,
+)
 
 # iterations for the pinned minimum stretch repairs. blender's default is 10,
 # 50 flattens the stubborn folds
@@ -130,7 +135,7 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
         bm.free()
 
     name = f"{obj.name}_island_{k}"
-    path = input_path / f"{bpy.path.clean_name(name)}.obj"
+    path = input_path / f"{engine_file_stem(name)}.obj"
     while path.is_file():
         path = path.parent / f"{path.stem}1.obj"
     export_obj(temp, path, False)
@@ -250,7 +255,7 @@ def queue_relax(obj, group, bbox, area, k, input_path, props):
     repair_flipped_island(obj, temp)
 
     name = f"{obj.name}_island_{k}"
-    path = input_path / f"{bpy.path.clean_name(name)}.obj"
+    path = input_path / f"{engine_file_stem(name)}.obj"
     while path.is_file():
         path = path.parent / f"{path.stem}1.obj"
     export_obj(temp, path, True)
@@ -562,7 +567,7 @@ def queue_area(obj, patch, border, k, input_path, props, nocut):
     bm.free()
 
     name = f"{obj.name}_area_{k}"
-    path = input_path / f"{bpy.path.clean_name(name)}.obj"
+    path = input_path / f"{engine_file_stem(name)}.obj"
     while path.is_file():
         path = path.parent / f"{path.stem}1.obj"
 
