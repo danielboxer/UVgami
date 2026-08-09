@@ -733,6 +733,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
             self.engine = active_engine(context.scene.uvgami.engine)
             if self.engine is None:
                 self.report({"ERROR"}, "No engine installed")
+                logger.discard_info()
                 return {"CANCELLED"}
 
             # the manager holds one engine for the whole session, so pieces added
@@ -742,11 +743,14 @@ class UVGAMI_OT_start(bpy.types.Operator):
                     {"ERROR"},
                     "Finish or cancel the current unwrap before switching engine",
                 )
+                logger.discard_info()
                 return {"CANCELLED"}
 
             if self.check_for_errors() is not None:
+                logger.discard_info()
                 return {"CANCELLED"}
             if self._prepare_unwrap_session(context) is not None:
+                logger.discard_info()
                 return {"CANCELLED"}
 
             builder = SessionBuilder(

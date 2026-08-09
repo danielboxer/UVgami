@@ -32,6 +32,7 @@ class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
             "Automatically unwrap sharp objects in hard surface mode and"
             " otherwise in normal mode"
         ),
+        default=True,
     )
     hard_surface_angle: bpy.props.FloatProperty(
         name="Angle",

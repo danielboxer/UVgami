@@ -6,7 +6,13 @@ from ..engines.install_task import draw_progress, task_state
 from ..job import Result
 from ..logger import logger
 from ..manager import manager
-from ..utils.ui import draw_active, newline_label, only_active, toggle
+from ..utils.ui import (
+    draw_active,
+    header_icon_limit,
+    newline_label,
+    only_active,
+    toggle,
+)
 from .props import UNWRAP_TIMEOUT_DEFAULT_MINUTES
 
 
@@ -274,10 +280,19 @@ def _draw_piece_buttons(row, item):
 
 
 class UVGAMI_PT_main(bpy.types.Panel):
-    bl_label = "UVgami"
+    # blank so draw_header can put the name before the icons: blender draws
+    # bl_label after the header content
+    bl_label = ""
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "UVgami"
+
+    def draw_header(self, context):
+        props = context.scene.uvgami
+        self.layout.label(text="UVgami")
+        if active_engine(props.engine) is None:
+            return
+        draw_active(self.layout, unwrap_settings(props), header_icon_limit(context))
 
     def draw(self, context):
         props = context.scene.uvgami
@@ -294,8 +309,6 @@ class UVGAMI_PT_main(bpy.types.Panel):
 
         if not manager.in_uv_editor:
             draw_summary(box)
-
-        draw_active(box, unwrap_settings(props))
 
         if not manager.in_uv_editor:
             draw_queue(box)
@@ -409,14 +422,6 @@ class UVGAMI_PT_weights(bpy.types.Panel):
         row.scale_y = 1.5
         row.operator("uvgami.draw_guides", icon="GREASEPENCIL")
 
-        generate = box.box()
-        row = generate.row()
-        row.label(text="Generate", icon="SHADERFX")
-        row = generate.row()
-        row.operator("uvgami.seed_restrictions", text="From View").mode = "VIEW"
-        row.operator("uvgami.seed_restrictions", text="Crevices").mode = "CREVICES"
-        row.operator("uvgami.seed_restrictions", text="Both").mode = "BOTH"
-
         row = box.row()
         row.scale_y = 1.5
         row.operator("uvgami.clear_draw", icon="FILE_REFRESH")
@@ -430,6 +435,14 @@ class UVGAMI_PT_weights(bpy.types.Panel):
         row.prop(props, "weight_value", slider=True)
 
         box.row().prop(props, "weight_mode", expand=True)
+
+        generate = box.box()
+        row = generate.row()
+        row.label(text="Generate", icon="SHADERFX")
+        row = generate.row()
+        row.operator("uvgami.seed_restrictions", text="From View").mode = "VIEW"
+        row.operator("uvgami.seed_restrictions", text="Crevices").mode = "CREVICES"
+        row.operator("uvgami.seed_restrictions", text="Both").mode = "BOTH"
 
 
 class UVGAMI_PT_symmetry(EnginePanel, bpy.types.Panel):
@@ -495,10 +508,20 @@ class UVGAMI_PT_grid(EnginePanel, bpy.types.Panel):
 
 
 class UVGAMI_PT_island_uv(bpy.types.Panel):
-    bl_label = "UVgami"
+    bl_label = ""
     bl_space_type = "IMAGE_EDITOR"
     bl_region_type = "UI"
     bl_category = "UVgami"
+
+    def draw_header(self, context):
+        self.layout.label(text="UVgami")
+        if not optcuts_installed():
+            return
+        draw_active(
+            self.layout,
+            fix_settings(context.scene.uvgami),
+            header_icon_limit(context),
+        )
 
     def draw(self, context):
         props = context.scene.uvgami
@@ -509,8 +532,6 @@ class UVGAMI_PT_island_uv(bpy.types.Panel):
 
         box = self.layout.box()
         get_engine("OPTCUTS").draw_update_notice(box)
-
-        draw_active(box, fix_settings(props))
 
         island = box.box()
         row = island.row()
@@ -589,7 +610,7 @@ class UVGAMI_PT_pack(EnginePanel, bpy.types.Panel):
 
         row = box.split(factor=0.425)
         row.label(text="Margin", icon="IMGDISPLAY")
-        row.prop(props, "margin", slider=True)
+        row.prop(props, "margin")
 
         box.prop(props, "combine_uvs")
         box.prop(props, "fix_scale")

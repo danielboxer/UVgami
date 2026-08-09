@@ -26,23 +26,55 @@ from .paths import (
 )
 
 
+GEOMETRIC_SEGMENTATION = 0
+AI_SEGMENTATION = 1
+
+# built once so the item strings stay referenced, which blender requires for
+# dynamic enum callbacks
+_SEGMENTATION_ITEMS = (
+    (
+        "GEOMETRIC",
+        "Geometric",
+        "Geometric clustering. Faster but more seams.",
+        "",
+        GEOMETRIC_SEGMENTATION,
+    ),
+    (
+        "AI",
+        "AI",
+        "AI segmentation. Better results than geometric.",
+        "",
+        AI_SEGMENTATION,
+    ),
+)
+
+
+def _segmentation_items(self, context):
+    if is_ai_segmentation_available():
+        return list(_SEGMENTATION_ITEMS)
+    return [_SEGMENTATION_ITEMS[GEOMETRIC_SEGMENTATION]]
+
+
+# clamped without touching the stored value, so ai comes back as the selection
+# once its checkpoint is downloaded
+def _segmentation_get(self):
+    stored = self.get("segmentation", AI_SEGMENTATION)
+    if stored == AI_SEGMENTATION and not is_ai_segmentation_available():
+        return GEOMETRIC_SEGMENTATION
+    return stored
+
+
+def _segmentation_set(self, value):
+    self["segmentation"] = value
+
+
 class UVGAMI_PG_partuv(bpy.types.PropertyGroup):
     segmentation: bpy.props.EnumProperty(
         name="Segmentation",
         description="How PartUV splits the mesh into parts",
-        items=(
-            (
-                "GEOMETRIC",
-                "Geometric",
-                "Geometric clustering. Faster but more seams.",
-            ),
-            (
-                "AI",
-                "AI",
-                "AI segmentation. Better results than geometric.",
-            ),
-        ),
-        default="AI",
+        items=_segmentation_items,
+        get=_segmentation_get,
+        set=_segmentation_set,
     )
     threshold: bpy.props.FloatProperty(
         name="",
@@ -74,6 +106,11 @@ def is_partuv_installed():
 
 def is_partuv_ai_installed():
     return is_partuv_installed() and get_partuv_checkpoint_path().is_file()
+
+
+def is_ai_segmentation_available():
+    # a dev checkout runs against the repo checkpoint, not the downloaded one
+    return find_partuv_dev_repo() is not None or is_partuv_ai_installed()
 
 
 @dataclass
