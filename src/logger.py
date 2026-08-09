@@ -29,6 +29,10 @@ class Logger:
         self.unwrap_info.append(Info())
         self.start_timer()
 
+    def discard_info(self):
+        """Drop the entry for a run that was refused before it started."""
+        self.unwrap_info.pop()
+
     def add_data(self, target, data):
         getattr(self.get_latest(), target).append(data)
 

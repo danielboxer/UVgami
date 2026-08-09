@@ -25,17 +25,38 @@ def only_active(entries):
     return [entry[:3] for entry in entries if entry[3]]
 
 
-def draw_active(layout, settings):
-    """Icon strip of the settings that will change the run, shown only while
-    set. Hover names the setting, click resets it to default."""
-    if not settings:
+# at ui scale 1. the fixed part is the disclosure triangle, the panel name and
+# the drag grip
+ICON_WIDTH = 20
+HEADER_FIXED_WIDTH = 140
+
+
+def header_icon_limit(context):
+    """How many icons fit beside the panel name. A header row can't wrap, so
+    anything past this would be cut off at the sidebar edge."""
+    scale = context.preferences.system.ui_scale
+    free = context.region.width - HEADER_FIXED_WIDTH * scale
+    return max(0, int(free / (ICON_WIDTH * scale)))
+
+
+def draw_active(layout, settings, limit):
+    """Icon strip of the settings that will change the run. Hover names the
+    setting, click resets it to default. Past the limit the rest become a
+    count, so a setting that is on never goes missing."""
+    if not settings or limit < 1:
         return
     row = layout.row(align=True)
-    row.alignment = "CENTER"
+    row.alignment = "RIGHT"
+    hidden = len(settings) - limit
+    if hidden > 0:
+        # the count takes a slot of its own
+        settings = settings[: limit - 1]
     for icon, label, path in settings:
         op = row.operator("uvgami.reset_setting", text="", icon=icon, emboss=False)
         op.label = label
         op.path = path
+    if hidden > 0:
+        row.label(text=f"+{hidden + 1}")
 
 
 def tag_redraw(region_types=("WINDOW", "UI")):

@@ -67,6 +67,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
             ),
             ("PARTIAL", "Partial", "Untriangulate all areas except for the seams"),
         ),
+        default="FULL",
     )
     # speed
     concurrent: bpy.props.BoolProperty(
@@ -80,7 +81,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     max_cores: bpy.props.IntProperty(
         name="",
         description="The maximum number of processor cores to use for concurrent mode",
-        default=int(multiprocessing.cpu_count() / 2 - 1),
+        default=max(1, multiprocessing.cpu_count() // 2),
         max=multiprocessing.cpu_count(),
         min=1,
     )
@@ -210,7 +211,12 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     )
     # pack
     margin: bpy.props.FloatProperty(
-        name="", description="The space between UV islands", min=0, max=1
+        name="",
+        description="The space between UV islands",
+        min=0,
+        max=1,
+        default=0.001,
+        precision=3,
     )
     combine_uvs: bpy.props.BoolProperty(
         name="Combine UVs",
