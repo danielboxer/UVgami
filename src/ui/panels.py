@@ -7,6 +7,7 @@ from ..job import Result
 from ..logger import logger
 from ..manager import manager
 from ..utils.ui import draw_active, newline_label, only_active, toggle
+from .props import UNWRAP_TIMEOUT_DEFAULT_MINUTES
 
 
 def unwrap_settings(props):
@@ -37,7 +38,12 @@ def unwrap_settings(props):
                 "concurrent",
                 props.concurrent and not engine.batches_queue(props),
             ),
-            ("TIME", "Timeout", "unwrap_timeout", props.unwrap_timeout > 0),
+            (
+                "TIME",
+                "Timeout",
+                "unwrap_timeout",
+                props.unwrap_timeout != UNWRAP_TIMEOUT_DEFAULT_MINUTES,
+            ),
             (
                 "MOD_TRIANGULATE",
                 "Preserve Mesh",
@@ -61,7 +67,12 @@ def fix_settings(props):
                 props.optcuts.quality != "BALANCED",
             ),
             ("CON_ROTLIKE", "Concurrent", "concurrent", props.concurrent),
-            ("TIME", "Timeout", "unwrap_timeout", props.unwrap_timeout > 0),
+            (
+                "TIME",
+                "Timeout",
+                "unwrap_timeout",
+                props.unwrap_timeout != UNWRAP_TIMEOUT_DEFAULT_MINUTES,
+            ),
         )
     )
 
@@ -187,6 +198,9 @@ def _draw_unwrap_groups(box, groups, active_groups):
         else:
             label_text = group[0].name
             is_active = group[0].is_active
+        # on the header too, a collapsed group hides its piece rows
+        if any(u.is_stalled for u in group):
+            label_text += " (stalled)"
         row.label(
             text=label_text,
             icon=f"RADIOBUT_{'ON' if is_active else 'OFF'}",
@@ -233,7 +247,7 @@ def _draw_group_pieces(box, job):
             continue
         row = box.row()
         row.label(
-            text=item.name,
+            text=item.name + (" (stalled)" if item.is_stalled else ""),
             icon=f"LAYER_{'ACTIVE' if item.is_active else 'USED'}",
         )
         _draw_piece_buttons(row, item)
