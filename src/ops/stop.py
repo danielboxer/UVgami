@@ -127,6 +127,23 @@ class UVGAMI_OT_cancel(bpy.types.Operator):
     stem: bpy.props.StringProperty()
     whole_group: bpy.props.BoolProperty()
 
+    def invoke(self, context, event):
+        # only a group cancel can discard finished pieces, so only it confirms
+        if self.whole_group:
+            target = next((u for u in manager.active if u.path.stem == self.stem), None)
+            job = target.join_job if target is not None else None
+            if job is not None and job.finished:
+                count = len(job.finished)
+                pieces = "piece" if count == 1 else "pieces"
+                return context.window_manager.invoke_confirm(
+                    self,
+                    event,
+                    title="Cancel Unwrap",
+                    message=f"{count} finished {pieces} will be discarded",
+                    icon="WARNING",
+                )
+        return self.execute(context)
+
     def execute(self, context):
         unwraps = resolve_targets(self.stem, self.whole_group)
         if self.whole_group:
