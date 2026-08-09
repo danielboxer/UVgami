@@ -3,6 +3,7 @@ import threading
 import time
 from collections import deque
 
+import bmesh
 import bpy
 import numpy
 
@@ -51,6 +52,29 @@ from .guides import SEAM_RESTRICTIONS_GROUP
 
 # process objects for at most this long per tick before yielding to the event loop
 TICK_BUDGET = 0.033
+
+
+def has_inconsistent_winding(mesh):
+    """Two faces walking one shared edge in the same direction."""
+    corners = numpy.empty(len(mesh.loops), dtype=numpy.int64)
+    mesh.loops.foreach_get("vertex_index", corners)
+    totals = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
+    mesh.polygons.foreach_get("loop_total", totals)
+    ends = numpy.cumsum(totals)
+    next_corner = numpy.arange(1, len(corners) + 1)
+    next_corner[ends - 1] = ends - totals
+    directed = corners * (len(mesh.vertices) + 1) + corners[next_corner]
+    return len(numpy.unique(directed)) < len(directed)
+
+
+def fix_inconsistent_winding(obj):
+    """Mixed winding is a refusal at the engine (optcuts exit 115), so rewind
+    the piece copy to consistent outward normals instead."""
+    if not has_inconsistent_winding(obj.data):
+        return
+    bm = new_bmesh(obj)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    set_bmesh(bm, obj)
 
 
 def normalize_uvs(mesh):
@@ -206,6 +230,7 @@ class InputExporter:
             return
 
         path = unwrap.path
+        fix_inconsistent_winding(obj)
         edge_path, new_edges = self._triangulate_mesh(obj, unwrap, path, props)
 
         # relink to the scene so matrix_world is evaluated for the world-space
