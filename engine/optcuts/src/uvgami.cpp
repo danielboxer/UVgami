@@ -676,7 +676,6 @@ bool preDrawFunc(void) {
         double E_se;
         triSoup[channel_result]->computeSeamSparsity(E_se);
         E_se /= triSoup[channel_result]->virtualRadius;
-        const double E_SD = optimizer->getLastEnergyVal(true) / energyParams[0];
 
         if (pinnedMode && ++stationaryCount > 500) {
             converge_preDrawFunc();
@@ -687,15 +686,14 @@ bool preDrawFunc(void) {
         // the solve re-converges to the same stationary state and the same
         // op gets picked again, with lambda creeping one dual step per round
         // (each step is exactly eps_lambda, so oscillation detection can
-        // never see a revisit). unchanged energies and vertex count mean
-        // nothing is moving, stop with the map we have. E_SD wobbles in its
-        // last bits with the lambda renormalization, so compare with a
-        // tolerance far below any real step
+        // never see a revisit). unchanged seam energy and vertex count mean
+        // nothing is moving, stop with the map we have. distortion stays out
+        // of the check: the lambda renormalization wobbles it ~1e-6 relative
+        // on a frozen map, and a real op always moves one of the other two
         static int noProgressCount = 0;
-        static double E_se_last = -1.0, E_SD_last = -1.0;
+        static double E_se_last = -1.0;
         static Eigen::Index V_last = -1;
         if (std::abs(E_se - E_se_last) <= 1.0e-9 * std::abs(E_se_last) &&
-            std::abs(E_SD - E_SD_last) <= 1.0e-9 * std::abs(E_SD_last) &&
             triSoup[channel_result]->V_rest.rows() == V_last) {
             // lambda creep is ~1e-6 per frozen round, far too small to flip
             // a pick the pins already blocked, so pinned runs get 3 rounds
@@ -706,7 +704,6 @@ bool preDrawFunc(void) {
         } else {
             noProgressCount = 0;
             E_se_last = E_se;
-            E_SD_last = E_SD;
             V_last = triSoup[channel_result]->V_rest.rows();
         }
 
