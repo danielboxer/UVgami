@@ -76,6 +76,10 @@ def set_status(text, icon="CHECKMARK"):
 
 
 def popup(msg, title, icon):
+    # popup_menu segfaults a background blender
+    if bpy.app.background:
+        return
+
     def draw(self, context):
         newline_label(msg, self.layout)
 
