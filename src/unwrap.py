@@ -14,6 +14,9 @@ from .ops.viewer import set_snapshot
 from .utils.paths import get_extension_dir_path
 from .utils.ui import tag_redraw
 
+# the readers finish with the process, so this only bounds a stuck one
+READER_JOIN_SECONDS = 5
+
 
 class Unwrap:
     def __init__(
@@ -89,6 +92,7 @@ class Unwrap:
         # bounded tail of the solo process's stderr, drained by a reader thread
         self.stderr_tail = collections.deque(maxlen=10)
         self._stderr_thread = None
+        self._output_thread = None
 
     def set_export_data(
         self,
@@ -128,8 +132,8 @@ class Unwrap:
             env=manager.engine.build_env(manager.engine_ctx),
         )
 
-        thread = threading.Thread(target=self.get_output)
-        thread.start()
+        self._output_thread = threading.Thread(target=self.get_output)
+        self._output_thread.start()
 
         # drain stderr separately so it stays out of the stdout protocol
         self._stderr_thread = threading.Thread(
@@ -174,8 +178,23 @@ class Unwrap:
         """This unwrap no longer needs the engine. A batch process is left
         running for the other meshes; deleting our input file in cleanup()
         is what makes the cli skip this mesh."""
-        if self.batch_process is None:
-            self.stop_process()
+        if self.batch_process is not None:
+            return
+        self.stop_process()
+        if self.process is None:
+            return
+        # without this a model with many pieces runs out of open files
+        for thread in (self._output_thread, self._stderr_thread):
+            if thread is not None:
+                thread.join(timeout=READER_JOIN_SECONDS)
+        for pipe in (self.process.stdout, self.process.stderr, self.process.stdin):
+            if pipe is None:
+                continue
+            try:
+                pipe.close()
+            except BrokenPipeError:
+                pass
+        self.process.wait()
 
     def get_stderr_tail(self):
         """Last stderr lines from this unwrap's process, batch or solo."""
