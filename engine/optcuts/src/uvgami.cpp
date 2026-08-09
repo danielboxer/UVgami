@@ -959,6 +959,16 @@ int main(int argc, char *argv[]) {
         std::cerr << "input has non-finite or extreme coordinates" << std::endl;
         return UVGAMI_RC_INVALID_COORDS;
     }
+    // computeFeatures throws on a zero-area rest triangle, refuse at load
+    // with the same area it computes
+    for (int triI = 0; triI < F.rows(); triI++) {
+        const Eigen::Vector3d e1 = V.row(F(triI, 1)) - V.row(F(triI, 0));
+        const Eigen::Vector3d e2 = V.row(F(triI, 2)) - V.row(F(triI, 0));
+        if (0.5 * e1.cross(e2).norm() == 0.0) {
+            std::cerr << "input has zero-area faces" << std::endl;
+            return UVGAMI_RC_ZERO_AREA_FACES;
+        }
+    }
     //    //DEBUG
     //    uvgami::TriMesh squareMesh(uvgami::P_SQUARE, 1.0, 0.1, false);
     //    V = squareMesh.V_rest;

@@ -15,6 +15,7 @@
 #include "Optimizer.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -28,6 +29,7 @@ extern std::vector<Eigen::MatrixXd> newVertPoses_bSplit, newVertPoses_iSplit,
 extern double filterExp_in;
 extern int inSplitTotalAmt;
 extern bool pinnedMode;
+extern std::atomic<bool> forceQuit;
 
 namespace uvgami {
 
@@ -348,8 +350,9 @@ void TriMesh::computeFeatures(bool multiComp, bool resetFixedV) {
         vertNormals[triVInd[2]] += normalVec;
     }
     if (isMeshInvalid) {
-        std::cout << "please clean up the mesh and retry." << std::endl;
-        exit(-1);
+        // load-time inputs are rejected before construction, so this firing
+        // means an internal mesh went degenerate
+        throw std::runtime_error("zero-area rest triangle in computeFeatures");
     }
     avgEdgeLen = igl::avg_edge_length(V_rest, F);
     virtualRadius = std::sqrt(surfaceArea / M_PI);
@@ -2344,6 +2347,13 @@ TriMesh::computeLocalLDec(int vI, double lambda_t, std::vector<int> &path_max,
                           std::pair<double, double> &energyChanges_max,
                           const std::vector<int> &incTris,
                           const Eigen::RowVector2d &initMergedPos) const {
+    if (forceQuit) {
+        // a stop mid-query drains the remaining candidates as invalid so the
+        // outer loop can save the current map instead of finishing the query
+        energyChanges_max.first = DBL_MAX;
+        energyChanges_max.second = DBL_MAX;
+        return -DBL_MAX;
+    }
     if (!path_max.empty()) {
         // merge query
         assert(path_max.size() >= 3);
