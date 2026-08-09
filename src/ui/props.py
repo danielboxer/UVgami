@@ -5,6 +5,9 @@ import bpy
 from ..engines import ENGINES, installed_engines, invalidate_engine_caches
 from ..utils.paths import get_addon_id
 
+# hang backstop, generous so a slow legitimate piece never hits it
+UNWRAP_TIMEOUT_DEFAULT_MINUTES = 60
+
 # built once so the item strings stay referenced, which blender requires for
 # dynamic enum callbacks. explicit numbers keep saved files stable as the
 # installed set changes
@@ -85,12 +88,13 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         name="",
         description=(
             "Maximum time in minutes for each unwrap."
-            " Timed out meshes will be moved to the invalid collection."
+            " Stops with a partial result when the engine supports it,"
+            " otherwise the mesh is moved to the invalid collection."
             " Set to 0 to disable"
         ),
         min=0,
         max=120,
-        default=0,
+        default=UNWRAP_TIMEOUT_DEFAULT_MINUTES,
     )
     area_expand: bpy.props.IntProperty(
         name="",

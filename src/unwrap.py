@@ -17,6 +17,9 @@ from .utils.ui import tag_redraw
 # the readers finish with the process, so this only bounds a stuck one
 READER_JOIN_SECONDS = 5
 
+# healthy runs move progress every few seconds, minutes frozen is a hang
+PROGRESS_STALL_SECONDS = 120
+
 
 class Unwrap:
     def __init__(
@@ -87,6 +90,7 @@ class Unwrap:
         self.uv_indices = collections.deque()
         self.is_uv_data_ready = False
         self.is_stopped = False
+        self.progress_changed_at = None
         self.started_at = None
         self.stop_requested_at = None
         # bounded tail of the solo process's stderr, drained by a reader thread
@@ -216,10 +220,22 @@ class Unwrap:
             progress = self.progress_data.pop()
             self.progress_data.clear()
             try:
-                self.progress = tuple(float(num) for num in progress.split())
+                parsed = tuple(float(num) for num in progress.split())
             except ValueError:
                 # invalid progress string
                 return
+            if parsed != self.progress:
+                self.progress = parsed
+                self.progress_changed_at = time.monotonic()
+
+    @property
+    def is_stalled(self):
+        """Progress frozen for minutes. False on engines that never report it."""
+        return (
+            self.is_active
+            and self.progress_changed_at is not None
+            and time.monotonic() - self.progress_changed_at > PROGRESS_STALL_SECONDS
+        )
 
     def update_viewer(self):
         manager.engine.request_snapshot(self.process)

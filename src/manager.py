@@ -183,14 +183,26 @@ class UnwrapManager:
                 timeout_minutes = bpy.context.scene.uvgami.unwrap_timeout
                 if (
                     timeout_minutes > 0
+                    and not unwrap.is_stopped
                     and unwrap.started_at is not None
                     and time.monotonic() - unwrap.started_at > timeout_minutes * 60
                 ):
-                    unwrap.stop_process()
-                    failed.append((unwrap, -2))
-                    # already failed this tick, don't let the poll below re-add
-                    # it once the killed process reports an exit code
-                    continue
+                    can_stop = (
+                        self.engine.supports_early_stop and unwrap.batch_process is None
+                    )
+                    if can_stop:
+                        # the stop flow above requests the map and force kills if ignored
+                        unwrap.is_stopped = True
+                        self.error_messages.append(
+                            f"{unwrap.input_name}: timed out,"
+                            " stopped with a partial result"
+                        )
+                    else:
+                        unwrap.stop_process()
+                        failed.append((unwrap, -2))
+                        # already failed this tick, don't let the poll below
+                        # re-add it once the killed process reports an exit code
+                        continue
 
                 ret_code = unwrap.poll_engine()
                 if ret_code is not None:
