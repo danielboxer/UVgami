@@ -7,6 +7,7 @@ from ..logger import logger
 from ..manager import manager
 from ..seams import (
     face_edges,
+    flatten_distortion,
     pair,
     rectify_targets,
     signed_area,
@@ -34,6 +35,10 @@ RECTIFY_COLLAPSE = 0.5
 # triangles pinned collinear read as flipped at noise scale, so zero is too
 # strict
 RECTIFY_OVERLAP = 1e-3
+# or when its scale-free Dirichlet rose more than this over the engine's map:
+# straightening costs a little stretch, a pinned solve that collapsed the
+# interior costs orders of magnitude more while keeping area and few flips
+RECTIFY_DISTORTION = 1.0
 
 
 def unwrap(obj, only, iterations, method="MINIMUM_STRETCH"):
@@ -221,6 +226,10 @@ def rectify_islands(obj):
     plans = rectify_targets(uvs, groups)
     if not plans:
         return
+    coords = [tuple(v.co) for v in mesh.vertices]
+    before_distortion = [
+        flatten_distortion(coords, faces, uvs, group) for group, _ in plans
+    ]
 
     bm = new_bmesh(obj)
     uvl = bm.loops.layers.uv.active
@@ -252,14 +261,16 @@ def rectify_islands(obj):
     bm = new_bmesh(obj)
     uvl = bm.loops.layers.uv.active
     bm.faces.ensure_lookup_table()
-    for group, _ in plans:
+    for (group, _), before in zip(plans, before_distortion):
         total = sum(signed_area(uvs[fi]) for fi in group)
         orientation = 1 if total >= 0 else -1
         area_before = abs(total)
         area_after = 0.0
         overlap = 0.0
+        solved = {}
         for fi in group:
             pts = [tuple(loop[uvl].uv) for loop in bm.faces[fi].loops]
+            solved[fi] = pts
             for i in range(1, len(pts) - 1):
                 a = signed_area([pts[0], pts[i], pts[i + 1]]) * orientation
                 area_after += a
@@ -268,6 +279,8 @@ def rectify_islands(obj):
         bad = (
             area_after < RECTIFY_COLLAPSE * area_before
             or overlap > RECTIFY_OVERLAP * area_before
+            or flatten_distortion(coords, faces, solved, group)
+            > before + RECTIFY_DISTORTION
         )
         for fi in group:
             for corner, loop in enumerate(bm.faces[fi].loops):
