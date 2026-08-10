@@ -39,6 +39,7 @@ from .preseed import (
     check_manifold,
     preseed_uvs,
 )
+from .rectify import rectify_targets
 from .regions import (
     CREASE_ANGLE,
     FLAT_ANGLE,
@@ -88,6 +89,8 @@ __all__ = [
     "pair",
     "partition",
     "path_cost",
+    "preseed_uvs",
+    "rectify_targets",
     "region_topology",
     "reroute_boundaries",
     "seam_edges",

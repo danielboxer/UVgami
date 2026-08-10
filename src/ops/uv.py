@@ -113,7 +113,9 @@ def pack():
         stacked = [(obj, _deselect_stacked_duplicates(obj)) for obj in _edit_meshes()]
         if bpy.context.scene.uvgami.fix_scale:
             bpy.ops.uv.average_islands_scale()
-        bpy.ops.uv.pack_islands(margin=bpy.context.scene.uvgami.margin)
+        bpy.ops.uv.pack_islands(
+            margin=bpy.context.scene.uvgami.margin, rotate_method="AXIS_ALIGNED"
+        )
         for obj, stacks in stacked:
             _restack(obj, stacks)
         bpy.ops.mesh.select_all(action="SELECT")
