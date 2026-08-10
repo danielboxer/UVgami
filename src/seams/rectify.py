@@ -22,6 +22,60 @@ def island_area(group, uvs):
     return abs(sum(signed_area(uvs[fi]) for fi in group))
 
 
+# uv areas under this fraction of the island count as degenerate in the
+# distortion measure: a boundary triangle pinned collinear reads as flipped
+# at float noise, a real flip is orders of magnitude bigger
+FLIP_NOISE = 1e-6
+
+
+def flatten_distortion(verts, faces, uvs, group):
+    """Scale-free symmetric Dirichlet of the island's map, 4.0 at isometry.
+    A face flipped against the island's own orientation, above noise scale,
+    is infinity: the map is broken there, not just stretched. A mirrored
+    island measures like its source, orientation is the island's majority."""
+    signed_total = sum(signed_area(uvs[fi]) for fi in group)
+    orientation = 1.0 if signed_total >= 0 else -1.0
+    floor = FLIP_NOISE * abs(signed_total)
+    grow = shrink = total = 0.0
+    for fi in group:
+        face = faces[fi]
+        face_uv = uvs[fi]
+        for i in range(1, len(face) - 1):
+            corners = (0, i, i + 1)
+            p0, p1, p2 = (verts[face[c]] for c in corners)
+            e1 = [p1[k] - p0[k] for k in range(3)]
+            e2 = [p2[k] - p0[k] for k in range(3)]
+            length = math.sqrt(sum(x * x for x in e1))
+            span = [
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
+            ]
+            area = math.sqrt(sum(x * x for x in span)) / 2
+            uv_area = signed_area([face_uv[c] for c in corners]) * orientation
+            if length <= 0 or area <= 0 or abs(uv_area) <= floor:
+                continue
+            if uv_area < 0:
+                return math.inf
+            x2 = sum(a * b for a, b in zip(e1, e2)) / length
+            y2 = 2 * area / length
+            u0, u1, u2 = (face_uv[c] for c in corners)
+            a = (u1[0] - u0[0]) * orientation / length
+            b = ((u2[0] - u0[0]) * orientation - x2 * a) / y2
+            c = (u1[1] - u0[1]) / length
+            d = (u2[1] - u0[1] - x2 * c) / y2
+            det = a * d - b * c
+            if det <= 0:
+                return math.inf
+            frob2 = a * a + b * b + c * c + d * d
+            grow += area * frob2
+            shrink += area * frob2 / (det * det)
+            total += area
+    if total <= 0:
+        return math.inf
+    return 2 * math.sqrt(grow * shrink) / total
+
+
 def _boundary_loop(group, uvs):
     """The island's single boundary loop as uv points in walk order. None
     when the boundary splits into several loops (holes) or pinches through

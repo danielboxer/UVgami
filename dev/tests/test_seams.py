@@ -30,6 +30,7 @@ from seams import (  # noqa: E402
     diagonal,
     disk_cuts,
     face_edges,
+    flatten_distortion,
     flatten_teeth,
     is_hard_surface,
     island_groups,
@@ -1644,3 +1645,33 @@ def test_rectify_reaches_islands_bordering_their_own_cut():
 def test_rectify_skips_an_island_with_a_hole():
     verts, faces, uvs = annulus_island()
     assert rectify_targets(uvs, uv_groups(faces, uvs)) == []
+
+
+FLAT_QUAD_VERTS = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)]
+FLAT_QUAD_UVS = [[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]]
+
+
+def test_flatten_distortion_is_four_at_isometry():
+    value = flatten_distortion(FLAT_QUAD_VERTS, [(0, 1, 2, 3)], FLAT_QUAD_UVS, [0])
+    assert abs(value - 4.0) < 1e-9
+
+
+def test_flatten_distortion_grows_with_stretch():
+    stretched = [[(0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (0.0, 1.0)]]
+    value = flatten_distortion(FLAT_QUAD_VERTS, [(0, 1, 2, 3)], stretched, [0])
+    assert value > 4.5
+
+
+def test_flatten_distortion_flags_a_real_flip():
+    faces = [(0, 1, 2), (0, 2, 3)]
+    uvs = [
+        [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)],
+        [(0.0, 0.0), (0.0, 1.0), (1.0, 1.0)],
+    ]
+    assert flatten_distortion(FLAT_QUAD_VERTS, faces, uvs, [0, 1]) == math.inf
+
+
+def test_flatten_distortion_reads_a_mirrored_island_like_its_source():
+    mirrored = [[(0.0, 0.0), (-1.0, 0.0), (-1.0, 1.0), (0.0, 1.0)]]
+    value = flatten_distortion(FLAT_QUAD_VERTS, [(0, 1, 2, 3)], mirrored, [0])
+    assert abs(value - 4.0) < 1e-9

@@ -39,7 +39,7 @@ from .preseed import (
     check_manifold,
     preseed_uvs,
 )
-from .rectify import rectify_targets
+from .rectify import flatten_distortion, rectify_targets
 from .regions import (
     CREASE_ANGLE,
     FLAT_ANGLE,
@@ -84,6 +84,7 @@ __all__ = [
     "island_layout",
     "island_ruined",
     "islands_overlap",
+    "flatten_distortion",
     "merge_flat",
     "merge_smooth",
     "mirror_seams",
