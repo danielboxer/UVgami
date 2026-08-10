@@ -47,10 +47,12 @@ from .regions import (
     detect_width,
     merge_flat,
     merge_smooth,
+    panel_share,
     partition,
     region_topology,
+    unfold_hinges,
 )
-from .sweeps import split_sweeps
+from .sweeps import component_faces, split_sweeps, surface_genus, sweep_rims
 
 __all__ = [
     "CREASE_ANGLE",
@@ -86,7 +88,6 @@ __all__ = [
     "pair",
     "partition",
     "path_cost",
-    "preseed_uvs",
     "region_topology",
     "reroute_boundaries",
     "seam_edges",
@@ -94,8 +95,13 @@ __all__ = [
     "snap_paths",
     "split_islands",
     "split_moves",
+    "component_faces",
+    "surface_genus",
+    "panel_share",
     "split_sweeps",
+    "sweep_rims",
     "turn_angle",
+    "unfold_hinges",
     "uv_area_fit",
     "uv_fit",
     "uv_island_groups",

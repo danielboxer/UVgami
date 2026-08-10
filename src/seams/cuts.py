@@ -33,17 +33,20 @@ CREASED_RELIEF = 0.9
 TURN_COST = 1.0
 
 
-def boundary_components(edges, label):
+def boundary_components(edges, label, forced=None):
     """Per-region boundary vertices, grouped into connected components.
 
     Two loops meeting at a vertex count as one component: the cut between them
-    would be a point, not a path, and the region is already joined there."""
+    would be a point, not a path, and the region is already joined there.
+    forced edges are seams already, so inside a region they count as boundary:
+    a marked slit joining two rims means the region is open there."""
     parent = {}
 
     for (v0, v1), owners in edges.items():
         regions = {label[o] for o in owners}
         if len(owners) == 2 and len(regions) == 1:
-            continue
+            if not forced or (v0, v1) not in forced:
+                continue
         for r in regions:
             a, b = (r, v0), (r, v1)
             parent.setdefault(a, a)
@@ -220,15 +223,18 @@ def connect_loops(verts, adjacent, comps, weights=None, relief=None):
     return cuts
 
 
-def disk_cuts(verts, edges, label, weights=None, relief=None):
+def disk_cuts(verts, edges, label, weights=None, relief=None, forced=None):
     """Seam paths that open every multi-loop region into a disk.
 
     A tube wall is an annulus straight out of the partition and no merge
     can fix that, so cut it: a path joining two boundary loops opens the
     region without splitting it, one cut per extra loop. Genus is left to
-    the engine, a handle needs a loop cut.
+    the engine, a handle needs a loop cut. forced edges already cut, so a
+    wall a marked seam opens needs no second slit.
     """
-    needs = {r: c for r, c in boundary_components(edges, label).items() if len(c) > 1}
+    needs = {
+        r: c for r, c in boundary_components(edges, label, forced).items() if len(c) > 1
+    }
     if not needs:
         return set()
 

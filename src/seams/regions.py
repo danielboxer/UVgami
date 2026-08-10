@@ -16,7 +16,7 @@ import heapq
 import math
 
 from .islands import SPLIT_ASPECT
-from .mesh import find, norm, pair, turn_angle
+from .mesh import LOW_ANGLE, cross, find, norm, pair, turn_angle
 
 
 # auto width: at the low partition angle region widths are dominated by
@@ -34,6 +34,13 @@ FLAT_ANGLE = 30
 # the boundary because flatness cannot pass a cylinder, whose panels spread
 # as far as a corner once enough of them merge
 CREASE_ANGLE = 30
+# unfold: a region whose mass sums flat panel by panel is paper, it unfolds
+# rigidly however far a hinge turns. curved mass drops the share: a
+# hemisphere reads 0.5, a quarter-bent strip about 0.9
+PANEL_SHARE = 0.95
+# every edge of a hinge must lie on one line, within this cosine of the
+# first edge's direction, or the fold cannot open rigidly
+HINGE_LINE_COS = 0.996
 
 
 # per region boundary, the length-weighted sums the smooth merge reads: turn
@@ -42,17 +49,18 @@ CREASE_ANGLE = 30
 Boundaries = collections.namedtuple("Boundaries", "turn step spread length")
 
 
-def partition(faces, weighted, edges, angle, forced=None):
-    """Union-find over faces, cutting every edge sharper than angle, and every
-    edge in forced whatever it turns."""
+def partition(faces, weighted, edges, angle, forced=None, smooth=None):
+    """Union-find over faces, cutting every edge sharper than angle. Edges in
+    forced cut whatever they turn, edges in smooth merge whatever they turn,
+    and forced wins when an edge is in both."""
     parent = list(range(len(faces)))
 
     for key, owners in edges.items():
         if len(owners) != 2:
             continue
-        if turn_angle(weighted, owners) > angle:
-            continue
         if forced and key in forced:
+            continue
+        if turn_angle(weighted, owners) > angle and not (smooth and key in smooth):
             continue
         a, b = owners
         ra, rb = find(parent, a), find(parent, b)
@@ -463,3 +471,357 @@ def close_rings(verts, weighted, areas, edges, label, angle=CREASE_ANGLE, forced
     if not closed:
         return label
     return {i: closed.get(r, r) for i, r in label.items()}
+
+
+def panel_share(weighted, groups):
+    """How much of these faces' mass sums to flat panels: 1 when every group
+    is planar, lower the more each one curls."""
+    flat = mass = 0.0
+    for group in groups:
+        resultant = [0.0, 0.0, 0.0]
+        for i in group:
+            for k in range(3):
+                resultant[k] += weighted[i][k]
+            mass += norm(weighted[i])
+        flat += norm(resultant)
+    return flat / mass if mass > 0 else 0.0
+
+
+def straight_path(verts, keys):
+    """Whether these edges form one connected path along one line. Rigid
+    unfolding needs exactly that: the sides swing about a single fold axis,
+    a bent or split contact cannot open flat."""
+    reference = None
+    ends = collections.Counter()
+    parent = {}
+    for v0, v1 in keys:
+        step = [verts[v1][k] - verts[v0][k] for k in range(3)]
+        length = norm(step)
+        if length <= 0:
+            return False
+        step = [x / length for x in step]
+        if reference is None:
+            reference = step
+        elif abs(sum(x * y for x, y in zip(reference, step))) < HINGE_LINE_COS:
+            return False
+        ends.update((v0, v1))
+        parent.setdefault(v0, v0)
+        parent.setdefault(v1, v1)
+        ra, rb = find(parent, v0), find(parent, v1)
+        if ra != rb:
+            parent[ra] = rb
+    if any(count > 2 for count in ends.values()):
+        return False
+    return len({find(parent, v) for v in parent}) == 1
+
+
+def path_ends(keys):
+    """The two endpoint vertices of a connected open path of edges."""
+    counts = collections.Counter(v for key in keys for v in key)
+    ends = [v for v, count in counts.items() if count == 1]
+    return ends if len(ends) == 2 else None
+
+
+def panel_basis(verts, faces, weighted, members):
+    """Origin and in-plane axes projecting a flat panel to 2D, or None when
+    the panel has no usable normal."""
+    normal = [0.0, 0.0, 0.0]
+    for i in members:
+        for k in range(3):
+            normal[k] += weighted[i][k]
+    scale = norm(normal)
+    if scale <= 0:
+        return None
+    normal = [x / scale for x in normal]
+    face = faces[members[0]]
+    origin = verts[face[0]]
+    for other in face[1:]:
+        direction = [verts[other][k] - origin[k] for k in range(3)]
+        lift = sum(d * n for d, n in zip(direction, normal))
+        axis_u = [d - lift * n for d, n in zip(direction, normal)]
+        length = norm(axis_u)
+        if length > 0:
+            axis_u = [x / length for x in axis_u]
+            return origin, axis_u, cross(normal, axis_u)
+    return None
+
+
+def project(basis, vert):
+    origin, axis_u, axis_v = basis
+    d = [vert[k] - origin[k] for k in range(3)]
+    return (
+        sum(x * y for x, y in zip(d, axis_u)),
+        sum(x * y for x, y in zip(d, axis_v)),
+    )
+
+
+IDENTITY = (1.0, 0.0, 0.0, 0.0)
+
+
+def apply_transform(transform, point):
+    c, s, x, y = transform
+    return (c * point[0] - s * point[1] + x, s * point[0] + c * point[1] + y)
+
+
+def compose_transforms(outer, inner):
+    c2, s2, x2, y2 = outer
+    c1, s1, x1, y1 = inner
+    return (
+        c2 * c1 - s2 * s1,
+        s2 * c1 + c2 * s1,
+        c2 * x1 - s2 * y1 + x2,
+        s2 * x1 + c2 * y1 + y2,
+    )
+
+
+def glue_transform(a0, a1, b0, b1):
+    """Rigid 2D map taking segment b0-b1 onto a0-a1, rotation only: both
+    panels project with their normal up, so an unfold never mirrors."""
+    dax, day = a1[0] - a0[0], a1[1] - a0[1]
+    dbx, dby = b1[0] - b0[0], b1[1] - b0[1]
+    la, lb = math.hypot(dax, day), math.hypot(dbx, dby)
+    if la <= 0 or lb <= 0:
+        return None
+    dax, day, dbx, dby = dax / la, day / la, dbx / lb, dby / lb
+    c = dbx * dax + dby * day
+    s = dbx * day - dby * dax
+    return (
+        c,
+        s,
+        a0[0] - (c * b0[0] - s * b0[1]),
+        a0[1] - (s * b0[0] + c * b0[1]),
+    )
+
+
+def segments_cross(a, b, c, d):
+    """Whether the two segments properly cross. Touching at an endpoint or
+    running collinear is not a crossing, so glued neighbours sharing their
+    hinge line stay clean."""
+
+    def orient(p, q, r):
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+
+    o1, o2 = orient(a, b, c), orient(a, b, d)
+    if o1 == 0 or o2 == 0 or (o1 > 0) == (o2 > 0):
+        return False
+    o3, o4 = orient(c, d, a), orient(c, d, b)
+    return o3 != 0 and o4 != 0 and (o3 > 0) != (o4 > 0)
+
+
+def point_in_polygon(point, segments):
+    """Ray parity over an unordered boundary, the half-open rule so a vertex
+    on the ray counts once."""
+    px, py = point
+    hits = 0
+    for (x0, y0), (x1, y1) in segments:
+        if (y0 > py) != (y1 > py) and x0 + (py - y0) * (x1 - x0) / (y1 - y0) > px:
+            hits += 1
+    return hits % 2 == 1
+
+
+def panels_overlap(placed_a, placed_b):
+    _, segs_a, box_a, inner_a = placed_a
+    _, segs_b, box_b, inner_b = placed_b
+    if (
+        box_a[2] <= box_b[0]
+        or box_b[2] <= box_a[0]
+        or box_a[3] <= box_b[1]
+        or box_b[3] <= box_a[1]
+    ):
+        return False
+    for sa in segs_a:
+        for sb in segs_b:
+            if segments_cross(sa[0], sa[1], sb[0], sb[1]):
+                return True
+    return point_in_polygon(inner_a, segs_b) or point_in_polygon(inner_b, segs_a)
+
+
+def unfold_hinges(verts, faces, weighted, edges, label, forced=None):
+    """Boundary edges to leave uncut so flat panels unfold as one island,
+    the way an artist opens a box into a cross.
+
+    A hinge is the contact between two flat panels when it is one straight
+    path: the sides then swing rigidly open like paper and the flatten
+    stays isometric. Hinges are picked longest first into a spanning
+    forest over the regions, each glue along one path keeps every island a
+    disk, and a contact holding a forced seam never hinges. Each candidate
+    is test-placed in the flat net first, and one whose side would land on
+    panels already placed is dropped, so the boundary ships as a seam
+    there instead of an overlapping net the engine recuts as one blob."""
+    # forced cuts here too, or a panel spans two regions and the forest
+    # cannot tell which one a contact connects
+    root = partition(faces, weighted, edges, LOW_ANGLE, forced)
+    contacts = collections.defaultdict(list)
+    outline = collections.defaultdict(list)
+    poisoned = set()
+    for key, owners in edges.items():
+        panels = sorted({root(o) for o in owners})
+        if len(owners) == 2 and len(panels) == 1:
+            continue
+        for p in panels:
+            outline[p].append(key)
+        if len(owners) == 2:
+            panel_pair = (panels[0], panels[1])
+            contacts[panel_pair].append(key)
+            if forced and key in forced:
+                poisoned.add(panel_pair)
+
+    members = collections.defaultdict(list)
+    for i in range(len(faces)):
+        members[root(i)].append(i)
+    flat = {
+        p: panel_share(weighted, [members[p]]) >= PANEL_SHARE
+        for panel_pair in contacts
+        for p in panel_pair
+    }
+    ec, _, _ = region_topology(edges, label)
+    region = {p: label[members[p][0]] for p in flat}
+    basis = {
+        p: panel_basis(verts, faces, weighted, members[p])
+        for p, is_flat in flat.items()
+        if is_flat
+    }
+
+    def length(keys):
+        return sum(
+            norm([verts[v1][k] - verts[v0][k] for k in range(3)]) for v0, v1 in keys
+        )
+
+    candidates = sorted(
+        (
+            (length(keys), panel_pair)
+            for panel_pair, keys in contacts.items()
+            if region[panel_pair[0]] != region[panel_pair[1]]
+            and panel_pair not in poisoned
+            and all(flat[p] for p in panel_pair)
+            and all(ec[region[p]] == 1 for p in panel_pair)
+            and straight_path(verts, keys)
+        ),
+        reverse=True,
+    )
+
+    local_cache = {}
+
+    def placed_panel(move, p):
+        if p not in local_cache:
+            face = faces[members[p][0]]
+            centroid = [sum(verts[v][k] for v in face) / len(face) for k in range(3)]
+            local_cache[p] = (
+                [
+                    (project(basis[p], verts[v0]), project(basis[p], verts[v1]))
+                    for v0, v1 in outline[p]
+                ],
+                project(basis[p], centroid),
+            )
+        segments, inner = local_cache[p]
+        moved = [
+            (apply_transform(move, a), apply_transform(move, b)) for a, b in segments
+        ]
+        xs = [c[0] for seg in moved for c in seg]
+        ys = [c[1] for seg in moved for c in seg]
+        box = (min(xs), min(ys), max(xs), max(ys))
+        return move, moved, box, apply_transform(move, inner)
+
+    # pre-glue panels within a region across straight flat contacts: those
+    # folds are never cut, so their panels move as one rigid piece of the net
+    cluster = {}
+    placement = {}
+    glue_adjacency = collections.defaultdict(list)
+    for panel_pair, keys in contacts.items():
+        pa, pb = panel_pair
+        if (
+            pa in region
+            and region[pa] == region[pb]
+            and panel_pair not in poisoned
+            and flat[pa]
+            and flat[pb]
+            and basis.get(pa)
+            and basis.get(pb)
+            and straight_path(verts, keys)
+            and path_ends(keys)
+        ):
+            glue_adjacency[pa].append((pb, keys))
+            glue_adjacency[pb].append((pa, keys))
+    for p in basis:
+        if basis[p] is None or p in placement:
+            continue
+        cluster[p] = p
+        placement[p] = IDENTITY
+        stack = [p]
+        while stack:
+            current = stack.pop()
+            for neighbor, keys in glue_adjacency[current]:
+                if neighbor in placement:
+                    continue
+                e0, e1 = path_ends(keys)
+                move = glue_transform(
+                    apply_transform(
+                        placement[current], project(basis[current], verts[e0])
+                    ),
+                    apply_transform(
+                        placement[current], project(basis[current], verts[e1])
+                    ),
+                    project(basis[neighbor], verts[e0]),
+                    project(basis[neighbor], verts[e1]),
+                )
+                if move is None:
+                    continue
+                cluster[neighbor] = p
+                placement[neighbor] = move
+                stack.append(neighbor)
+
+    # rigid groups: clusters merged so far, each with its panels laid out in
+    # one shared frame. only panels inside a group can be overlap-tested,
+    # anything joined through a curved or unplaceable contact cannot
+    group_parent = {}
+    layouts = {}
+
+    def group_layout(p):
+        seed = cluster[p]
+        group_parent.setdefault(seed, seed)
+        top = find(group_parent, seed)
+        if top not in layouts:
+            layouts[top] = {
+                q: placed_panel(placement[q], q)
+                for q, s in cluster.items()
+                if s == seed
+            }
+        return top
+
+    parent = {r: r for r in set(label.values())}
+    hinges = set()
+    for _, panel_pair in candidates:
+        pa, pb = panel_pair
+        ra, rb = find(parent, region[pa]), find(parent, region[pb])
+        if ra == rb:
+            continue
+        ends = path_ends(contacts[panel_pair])
+        if ends and basis.get(pa) and basis.get(pb):
+            ga, gb = group_layout(pa), group_layout(pb)
+            if ga != gb:
+                side_a = layouts[ga][pa]
+                side_b = layouts[gb][pb]
+                e0, e1 = ends
+                move = glue_transform(
+                    apply_transform(side_a[0], project(basis[pa], verts[e0])),
+                    apply_transform(side_a[0], project(basis[pa], verts[e1])),
+                    apply_transform(side_b[0], project(basis[pb], verts[e0])),
+                    apply_transform(side_b[0], project(basis[pb], verts[e1])),
+                )
+                if move is not None:
+                    arriving = {
+                        q: placed_panel(compose_transforms(move, placed[0]), q)
+                        for q, placed in layouts[gb].items()
+                    }
+                    if any(
+                        panels_overlap(placed, arrival)
+                        for placed in layouts[ga].values()
+                        for arrival in arriving.values()
+                    ):
+                        continue
+                    layouts[ga].update(arriving)
+                    del layouts[gb]
+                    group_parent[gb] = ga
+        parent[ra] = rb
+        hinges.update(contacts[panel_pair])
+    return hinges
