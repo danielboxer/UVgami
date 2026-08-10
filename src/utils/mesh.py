@@ -9,6 +9,16 @@ def new_bmesh(obj):
     return bm
 
 
+def face_uvs(mesh):
+    """Per-face loop uvs from the active layer, in face vertex order, rounded
+    so float noise between loops of one vert doesn't read as a seam."""
+    uv = mesh.uv_layers.active.data
+    return [
+        [(round(uv[i].uv[0], 6), round(uv[i].uv[1], 6)) for i in poly.loop_indices]
+        for poly in mesh.polygons
+    ]
+
+
 def triangulate(bm):
     """Triangulate for engine input. BEAUTY alone can give two quads the same
     diagonal (Suzanne's mouth fold), leaving an edge with 4 faces that the

@@ -8,10 +8,11 @@ import numpy
 from .logger import logger
 from .objfile import merge_obj_files
 from .proxy import transfer_cuts
-from .seams import FlattenError, uv_area_fit
+from .seams import FlattenError, stack_mirrored, uv_area_fit
+from .similar import mirror_permutations
 from .uv_transfer import plan_transfer
 from .utils.geometry import cut_on_axes
-from .utils.mesh import check_exists, new_bmesh, set_bmesh, triangulate
+from .utils.mesh import check_exists, face_uvs, new_bmesh, set_bmesh, triangulate
 
 TransferReport = namedtuple("TransferReport", ["applied", "split_count", "detail"])
 
@@ -603,10 +604,33 @@ class Symmetrise:
         self.z = "Z" in axes
         self.center = center
         self.overlap = overlap
+        # set when the preseed mirrored the seams instead: the mesh ships
+        # whole, so finish has no half to rebuild and only snap_overlap runs
+        self.kept_whole = False
+
+    def axis_names(self):
+        return [axis for axis, used in zip("XYZ", (self.x, self.y, self.z)) if used]
 
     def cut(self, obj):
-        axes = [axis for axis, used in zip("XYZ", (self.x, self.y, self.z)) if used]
-        cut_on_axes(obj, self.center, axes)
+        cut_on_axes(obj, self.center, self.axis_names())
+
+    def snap_overlap(self, output):
+        """Stack each mirrored island pair exactly, so the pack keeps the
+        pair together like any other stack."""
+        mesh = output.data
+        if mesh.uv_layers.active is None:
+            return
+        center = output.matrix_world.inverted() @ self.center
+        mirrors = mirror_permutations(mesh, center, self.axis_names())
+        if mirrors is None:
+            return
+        faces = [tuple(p.vertices) for p in mesh.polygons]
+        moves = stack_mirrored(faces, face_uvs(mesh), mirrors)
+        layer = mesh.uv_layers.active.data
+        for target, corner, source, source_corner in moves:
+            layer[mesh.polygons[target].loop_indices[corner]].uv = layer[
+                mesh.polygons[source].loop_indices[source_corner]
+            ].uv
 
     def finish(self, output):
         mirror = output.modifiers.new("Mirror", "MIRROR")

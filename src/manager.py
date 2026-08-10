@@ -422,8 +422,9 @@ class UnwrapManager:
         if unwrap.hide_job is not None:
             unwrap.hide_job.finish(self.input[unwrap.hide_job])
 
-        if unwrap.symmetrize_job is not None:
-            unwrap.symmetrize_job.finish(output)
+        symmetrize_job = unwrap.symmetrize_job
+        if symmetrize_job is not None and not symmetrize_job.kept_whole:
+            symmetrize_job.finish(output)
 
         pieces = unwrap.join_job.finished if unwrap.join_job is not None else [unwrap]
         if any(u.preseeded for u in pieces):
@@ -444,6 +445,11 @@ class UnwrapManager:
                     ranges = None
             finish_preseed(output, ranges)
             rectify_islands(output)
+
+        # after rectify, whose per-island solves would drift a stack apart
+        kept_whole = symmetrize_job is not None and symmetrize_job.kept_whole
+        if kept_whole and symmetrize_job.overlap:
+            symmetrize_job.snap_overlap(output)
 
         if props.pack_after_unwrap:
             self._pack_output_objects.append(output)

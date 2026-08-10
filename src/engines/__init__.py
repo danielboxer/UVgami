@@ -50,12 +50,13 @@ class Engine:
         engine wants seams of its own. obj is a temp copy, safe to edit."""
         return props.import_uvs and self.supports_import_uvs
 
-    def preseed_work(self, obj, props):
+    def preseed_work(self, obj, props, mirrors=None):
         """Split prepare_uvs for the start operator's worker thread: a
         (compute, apply) pair where compute touches no bpy data and runs off
         the main thread, and apply(compute()) writes the result back and
         returns whether the preseed applied uvs. None means there is no slow
-        work and prepare_uvs is used directly."""
+        work and prepare_uvs is used directly. mirrors are the symmetry
+        vertex maps the seams should close under, for engines that seam."""
         return None
 
     def piece_uses_uvs(self, obj, props, has_uvs):

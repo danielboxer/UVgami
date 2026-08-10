@@ -54,6 +54,7 @@ from .regions import (
     unfold_hinges,
 )
 from .sweeps import component_faces, split_sweeps, surface_genus, sweep_rims
+from .symmetry import mirror_seams, stack_mirrored
 
 __all__ = [
     "CREASE_ANGLE",
@@ -85,6 +86,7 @@ __all__ = [
     "islands_overlap",
     "merge_flat",
     "merge_smooth",
+    "mirror_seams",
     "norm",
     "pair",
     "partition",
@@ -98,6 +100,7 @@ __all__ = [
     "snap_paths",
     "split_islands",
     "split_moves",
+    "stack_mirrored",
     "component_faces",
     "surface_genus",
     "panel_share",

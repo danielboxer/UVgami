@@ -28,7 +28,7 @@ from ..seams import (
     islands_overlap,
     uv_island_groups,
 )
-from ..similar import find_twins, write_twin_output
+from ..similar import find_twins, mirror_permutations, write_twin_output
 from ..unwrap import Unwrap
 from ..utils.geometry import apply_transforms, calc_center
 from ..utils.io import export_obj
@@ -518,7 +518,7 @@ class SessionBuilder:
 
     def _advance(self):
         if self.pending is not None:
-            thread, box, apply, obj, index, symmetrize_job = self.pending
+            thread, box, apply, obj, index, symmetrize_job, mirrors = self.pending
             if thread.is_alive():
                 return 0.1
             self.pending = None
@@ -529,7 +529,12 @@ class SessionBuilder:
             props = bpy.context.scene.uvgami
             preseeded = apply(box.get("result"))
             if symmetrize_job is not None:
-                symmetrize_job.cut(obj)
+                if preseeded and mirrors:
+                    # the seams are mirrored, so the mesh ships whole with no
+                    # cut at the plane and nothing to rebuild at the end
+                    symmetrize_job.kept_whole = True
+                else:
+                    symmetrize_job.cut(obj)
             has_uvs = preseeded or (
                 props.import_uvs and self.engine.supports_import_uvs
             )
@@ -541,17 +546,18 @@ class SessionBuilder:
         index, obj = self.remaining.popleft()
         props = bpy.context.scene.uvgami
         symmetrize_job = None
+        mirrors = None
         if props.use_symmetry:
             apply_transforms(obj)
-            symmetrize_job = Symmetrise(
-                props.sym_axes, calc_center(obj), props.sym_merge
-            )
+            center = calc_center(obj)
+            symmetrize_job = Symmetrise(props.sym_axes, center, props.sym_merge)
+            mirrors = mirror_permutations(obj.data, center, sorted(props.sym_axes))
 
         # seams and uvs are built on the whole mesh, before the symmetry cut
         # and separation: the seams package reads region widths off the full
         # model, a bisected half merges its regions away, and a small loose
         # part run alone shatters (auto width tunes to the piece)
-        work = self.engine.preseed_work(obj, props)
+        work = self.engine.preseed_work(obj, props, mirrors)
         if work is None:
             has_uvs = self.engine.prepare_uvs(obj, props)
             if symmetrize_job is not None:
@@ -569,7 +575,7 @@ class SessionBuilder:
 
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
-        self.pending = (thread, box, apply, obj, index, symmetrize_job)
+        self.pending = (thread, box, apply, obj, index, symmetrize_job, mirrors)
         return 0.1
 
     def _input_jobs(self, props, index):
