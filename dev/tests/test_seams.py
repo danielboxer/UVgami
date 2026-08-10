@@ -21,6 +21,7 @@ from seams import (  # noqa: E402
     boundary_edges,
     build,
     close_rings,
+    component_faces,
     crease_relief,
     cross,
     crosses,
@@ -34,6 +35,7 @@ from seams import (  # noqa: E402
     island_groups,
     island_layout,
     island_ruined,
+    surface_genus,
     islands_overlap,
     pair,
     partition,
@@ -46,7 +48,9 @@ from seams import (  # noqa: E402
     split_islands,
     split_moves,
     split_sweeps,
+    sweep_rims,
     turn_angle,
+    unfold_hinges,
     uv_area_fit,
     uv_fit,
     uv_island_groups,
@@ -96,12 +100,13 @@ def test_plain_cube_is_untouched():
 
 
 def test_seam_edges_on_plain_cube():
+    # the cross: five hinges stay uncut, the other seven cube edges are the
+    # seams, and the triangulation diagonals stay interior
     verts, faces = read_obj(FIXTURES / "cube.obj")
     seams = seam_edges(verts, faces)
-    # every one of the 12 cube edges separates two faces, the triangulation
-    # diagonals stay interior
-    assert len(seams) == 12
+    assert len(seams) == 7
     assert all(v0 < v1 for v0, v1 in seams)
+    assert len(island_groups(faces, seams, face_edges(faces))) == 1
 
 
 def tube(sides=4, height=1.0):
@@ -130,16 +135,16 @@ def test_tube_stops_merging_before_it_closes_the_ring():
     assert all(value == 1 for value in ec.values())
 
 
-def test_coarse_tube_merges_into_two_halves():
-    # 22.5 degrees a segment, so the partition shatters the wall into 16
-    # columns and no flatness test can put it back: the smooth merge reads the
-    # turn at each boundary instead and takes the wall to two halves. Closing
-    # the ring is refused too: at height 1 the cut-open wall would unroll to
-    # aspect 2*pi, past the strip bound
+def test_coarse_tube_unrolls_with_one_cut():
+    # 22.5 degrees a segment shatters the partition into 16 columns, but the
+    # wall is a verified sweep, so it partitions as one annulus and a single
+    # cut opens it, however long the strip: slicing long islands is the
+    # finish pass's job
     verts, faces = tube(16)
     seams = seam_edges(verts, faces)
-    assert len(seams) == 2
-    assert all({verts[v0][2], verts[v1][2]} == {0.0, 1.0} for v0, v1 in seams)
+    assert len(seams) == 1
+    ((v0, v1),) = seams
+    assert {verts[v0][2], verts[v1][2]} == {0.0, 1.0}
 
 
 def test_tall_coarse_tube_closes_ring_for_one_cut():
@@ -161,38 +166,114 @@ def test_ring_closing_refuses_a_crease():
     assert close_rings(verts, weighted, areas, edges, label) == label
 
 
-def test_faceted_tube_keeps_its_facets():
-    # 45 degrees a segment reads as a crease, and an octagonal prism is one
+def test_faceted_tube_unrolls_whole():
+    # 45 degrees a segment reads as a crease, so the facets survive as
+    # regions, but they are flat panels: the unfold opens the ring at one
+    # boundary and the prism unrolls as a single strip
     verts, faces = tube(8)
-    assert len(seam_edges(verts, faces)) == 8
+    seams = seam_edges(verts, faces)
+    assert len(seams) == 1
+    assert len(island_groups(faces, seams, face_edges(faces))) == 1
 
 
 @pytest.mark.skipif(not HEX_HEAD.exists(), reason="needs the bench models")
-def test_seamless_closed_mesh_retries_at_the_floor():
+def test_smeared_closed_mesh_still_flattens_at_a_high_angle():
     # a hex head smears every feature to just under 60, so at 66 close_rings
-    # seals the closed mesh into one seamless region nothing can flatten:
-    # detection must fall back to CREASE_ANGLE instead of returning nothing
+    # seals the closed mesh into one region. the straight runs still find
+    # the bolt's tube structure, so it flattens with fewer islands instead
+    # of falling back to the CREASE_ANGLE retry
     verts, faces = read_obj(HEX_HEAD)
     faces = [tuple(f) for f in faces]
     at_floor = seam_edges(verts, faces, CREASE_ANGLE)
-    assert at_floor
-    assert seam_edges(verts, faces, 66) == at_floor
+    high = seam_edges(verts, faces, 66)
+    assert high
+    edges = face_edges(faces)
+    floor_islands = island_groups(faces, at_floor, edges)
+    high_islands = island_groups(faces, high, edges)
+    assert 1 < len(high_islands) < len(floor_islands)
 
 
 def test_lower_feature_angle_keeps_shallow_seams():
     # 22.5 degree panel boundaries merge away at the default 30 but survive
-    # 15: the knob's point, more seams toward artist style
-    verts, faces = tube(16)
+    # 15: the knob's point, more seams toward artist style. The tube's sweep
+    # rims are forced at both angles, so only the panel seams differ
+    verts, faces = elbow(sides=16)
     assert len(seam_edges(verts, faces, angle=15)) > len(seam_edges(verts, faces))
 
 
-def test_beveled_cube_keeps_six_charts_through_every_merge():
-    # the smooth merge sees 22.5 degrees across what is left of a dissolved
-    # bevel, so without absorb handing over the turn it carried this collapses
+def test_beveled_cube_unfolds_into_one_island():
+    # the six faces survive the merges (test_beveled_cube_merges_to_faces),
+    # then the unfold hinges them into a cross like the plain cube
     verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
     seams = seam_edges(verts, faces)
     edges = face_edges(faces)
-    assert len(island_groups(faces, seams, edges)) == 6
+    assert len(island_groups(faces, seams, edges)) == 1
+
+
+def panel_hinges(verts, faces):
+    weighted, _, edges = build(verts, faces)
+    root = partition(faces, weighted, edges, LOW_ANGLE)
+    label = {i: root(i) for i in range(len(faces))}
+    return unfold_hinges(verts, faces, weighted, edges, label)
+
+
+def test_unfold_drops_the_hinge_that_would_overlap():
+    # a unit base with two 3x3 wings folded up from adjacent edges: either
+    # wing unfolds fine alone, opened together they land on the same corner
+    # area, so one of the two hinges must ship as a seam
+    verts = [
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (1.0, 1.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (1.0, -1.0, 0.0),
+        (1.0, 2.0, 0.0),
+        (1.0, 2.0, 3.0),
+        (1.0, -1.0, 3.0),
+        (-1.0, 1.0, 0.0),
+        (2.0, 1.0, 0.0),
+        (2.0, 1.0, 3.0),
+        (-1.0, 1.0, 3.0),
+    ]
+    faces = [
+        (0, 1, 2),
+        (0, 2, 3),
+        (7, 6, 5),
+        (7, 5, 2),
+        (7, 2, 1),
+        (7, 1, 4),
+        (11, 8, 3),
+        (11, 3, 2),
+        (11, 2, 9),
+        (11, 9, 10),
+    ]
+    hinges = panel_hinges(verts, faces)
+    assert len(hinges) == 1
+    assert hinges < {pair(1, 2), pair(2, 3)}
+
+
+def test_unfold_keeps_hinges_that_open_clear():
+    # same shape with wings that stay inside their own quadrant when opened,
+    # so the overlap check must not reject either hinge
+    verts = [
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (1.0, 1.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (1.0, 0.0, 1.0),
+        (1.0, 1.0, 1.0),
+        (1.0, 1.0, 0.5),
+        (0.0, 1.0, 0.5),
+    ]
+    faces = [
+        (0, 1, 2),
+        (0, 2, 3),
+        (4, 5, 2),
+        (4, 2, 1),
+        (7, 3, 2),
+        (7, 2, 6),
+    ]
+    assert panel_hinges(verts, faces) == {pair(1, 2), pair(2, 3)}
 
 
 def test_absorbed_bevel_still_reads_as_a_crease():
@@ -253,7 +334,7 @@ def elbow(rings=12, sides=12, bend_radius=3.0, tube_radius=1.0):
 def sweep_regions(verts, faces):
     weighted, areas, edges = build(verts, faces)
     label = {i: 0 for i in range(len(faces))}
-    return split_sweeps(weighted, areas, edges, label), len(faces)
+    return split_sweeps(verts, faces, weighted, areas, edges, label), len(faces)
 
 
 def test_sweep_split_lifts_the_cap_off_a_sock():
@@ -268,12 +349,19 @@ def test_sweep_split_lifts_the_cap_off_a_sock():
     assert fan in regions.values()
 
 
-def test_sweep_split_leaves_a_bent_tube_alone():
+def test_sweep_split_cuts_a_bent_tube_into_straight_runs():
     # mid-bend normals sit between wall and cap against any axis, so an
-    # elbow must not read as a sock: it unrolls fine once cut open
+    # elbow is no sock: it relabels into straight runs instead, and every
+    # run must be one connected piece
     verts, faces = elbow()
     label, _ = sweep_regions(verts, faces)
-    assert len(set(label.values())) == 1
+    regions = collections.defaultdict(list)
+    for i, r in label.items():
+        regions[r].append(i)
+    assert len(regions) > 1
+    edges = face_edges(faces)
+    for members in regions.values():
+        assert len(component_faces(members, edges)) == 1
 
 
 def filleted_tube(sides=32, height=2.0, fillet=8, radius=0.4):
@@ -667,13 +755,13 @@ def test_forced_seam_splits_a_flat_face():
     )
     seams = seam_edges(verts, faces, forced={flat})
     assert flat in seams
-    assert len(island_groups(faces, seams, edges)) == 7
+    # the unfold takes the rest to one island, the mark stays as its slit
+    assert len(island_groups(faces, seams, edges)) == 1
 
 
 def test_forced_seam_takes_a_detected_one_over():
-    # the 16 sided wall needs two cuts and detection picks where. Marking one
-    # panel boundary has to make the smooth merge stop there instead, so the
-    # count is unchanged: a mark placed after the merges would be a third cut
+    # the swept wall needs one cut and detection picks where. Marking a panel
+    # boundary has to become that cut, not add a second slit beside it
     verts, faces = tube(16)
     edges = face_edges(faces)
     base = seam_edges(verts, faces)
@@ -681,29 +769,30 @@ def test_forced_seam_takes_a_detected_one_over():
         pair(2 * i, 2 * i + 1) for i in range(16) if pair(2 * i, 2 * i + 1) not in base
     )
     seams = seam_edges(verts, faces, forced={side})
-    assert side in seams
-    assert len(seams) == len(base) == 2
-    assert len(island_groups(faces, seams, edges)) == 2
+    assert seams == {side}
+    assert len(base) == 1
+    assert len(island_groups(faces, seams, edges)) == 1
 
 
 def test_forced_seam_moves_the_band_it_blocks():
     # a mark on one side of a bevel band: absorb has to dissolve the band into
-    # the far side, so the seam moves onto the mark instead of a two edge
-    # ribbon surviving between the two
+    # the far side, so the boundary lands on the mark instead of a two edge
+    # ribbon surviving between the two. Read at the region level, the unfold
+    # hides ribbons from island counts
     verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
-    weighted, _, edges = build(verts, faces)
+    weighted, areas, edges = build(verts, faces)
     # 22.5 degrees is where a bevel band meets the face beside it
     band = next(
         key
         for key, owners in edges.items()
         if len(owners) == 2 and 20 < turn_angle(weighted, owners) < 25
     )
-    seams = seam_edges(verts, faces, forced={band})
-    groups = island_groups(faces, seams, edges)
-    assert len(groups) == 6
-    where = {f: i for i, group in enumerate(groups) for f in group}
+    find = partition(faces, weighted, edges, LOW_ANGLE, {band})
+    width = detect_width(verts, faces, areas, edges, find, diagonal(verts))
+    label, _ = absorb(verts, faces, weighted, areas, edges, find, width, {band})
+    assert len(set(label.values())) == 6
     a, b = edges[band]
-    assert where[a] != where[b]
+    assert label[a] != label[b]
 
 
 def test_ring_closing_refuses_a_forced_seam():
@@ -1392,3 +1481,77 @@ def test_smooth_cylinder_reads_hard():
     # screwdriver case
     verts, faces = capped_tube(sides=48)
     assert is_hard_surface(verts, faces)
+
+
+def ngon_capped_cylinder(sides=32, height=2.0):
+    """Blender's default cylinder: a quad wall closed by two ngon caps."""
+    verts, faces = [], []
+    for i in range(sides):
+        angle = 2 * math.pi * i / sides
+        verts.append([math.cos(angle), math.sin(angle), 0.0])
+        verts.append([math.cos(angle), math.sin(angle), height])
+    for i in range(sides):
+        low, high = 2 * i, 2 * i + 1
+        next_low = 2 * ((i + 1) % sides)
+        faces.append([low, next_low, next_low + 1, high])
+    faces.append([2 * i for i in reversed(range(sides))])
+    faces.append([2 * i + 1 for i in range(sides)])
+    return verts, faces
+
+
+def test_default_cylinder_reads_hard():
+    verts, faces = ngon_capped_cylinder()
+    assert is_hard_surface(verts, faces)
+
+
+def test_default_cylinder_cuts_rims_and_one_seam():
+    # both rims plus a single axial cut: the wall as one island, each cap its
+    # own. absorb used to dissolve the wall columns into the caps instead
+    verts, faces = ngon_capped_cylinder()
+    seams = seam_edges(verts, faces)
+    groups = island_groups(faces, seams, face_edges(faces))
+    assert sorted(len(g) for g in groups) == [1, 1, 32]
+
+
+def test_sweep_rims_leave_blobs_alone():
+    verts, faces = sphere(rings=12, sides=24)
+    rims, walls = sweep_rims(verts, faces)
+    assert not rims and not walls
+
+
+def test_sweep_rims_split_bent_tubes_into_straight_runs():
+    # a quarter-torus tube is too bent for one axis, so it parts into
+    # straight runs with a rim ring between them instead of staying whole
+    verts, faces = elbow(rings=24, sides=16)
+    rims, walls = sweep_rims(verts, faces)
+    assert walls == set(range(len(faces)))
+    # at least one full ring of forced rim edges between two runs
+    assert len(rims) >= 16
+
+
+def test_sweep_rims_still_reject_shattered_coarse_elbows():
+    # at 12 sides the cross-tube edges turn past the partition angle, the
+    # cluster shatters into lengthwise strips and no strip is a wall
+    verts, faces = elbow()
+    rims, walls = sweep_rims(verts, faces)
+    assert not rims and not walls
+
+
+WRENCH = Path(__file__).parents[1] / "bench/models/hard-surface/bevel/pipe_wrench.obj"
+
+
+@pytest.mark.skipif(not WRENCH.exists(), reason="needs the bench models")
+def test_sweep_walls_stay_flattenable_on_the_wrench():
+    # the handle's hanging loop must be trimmed off the wall: claiming a
+    # surface with a handle through it ruins the whole strip at the engine
+    verts, faces = read_obj(WRENCH)
+    faces = [tuple(f) for f in faces]
+    claimed = 0
+    for comp in vertex_components(faces):
+        part = [faces[i] for i in comp]
+        rims, walls = sweep_rims(verts, part)
+        edges = face_edges(part)
+        for piece in component_faces(walls, edges):
+            assert surface_genus(piece, part, edges) <= 0
+        claimed += len(walls)
+    assert claimed

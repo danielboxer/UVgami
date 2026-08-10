@@ -11,25 +11,38 @@ from .cuts import crease_relief, disk_cuts
 from .mesh import LOW_ANGLE, build, diagonal, norm, turn_angle
 from .regions import (
     CREASE_ANGLE,
+    PANEL_SHARE,
     absorb,
     close_rings,
     detect_width,
     merge_flat,
     merge_smooth,
+    panel_share,
     partition,
+    unfold_hinges,
 )
-from .sweeps import split_sweeps
+from .sweeps import split_sweeps, sweep_rims
 
 
 def feature_labels(
-    verts, faces, angle=CREASE_ANGLE, rims=True, forced=None, scale=None
+    verts, faces, angle=CREASE_ANGLE, rims=True, forced=None, scale=None, walls=None
 ):
     """Region labels from the merge passes: partition at auto width, the three
     merges, sweep rims. What survives is the feature structure the seams will
     trace, before the boundary cleanup passes move any edge. scale is the
-    model size the width cap reads, the full diagonal of verts by default."""
+    model size the width cap reads, the full diagonal of verts by default.
+    walls are faces sweep_rims verified as one swept wall: they partition as
+    one region however sharply the coarse wall turns, so an annulus never
+    depends on the merges rebuilding it from columns."""
     weighted, areas, edges = build(verts, faces)
-    root = partition(faces, weighted, edges, LOW_ANGLE, forced)
+    smooth = None
+    if walls:
+        smooth = {
+            key
+            for key, owners in edges.items()
+            if len(owners) == 2 and owners[0] in walls and owners[1] in walls
+        }
+    root = partition(faces, weighted, edges, LOW_ANGLE, forced, smooth)
     if scale is None:
         scale = diagonal(verts)
     min_width = detect_width(verts, faces, areas, edges, root, scale)
@@ -40,7 +53,7 @@ def feature_labels(
     label = merge_flat(weighted, areas, edges, label, angle, forced)
     label = close_rings(verts, weighted, areas, edges, label, angle, forced)
     if rims:
-        label = split_sweeps(weighted, areas, edges, label)
+        label = split_sweeps(verts, faces, weighted, areas, edges, label)
     return weighted, areas, edges, label
 
 
@@ -67,29 +80,41 @@ def is_hard_surface(verts, faces):
 
     Reads the merged region structure at the CREASE_ANGLE floor, not the
     feature angle knob: the question is whether structure exists at all.
-    split_sweeps runs so a smooth cylinder still reads hard, its rims count
-    as deliberate boundaries. Misreading organic costs a slow from-scratch
-    unwrap, misreading hard costs seams on sculpt ridges, so ties fall
-    organic.
+    Detected sweep walls are forced apart and count as structure, so a
+    smooth cylinder still reads hard, and split_sweeps runs so a filleted
+    one does too. Misreading organic costs a slow from-scratch unwrap,
+    misreading hard costs seams on sculpt ridges, so ties fall organic.
     """
     # verts can be the whole mesh with faces one loose part, so the width cap
     # must read the part's own size or nearby geometry changes the label
     used = {v for face in faces for v in face}
     part_scale = diagonal([verts[v] for v in used])
+    rims, walls = sweep_rims(verts, faces)
     weighted, areas, edges, presweep = feature_labels(
-        verts, faces, rims=False, scale=part_scale
+        verts, faces, rims=False, forced=rims or None, scale=part_scale, walls=walls
     )
-    label = split_sweeps(weighted, areas, edges, presweep)
+    label = split_sweeps(verts, faces, weighted, areas, edges, presweep)
     total = sum(areas)
     if total <= 0:
         return False
     region = collections.defaultdict(float)
     for i, r in label.items():
         region[r] += areas[i]
-    if max(region.values()) / total >= ORGANIC_SHARE:
+    # rims are locked, so a wall region is exactly its sweep cluster and a
+    # dominant one is real structure, not a structureless blob
+    wall_regions = {label[i] for i in walls}
+    top = max(region, key=region.get)
+    if region[top] / total >= ORGANIC_SHARE and top not in wall_regions:
         return False
     if len(faces) / len(region) < FRAGMENT_FACES:
-        return False
+        # a low poly box is a few big facets, not noise: the specks this
+        # guard hunts are curved
+        root = partition(faces, weighted, edges, LOW_ANGLE)
+        panels = collections.defaultdict(list)
+        for i in range(len(faces)):
+            panels[root(i)].append(i)
+        if panel_share(weighted, panels.values()) < PANEL_SHARE:
+            return False
 
     near = set()
     for key, owners in edges.items():
@@ -115,6 +140,9 @@ def is_hard_surface(verts, faces):
             if turn >= BOUNDARY_ANGLE or presweep[owners[0]] == presweep[owners[1]]:
                 boundary_creased += length
         elif owners[0] not in near and owners[1] not in near:
+            # wall curvature is explained by the sweep, not sculpt detail
+            if owners[0] in walls and owners[1] in walls:
+                continue
             interior += length
             if LOW_ANGLE < turn < SPREAD_ANGLE:
                 spread += length
@@ -130,18 +158,28 @@ def seam_edges(verts, faces, angle=CREASE_ANGLE, rims=True, weights=None, forced
 
     angle is what counts as a feature: boundaries turning less than it
     merge away, so lower keeps more shallow-feature seams at the cost of
-    shattering coarse curved walls. rims off skips split_sweeps, so a
-    smooth cylinder keeps its end caps. weights are painted restrictions
-    the cuts avoid, region boundaries sit where the shape says and paint
-    does not move them. forced edges cut from the partition on, so the
-    merges route around them, and they are seams in the end.
+    shattering coarse curved walls. rims off skips the sweep passes and the
+    unfold, so a smooth cylinder keeps its end caps. weights are painted
+    restrictions the cuts avoid, region boundaries sit where the shape says
+    and paint does not move them. forced edges cut from the partition on,
+    so the merges route around them, and they are seams in the end.
     """
-    weighted, areas, edges, label = feature_labels(verts, faces, angle, rims, forced)
+    walls = None
+    if rims:
+        rim_edges, walls = sweep_rims(verts, faces)
+        if rim_edges:
+            forced = rim_edges | (forced or set())
+    weighted, areas, edges, label = feature_labels(
+        verts, faces, angle, rims, forced, walls=walls
+    )
     label = flatten_teeth(weighted, faces, edges, label, angle, forced)
     relief = crease_relief(verts, faces, weighted, edges)
     label = reroute_boundaries(verts, faces, areas, edges, label, relief, forced)
-    seams = boundary_edges(edges, label) | disk_cuts(
-        verts, edges, label, weights, relief
+    hinges = (
+        unfold_hinges(verts, faces, weighted, edges, label, forced) if rims else set()
+    )
+    seams = (boundary_edges(edges, label) - hinges) | disk_cuts(
+        verts, edges, label, weights, relief, forced
     )
     if forced:
         seams |= forced
