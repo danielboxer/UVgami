@@ -15,7 +15,7 @@ from ..seams import (
 )
 from ..unwrap import Unwrap
 from ..utils.io import export_obj
-from ..utils.mesh import new_bmesh, set_bmesh, triangulate
+from ..utils.mesh import face_uvs, new_bmesh, set_bmesh, triangulate
 from ..utils.paths import (
     clear_io_dir,
     engine_file_stem,
@@ -34,16 +34,6 @@ RECTIFY_COLLAPSE = 0.5
 # triangles pinned collinear read as flipped at noise scale, so zero is too
 # strict
 RECTIFY_OVERLAP = 1e-3
-
-
-def face_uvs(mesh):
-    """Per-face loop uvs from the active layer, in face vertex order, rounded
-    so float noise between loops of one vert doesn't read as a seam."""
-    uv = mesh.uv_layers.active.data
-    return [
-        [(round(uv[i].uv[0], 6), round(uv[i].uv[1], 6)) for i in poly.loop_indices]
-        for poly in mesh.polygons
-    ]
 
 
 def unwrap(obj, only, iterations, method="MINIMUM_STRETCH"):

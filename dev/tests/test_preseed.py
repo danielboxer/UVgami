@@ -133,3 +133,17 @@ def test_preseed_cube_with_real_engine(tmp_path):
     # a seamed cube flattens without repair only if the layout held up, and
     # either way every corner has finite uvs and the seams cut it open
     assert seams
+
+
+def test_preseed_mirrors_close_the_seam_set():
+    engine = GridEngine()
+    # the unit cube is symmetric across x = 0.5
+    mirror = dict(enumerate([1, 0, 3, 2, 5, 4, 7, 6]))
+
+    seams, _ = preseed_uvs(engine, CUBE_VERTS, CUBE_FACES, mirrors=[mirror])
+
+    assert seams
+    mirrored = {
+        (min(mirror[a], mirror[b]), max(mirror[a], mirror[b])) for a, b in seams
+    }
+    assert mirrored == seams

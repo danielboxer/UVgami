@@ -169,7 +169,7 @@ class OptcutsEngine(BinaryEngine):
         )
         return applied or props.import_uvs
 
-    def preseed_work(self, obj, props):
+    def preseed_work(self, obj, props, mirrors=None):
         optcuts = props.optcuts
         if not optcuts.use_hard_surface:
             return None
@@ -178,6 +178,7 @@ class OptcutsEngine(BinaryEngine):
             math.degrees(optcuts.hard_surface_angle),
             weights=seam_restrictions(obj) if props.avoid_seams else None,
             auto=optcuts.is_auto,
+            mirrors=mirrors,
         )
 
     def piece_uses_uvs(self, obj, props, has_uvs):

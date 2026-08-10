@@ -13,6 +13,7 @@ from pathlib import Path
 from .mesh import face_edges
 from .pipeline import seam_edges
 from .regions import CREASE_ANGLE
+from .symmetry import mirror_seams
 
 
 class FlattenError(RuntimeError):
@@ -130,13 +131,16 @@ def preseed_uvs(
     weights=None,
     only=None,
     marked_seams=frozenset(),
+    mirrors=None,
 ):
     """Seam the strip-merged feature boundaries and flatten.
 
     The data twin of hard_surface.build_seam_uvs: engine is a FlattenEngine
     (or anything with its flatten signature), marked/weights/only mean
     what they do there, marked_seams are the mesh's own marked edges as
-    vertex pairs. Returns (seams, uvs) where uvs is per-face corner lists,
+    vertex pairs, mirrors are per-axis vertex maps the seam set is closed
+    under, so a symmetric mesh flattens into mirrored islands with no cut at
+    the plane. Returns (seams, uvs) where uvs is per-face corner lists,
     None for faces outside only. Returns None when the subset is closed and
     the seam set came out empty, which cannot flatten: the caller falls back
     to a scratch unwrap.
@@ -152,6 +156,9 @@ def preseed_uvs(
         forced = set(marked_seams) if marked == "ADD" else None
         detect = faces if only is None else [faces[i] for i in subset]
         seams = seam_edges(verts, detect, angle, weights=weights, forced=forced)
+    if mirrors:
+        allowed = edges if only is None else face_edges([faces[i] for i in subset])
+        seams = mirror_seams(seams, mirrors, allowed)
     if not seams and all(
         len(owners) != 1 for owners in edges.values() if owners[0] in in_subset
     ):

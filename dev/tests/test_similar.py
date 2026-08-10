@@ -266,3 +266,55 @@ def test_write_twin_output_flips_mirrored_winding(tmp_path):
 
     assert lines[0] == "v -1.000000000 0.000000000 0.000000000"
     assert lines[3] == "f 3 2 1"
+
+
+WING_COORDS = [(1, 0, 0), (2, 0, 0), (1, 1, 0), (-1, 0, 0), (-2, 0, 0), (-1, 1, 0)]
+WING_FACES = [(0, 1, 2), (3, 4, 5)]
+
+
+def test_mirror_permutations_maps_a_symmetric_mesh():
+    mesh = FakeMesh(WING_COORDS, WING_FACES)
+
+    maps = similar.mirror_permutations(mesh, (0, 0, 0), ["X"])
+
+    assert maps == [{0: 3, 1: 4, 2: 5, 3: 0, 4: 1, 5: 2}]
+
+
+def test_mirror_permutations_rejects_asymmetric_positions():
+    coords = [co for co in WING_COORDS]
+    coords[4] = (-2.5, 0, 0)
+    mesh = FakeMesh(coords, WING_FACES)
+
+    assert similar.mirror_permutations(mesh, (0, 0, 0), ["X"]) is None
+
+
+def test_mirror_permutations_rejects_asymmetric_triangulation():
+    # both squares of the symmetric shape split, but along opposite diagonals
+    coords = [
+        (1, 0, 0),
+        (2, 0, 0),
+        (2, 1, 0),
+        (1, 1, 0),
+        (-1, 0, 0),
+        (-2, 0, 0),
+        (-2, 1, 0),
+        (-1, 1, 0),
+    ]
+    mirrored = [(0, 1, 2), (0, 2, 3), (4, 5, 6), (4, 6, 7)]
+    flipped = [(0, 1, 2), (0, 2, 3), (4, 5, 7), (5, 6, 7)]
+
+    assert similar.mirror_permutations(FakeMesh(coords, mirrored), (0, 0, 0), ["X"])
+    assert (
+        similar.mirror_permutations(FakeMesh(coords, flipped), (0, 0, 0), ["X"]) is None
+    )
+
+
+def test_mirror_permutations_covers_only_the_symmetric_parts():
+    # the wing pair qualifies, the lone off-center triangle drops out
+    coords = WING_COORDS + [(0.5, 2.0, 0.0), (1.5, 2.0, 0.0), (0.5, 3.0, 0.0)]
+    faces = WING_FACES + [(6, 7, 8)]
+    mesh = FakeMesh(coords, faces)
+
+    maps = similar.mirror_permutations(mesh, (0, 0, 0), ["X"])
+
+    assert maps == [{0: 3, 1: 4, 2: 5, 3: 0, 4: 1, 5: 2}]

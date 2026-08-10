@@ -242,6 +242,117 @@ def find_twins(objects):
     return twins
 
 
+def _find(parent, a):
+    while parent[a] != a:
+        parent[a] = parent[parent[a]]
+        a = parent[a]
+    return a
+
+
+def _partial_match(positions, grid, reflected, cell):
+    """Index of the vertex at each reflected position, -1 where none is
+    close enough. Matched pairs stay one to one."""
+    permutation = numpy.full(len(reflected), -1, dtype=numpy.int64)
+    used = numpy.zeros(len(positions), dtype=bool)
+    keys = numpy.round(reflected / cell).astype(numpy.int64).tolist()
+    for index, (x, y, z) in enumerate(keys):
+        options = [i for i in grid.get((x, y, z), ()) if not used[i]]
+        if not options:
+            for dx, dy, dz in _NEIGHBOR_CELLS:
+                options += [
+                    i for i in grid.get((x + dx, y + dy, z + dz), ()) if not used[i]
+                ]
+        if not options:
+            continue
+        distances = numpy.linalg.norm(positions[options] - reflected[index], axis=1)
+        nearest = int(numpy.argmin(distances))
+        if distances[nearest] > cell:
+            continue
+        permutation[index] = options[nearest]
+        used[options[nearest]] = True
+    return permutation
+
+
+def _canonical_cycle(cycle):
+    return min(
+        tuple(direction[shift:] + direction[:shift])
+        for direction in (cycle, cycle[::-1])
+        for shift in range(len(cycle))
+    )
+
+
+def mirror_permutations(mesh, center, axes):
+    """Per-axis vertex maps, as dicts, sending each mirror-symmetric loose
+    part onto itself or its twin across the axis plane through center.
+
+    Coverage is per part: a part with any vertex or face that has no mirror
+    image drops out, along with everything mapped into a dropped part, so a
+    wrench keeps its symmetric handle while the asymmetric worm gear opts
+    out. A part must qualify on every chosen axis. None when no part does."""
+    if len(mesh.vertices) == 0:
+        return None
+    positions = numpy.empty(len(mesh.vertices) * 3)
+    mesh.vertices.foreach_get("co", positions)
+    positions = positions.reshape(-1, 3)
+    diagonal = numpy.linalg.norm(positions.max(axis=0) - positions.min(axis=0))
+    if diagonal <= 0:
+        return None
+    totals, corners = _topology(mesh)
+    corner_list = corners.tolist()
+    faces = []
+    parent = list(range(len(positions)))
+    start = 0
+    for total in totals.tolist():
+        face = corner_list[start : start + total]
+        faces.append(face)
+        for v in face[1:]:
+            ra, rb = _find(parent, face[0]), _find(parent, v)
+            if ra != rb:
+                parent[ra] = rb
+        start += total
+    part_of = [_find(parent, v) for v in range(len(positions))]
+    face_keys = {_canonical_cycle(face) for face in faces}
+
+    cell = MATCH_CELL * diagonal
+    grid = _grid(positions, cell)
+    per_axis = []
+    covered = None
+    for axis in axes:
+        index = "XYZ".index(axis)
+        reflected = positions.copy()
+        reflected[:, index] = 2.0 * float(center[index]) - reflected[:, index]
+        permutation = _partial_match(positions, grid, reflected, cell)
+        bad = {part_of[v] for v in numpy.nonzero(permutation < 0)[0].tolist()}
+        for face in faces:
+            if part_of[face[0]] in bad:
+                continue
+            mapped = [int(permutation[v]) for v in face]
+            if _canonical_cycle(mapped) not in face_keys:
+                bad.add(part_of[face[0]])
+        per_axis.append(permutation)
+        axis_covered = set(part_of) - bad
+        covered = axis_covered if covered is None else covered & axis_covered
+
+    # a covered part's image must be covered too, or its mirrored seams
+    # land on a part that will not mirror back
+    changed = True
+    while changed and covered:
+        changed = False
+        for permutation in per_axis:
+            for v in range(len(positions)):
+                if part_of[v] not in covered:
+                    continue
+                if part_of[int(permutation[v])] not in covered:
+                    covered.discard(part_of[v])
+                    changed = True
+    if not covered:
+        return None
+    return [
+        {v: int(permutation[v]) for v in range(len(positions)) if part_of[v] in covered}
+        for permutation in per_axis
+    ]
+
+
 # intentional stacks are exact copies (mirror modifier, twin outputs from the
 # same vt text), so round tightly: loose rounding merges distinct islands that
 # average_islands_scale happens to land on the same spot
