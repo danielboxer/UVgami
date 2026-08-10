@@ -32,7 +32,6 @@ class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
             "Automatically unwrap sharp objects in hard surface mode and"
             " otherwise in normal mode"
         ),
-        default=True,
     )
     hard_surface_angle: bpy.props.FloatProperty(
         name="Angle",
@@ -128,14 +127,19 @@ class OptcutsEngine(BinaryEngine):
 
     def active_settings(self, props):
         optcuts = props.optcuts
-        hard_surface = "Hard Surface" + (" (Auto)" if optcuts.hard_surface_auto else "")
         return only_active(
             (
                 (
                     "MOD_BEVEL",
-                    hard_surface,
+                    "Hard Surface",
                     "optcuts.use_hard_surface",
                     optcuts.use_hard_surface,
+                ),
+                (
+                    "AUTO",
+                    "Hard Surface Auto",
+                    "optcuts.hard_surface_auto",
+                    optcuts.is_auto,
                 ),
                 (
                     "SOLO_OFF",
