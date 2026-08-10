@@ -831,6 +831,44 @@ static std::vector<bool> chartDiskFlags(const Eigen::MatrixXi &F,
     return isDisk;
 }
 
+// scale-free symmetric Dirichlet of an imported map, face weights included.
+// the input arrives packed, so its uniform scale is arbitrary and the raw
+// energy there is meaningless: E(s) = s^2*grow + shrink/s^2 has a closed
+// form minimum, measure at it
+static double importedMapMeasure(const uvgami::TriMesh &mesh) {
+    double grow = 0.0, shrink = 0.0, total = 0.0;
+    for (int triI = 0; triI < mesh.F.rows(); ++triI) {
+        const Eigen::RowVector3i &tri = mesh.F.row(triI);
+        const Eigen::RowVector3d e1 =
+            mesh.V_rest.row(tri[1]) - mesh.V_rest.row(tri[0]);
+        const Eigen::RowVector3d e2 =
+            mesh.V_rest.row(tri[2]) - mesh.V_rest.row(tri[0]);
+        const double l1 = e1.norm();
+        const double area = e1.cross(e2).norm() / 2;
+        if (l1 <= 0.0 || area <= 0.0)
+            return DBL_MAX;
+        const double x2 = e1.dot(e2) / l1;
+        const double y2 = 2 * area / l1;
+        const Eigen::RowVector2d u1 = mesh.V.row(tri[1]) - mesh.V.row(tri[0]);
+        const Eigen::RowVector2d u2 = mesh.V.row(tri[2]) - mesh.V.row(tri[0]);
+        const double a = u1[0] / l1;
+        const double b = (u2[0] - x2 * a) / y2;
+        const double c = u1[1] / l1;
+        const double d = (u2[1] - x2 * c) / y2;
+        const double det = a * d - b * c;
+        if (det <= 0.0)
+            return DBL_MAX;
+        const double frob2 = a * a + b * b + c * c + d * d;
+        const double weighted = area * mesh.faceWeight[triI];
+        grow += weighted * frob2;
+        shrink += weighted * frob2 / (det * det);
+        total += area;
+    }
+    if (total <= 0.0)
+        return DBL_MAX;
+    return 2 * std::sqrt(grow * shrink) / total;
+}
+
 // an escaped exception fast-fails with no message otherwise, name it on
 // stderr so a field crash is diagnosable from the addon's log
 static void reportTerminate() {
@@ -1667,6 +1705,16 @@ int main(int argc, char *argv[]) {
         result.vertWeight =
             (1.0 + sW.array() * (maxSeamWeight - 1)).matrix();
         uvgami::IglUtils::smoothVertField(result, result.vertWeight);
+    }
+
+    // an imported map that already meets the bound ships untouched. the
+    // search treats the bound as an allowance and spends the slack on
+    // shorter seams, drifting seams a preseed placed deliberately. modes
+    // that exist to move the map (pins, stitch, nocut) still run
+    if (keepInputUV && !pinnedMode && !stitchMode && !noCutMode &&
+        importedMapMeasure(optimizer->getResult()) <= upperBound) {
+        canSaveMesh = true;
+        converge_preDrawFunc();
     }
 
     std::thread t(&stdin_listener);
