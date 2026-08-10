@@ -8,6 +8,7 @@ from ..manager import manager
 from ..seams import (
     face_edges,
     pair,
+    rectify_targets,
     signed_area,
     split_moves,
     uv_island_groups,
@@ -26,6 +27,14 @@ from ..utils.paths import (
 # 50 flattens the stubborn folds
 REPAIR_ITERATIONS = 50
 
+# a rectified island reverts when its solved area fell under this fraction of
+# the original, which is how a refused solve comes back
+RECTIFY_COLLAPSE = 0.5
+# or when its flipped area passes this fraction of the original. boundary
+# triangles pinned collinear read as flipped at noise scale, so zero is too
+# strict
+RECTIFY_OVERLAP = 1e-3
+
 
 def face_uvs(mesh):
     """Per-face loop uvs from the active layer, in face vertex order, rounded
@@ -37,10 +46,10 @@ def face_uvs(mesh):
     ]
 
 
-def unwrap(obj, only, iterations):
-    """Blender's minimum stretch unwrap over just these faces. The area fixes
-    stay on bpy.ops because they pin uvs, which the engine's flatten mode has
-    no channel for."""
+def unwrap(obj, only, iterations, method="MINIMUM_STRETCH"):
+    """Blender's pinned unwrap over just these faces. The area fixes stay on
+    bpy.ops because they pin uvs, which the engine's flatten mode has no
+    channel for."""
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
     bpy.ops.object.mode_set(mode="EDIT")
@@ -50,7 +59,7 @@ def unwrap(obj, only, iterations):
     for fi in only:
         obj.data.polygons[fi].select = True
     bpy.ops.object.mode_set(mode="EDIT")
-    bpy.ops.uv.unwrap(method="MINIMUM_STRETCH", margin=0.001, iterations=iterations)
+    bpy.ops.uv.unwrap(method=method, margin=0.001, iterations=iterations)
     bpy.ops.object.mode_set(mode="OBJECT")
 
 
@@ -205,6 +214,77 @@ def finish_preseed(obj, ranges=None):
     layer = mesh.uv_layers.active
     for loop_index, u, v in moves:
         layer.data[loop_index].uv = (u, v)
+
+
+def rectify_islands(obj):
+    """Straighten near-rectangular islands: pin each one's boundary onto its
+    fitted rectangle and re-solve the interior, conformal first because the
+    minimum stretch needs a flip free start and the pinned rectangle rarely
+    is one, then minimum stretch to polish. An island the solve collapsed or
+    left overlapping goes back untouched."""
+    mesh = obj.data
+    if mesh.uv_layers.active is None:
+        return
+    faces = [tuple(p.vertices) for p in mesh.polygons]
+    uvs = face_uvs(mesh)
+    groups = uv_island_groups(faces, uvs, face_edges(faces))
+    plans = rectify_targets(uvs, groups)
+    if not plans:
+        return
+
+    bm = new_bmesh(obj)
+    uvl = bm.loops.layers.uv.active
+    bm.faces.ensure_lookup_table()
+    # the unwrap splits charts by seam marks, not by the uv map, so without
+    # this neighboring islands weld at their shared edges and fight the pins
+    for edge in bm.edges:
+        uv_at = {}
+        seam = False
+        for loop in edge.link_loops:
+            for corner in (loop, loop.link_loop_next):
+                uv = (round(corner[uvl].uv[0], 6), round(corner[uvl].uv[1], 6))
+                if uv_at.setdefault(corner.vert.index, uv) != uv:
+                    seam = True
+        edge.seam = seam
+    for group, targets in plans:
+        for fi in group:
+            for corner, loop in enumerate(bm.faces[fi].loops):
+                target = targets.get(uvs[fi][corner])
+                if target is not None:
+                    loop[uvl].uv = target
+                    loop[uvl].pin_uv = True
+    set_bmesh(bm, obj)
+
+    planned_faces = [fi for group, _ in plans for fi in group]
+    unwrap(obj, planned_faces, REPAIR_ITERATIONS, method="CONFORMAL")
+    unwrap(obj, planned_faces, REPAIR_ITERATIONS)
+
+    bm = new_bmesh(obj)
+    uvl = bm.loops.layers.uv.active
+    bm.faces.ensure_lookup_table()
+    for group, _ in plans:
+        total = sum(signed_area(uvs[fi]) for fi in group)
+        orientation = 1 if total >= 0 else -1
+        area_before = abs(total)
+        area_after = 0.0
+        overlap = 0.0
+        for fi in group:
+            pts = [tuple(loop[uvl].uv) for loop in bm.faces[fi].loops]
+            for i in range(1, len(pts) - 1):
+                a = signed_area([pts[0], pts[i], pts[i + 1]]) * orientation
+                area_after += a
+                if a < 0:
+                    overlap -= a
+        bad = (
+            area_after < RECTIFY_COLLAPSE * area_before
+            or overlap > RECTIFY_OVERLAP * area_before
+        )
+        for fi in group:
+            for corner, loop in enumerate(bm.faces[fi].loops):
+                if bad:
+                    loop[uvl].uv = uvs[fi][corner]
+                loop[uvl].pin_uv = False
+    set_bmesh(bm, obj)
 
 
 def queue_relax(obj, group, bbox, area, k, input_path, props):

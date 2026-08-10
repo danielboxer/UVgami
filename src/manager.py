@@ -428,7 +428,7 @@ class UnwrapManager:
         pieces = unwrap.join_job.finished if unwrap.join_job is not None else [unwrap]
         if any(u.preseeded for u in pieces):
             # imported here: ops.island imports this module back
-            from .ops.island import finish_preseed
+            from .ops.island import finish_preseed, rectify_islands
 
             ranges = None
             if len(pieces) > 1:
@@ -443,6 +443,7 @@ class UnwrapManager:
                 if start != len(output.data.polygons):
                     ranges = None
             finish_preseed(output, ranges)
+            rectify_islands(output)
 
         if props.pack_after_unwrap:
             self._pack_output_objects.append(output)

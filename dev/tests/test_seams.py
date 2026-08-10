@@ -40,6 +40,7 @@ from seams import (  # noqa: E402
     pair,
     partition,
     path_cost,
+    rectify_targets,
     region_topology,
     reroute_boundaries,
     seam_edges,
@@ -1555,3 +1556,91 @@ def test_sweep_walls_stay_flattenable_on_the_wrench():
             assert surface_genus(piece, part, edges) <= 0
         claimed += len(walls)
     assert claimed
+
+
+def uv_groups(faces, uvs):
+    return uv_island_groups(faces, uvs, face_edges(faces))
+
+
+def target_box(targets):
+    xs = [p[0] for p in targets.values()]
+    ys = [p[1] for p in targets.values()]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def on_perimeter(point, box, tol=1e-6):
+    x0, y0, x1, y1 = box
+    x, y = point
+    inside = x0 - tol <= x <= x1 + tol and y0 - tol <= y <= y1 + tol
+    edge = min(abs(x - x0), abs(x - x1), abs(y - y0), abs(y - y1)) < tol
+    return inside and edge
+
+
+def test_rectify_straightens_a_wavy_strip():
+    verts, faces, uvs = grid_island(8, 1)
+
+    def wobble(uv):
+        x, y = uv
+        lean = 0.05 if int(x) % 2 else -0.05
+        return (x, y + lean) if y in (0.0, 1.0) else uv
+
+    uvs = [[wobble(uv) for uv in face] for face in uvs]
+    plans = rectify_targets(uvs, uv_groups(faces, uvs))
+    assert len(plans) == 1
+    group, targets = plans[0]
+    assert sorted(group) == list(range(len(faces)))
+    box = target_box(targets)
+    assert all(on_perimeter(t, box) for t in targets.values())
+    corners = [(box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])]
+    hits = sum(
+        1 for c in corners if any(math.dist(c, t) < 1e-6 for t in targets.values())
+    )
+    assert hits == 4
+    # the wavy long sides actually moved onto the straight edges
+    assert any(math.dist(p, t) > 0.01 for p, t in targets.items())
+
+
+def test_rectify_skips_a_blob():
+    points = [(0.0, 0.0)] + [
+        (math.cos(a * math.pi / 3), math.sin(a * math.pi / 3)) for a in range(6)
+    ]
+    faces = [(0, i + 1, (i + 1) % 6 + 1) for i in range(6)]
+    uvs = [[points[v] for v in face] for face in faces]
+    assert rectify_targets(uvs, uv_groups(faces, uvs)) == []
+
+
+def test_rectify_admits_a_toothed_strip_by_its_boundary():
+    # deep teeth push the strip under the share gate, but the boundary
+    # elongation lets it in, and the rectangle takes the unrolled tooth
+    # lengths instead of the box width
+    verts, faces, uvs = grid_island(12, 1)
+
+    def tooth(uv):
+        x, y = uv
+        lean = 0.5 if int(x) % 2 else -0.5
+        return (x, y + lean) if y in (0.0, 1.0) else uv
+
+    uvs = [[tooth(uv) for uv in face] for face in uvs]
+    plans = rectify_targets(uvs, uv_groups(faces, uvs))
+    assert len(plans) == 1
+    _, targets = plans[0]
+    box = target_box(targets)
+    assert all(on_perimeter(t, box) for t in targets.values())
+    assert box[2] - box[0] > 14
+
+
+def test_rectify_reaches_islands_bordering_their_own_cut():
+    # a cut open tube carries two uvs on every cut vertex, so the boundary
+    # must be walked in uv points, not mesh vertices
+    verts, faces, uvs, seams, row_of = tube_island(6, 8, 0.0)
+    plans = rectify_targets(uvs, uv_groups(faces, uvs))
+    assert len(plans) == 1
+    group, targets = plans[0]
+    assert sorted(group) == list(range(len(faces)))
+    box = target_box(targets)
+    assert all(on_perimeter(t, box) for t in targets.values())
+
+
+def test_rectify_skips_an_island_with_a_hole():
+    verts, faces, uvs = annulus_island()
+    assert rectify_targets(uvs, uv_groups(faces, uvs)) == []
