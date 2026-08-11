@@ -163,21 +163,31 @@ def seam_edges(verts, faces, angle=CREASE_ANGLE, rims=True, weights=None, forced
     restrictions the cuts avoid, region boundaries sit where the shape says
     and paint does not move them. forced edges cut from the partition on,
     so the merges route around them, and they are seams in the end.
+
+    Sweep rims cut the partition the same way but stay out of the cleanup
+    passes' forced set: a rim traces a per-face wall/cap or panel split, so
+    it staircases, and only flatten_teeth and reroute_boundaries can settle
+    it. A moved rim stays a seam through boundary_edges, no re-adding.
     """
     walls = None
+    cut_from_start = forced
     if rims:
         rim_edges, walls = sweep_rims(verts, faces)
         if rim_edges:
-            forced = rim_edges | (forced or set())
+            cut_from_start = rim_edges | (forced or set())
     weighted, areas, edges, label = feature_labels(
-        verts, faces, angle, rims, forced, walls=walls
+        verts, faces, angle, rims, cut_from_start, walls=walls
     )
     label = flatten_teeth(weighted, faces, edges, label, angle, forced)
     relief = crease_relief(verts, faces, weighted, edges)
     label = reroute_boundaries(verts, faces, areas, edges, label, relief, forced)
     hinges = (
-        unfold_hinges(verts, faces, weighted, edges, label, forced) if rims else set()
+        unfold_hinges(verts, faces, weighted, edges, label, cut_from_start)
+        if rims
+        else set()
     )
+    # disk_cuts counts in-region forced edges as slits, so it gets only the
+    # user marks: a rim the cleanup moved would otherwise linger as one
     seams = (boundary_edges(edges, label) - hinges) | disk_cuts(
         verts, edges, label, weights, relief, forced
     )
