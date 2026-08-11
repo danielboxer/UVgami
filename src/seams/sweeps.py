@@ -388,7 +388,48 @@ def valley_snap(verts, faces, edges, entries):
     return snap
 
 
-def split_sweeps(verts, faces, weighted, areas, edges, label):
+def merge_shed(group, relabel, label, verts, faces, edges, areas, min_width):
+    """Fold narrow shed patches into whatever they touch most.
+
+    A piece the run walk probes and drops keeps the group's own label, so a
+    few dropped faces ship as a tiny island: the walk runs after absorb and
+    nothing width-checks its leftovers. A run beside the piece is preferred,
+    a neighbouring region takes it when no run touches it. A wide shed
+    piece, a trumpet flare say, really cannot flatten with any run and
+    stays engine territory."""
+    if not min_width:
+        return
+    in_group = set(group)
+    shed = [i for i in group if i not in relabel]
+    for comp in component_faces(shed, edges):
+        in_comp = set(comp)
+        area = perimeter = 0.0
+        touch = collections.Counter()
+        for i in comp:
+            area += areas[i]
+            for key in face_keys(faces[i]):
+                owners = edges[key]
+                other = owners[owners[0] == i] if len(owners) == 2 else None
+                if other in in_comp:
+                    continue
+                v0, v1 = key
+                length = norm([verts[v1][k] - verts[v0][k] for k in range(3)])
+                perimeter += length
+                if other is None:
+                    continue
+                if other in in_group:
+                    if other in relabel:
+                        touch[relabel[other]] += length
+                else:
+                    touch[relabel.get(other, label[other])] += length
+        if perimeter <= 0 or 2 * area / perimeter >= min_width or not touch:
+            continue
+        into = touch.most_common(1)[0][0]
+        for i in comp:
+            relabel[i] = into
+
+
+def split_sweeps(verts, faces, weighted, areas, edges, label, min_width=0):
     """Split swept regions into wall and cap parts, seaming their rims.
 
     See SWEEP_BAND: this stops a cylinder-like region from keeping its end
@@ -443,6 +484,7 @@ def split_sweeps(verts, faces, weighted, areas, edges, label):
             for run, _ in straight_runs(group, entries, edges, either, snap):
                 for i in run:
                     relabel[i] = run[0]
+            merge_shed(group, relabel, label, verts, faces, edges, areas, min_width)
             continue
         if not SWEEP_CAP_MIN * total <= cap <= total / 2:
             continue

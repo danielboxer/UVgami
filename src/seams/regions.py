@@ -171,7 +171,9 @@ def detect_width(verts, faces, areas, edges, root, scale):
     return min(WIDTH_FACTOR * quantile, WIDTH_CAP * scale)
 
 
-def absorb(verts, faces, weighted, areas, edges, root, min_width, forced=None):
+def absorb(
+    verts, faces, weighted, areas, edges, root, min_width, forced=None, locked=None
+):
     """Repeatedly merge the narrowest region into its longest-shared neighbour.
 
     Stats update incrementally per merge and the heap is lazy, an entry
@@ -179,7 +181,9 @@ def absorb(verts, faces, weighted, areas, edges, root, min_width, forced=None):
     moves its turn and width onto the boundaries it leaves, so an absorbed
     bevel still reads as the crease it was, while step, the turn at a
     boundary's own edges, never moves. Returns labels plus the per-boundary
-    sums the smooth merge reads.
+    sums the smooth merge reads. locked adds region pairs that may never
+    merge on top of the pairs forced edges lock, for a caller whose
+    deliberate boundaries no longer sit on their original edges.
     """
     label = {i: root(i) for i in range(len(faces))}
     area, shared, perimeter = region_stats(verts, areas, edges, label)
@@ -187,7 +191,7 @@ def absorb(verts, faces, weighted, areas, edges, root, min_width, forced=None):
     steps = collections.defaultdict(float, turns)
     spread = collections.defaultdict(float)
     ec, rverts, shared_edges = region_topology(edges, label)
-    locked = locked_pairs(edges, label, forced)
+    locked = locked_pairs(edges, label, forced) | (locked or set())
     neighbors = collections.defaultdict(set)
     for ra, rb in shared:
         neighbors[ra].add(rb)
