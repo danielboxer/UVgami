@@ -35,6 +35,10 @@ CORNER_FIT_AREA = 1.6
 CORNER_CANDIDATES = 12
 # spine samples for the interior placement of a curled strip
 SPINE_SAMPLES = 64
+# rings around a flipped face that move to the neighbor average, and the cap
+# on repeats
+RELAX_RING = 2
+RELAX_ROUNDS = 200
 
 
 def island_area(group, uvs):
@@ -230,12 +234,13 @@ def _turning_corners(points, area):
     return best
 
 
-def _spine_targets(rotated, picks, sides, width, height, interior):
-    """Rectangle positions for interior points of a strip: each keeps its
-    fraction along the strip's spine and its offset across it. A direct
-    placement because blender's unwrap reinitializes from scratch, so a
-    pinned solve cannot unbend a deep curl without folding, however the
-    pins are staged."""
+def _spine_targets(rotated, picks, sides, width, queries):
+    """Straightened positions for uv points of a strip: each keeps its
+    fraction along the strip's spine and its signed offset across it, so the
+    strip unbends but keeps its own width profile. A direct placement
+    because blender's unwrap reinitializes from scratch, so a pinned solve
+    cannot unbend a deep curl without folding, however the pins are
+    staged."""
     n = len(rotated)
 
     def along(side, lengths, fraction):
@@ -259,17 +264,15 @@ def _spine_targets(rotated, picks, sides, width, height, interior):
     side0 = walk(picks[0], picks[1])
     side2 = walk(picks[2], picks[3])
     spine = []
-    half = []
     for k in range(SPINE_SAMPLES + 1):
         fraction = k / SPINE_SAMPLES
         p0 = along(side0, sides[0], fraction)
         # the far side walks the loop backward relative to the near one
         p2 = along(side2, sides[2], 1.0 - fraction)
         spine.append(((p0[0] + p2[0]) / 2, (p0[1] + p2[1]) / 2))
-        half.append(math.dist(p0, p2) / 2)
 
     placed = []
-    for q in interior:
+    for q in queries:
         best, best_k = math.inf, 0
         for k, s in enumerate(spine):
             d = (q[0] - s[0]) ** 2 + (q[1] - s[1]) ** 2
@@ -298,10 +301,8 @@ def _spine_targets(rotated, picks, sides, width, height, interior):
             span = math.hypot(dx, dy)
             if span > 0:
                 offset = ((q[0] - a[0]) * dy - (q[1] - a[1]) * dx) / span
-        hw = max(half[min(round(fraction * SPINE_SAMPLES), SPINE_SAMPLES)], 1e-12)
         x = -width / 2 + fraction * width
-        y = max(-0.5, min(0.5, -offset / (2 * hw))) * height
-        placed.append((x, y))
+        placed.append((x, -offset))
     return placed
 
 
@@ -392,6 +393,23 @@ def _rectangle_targets(loop, area, interior=None):
             x * sin_a + y * cos_a + mean_y,
         )
 
+    if turned and interior:
+        # the boundary shares the spine mapping: arc length instead forces a
+        # constant width, stretching a tapered strip past the distortion gate
+        rotated_interior = [
+            (
+                (q[0] - mean_x) * cos_a + (q[1] - mean_y) * sin_a,
+                (q[1] - mean_y) * cos_a - (q[0] - mean_x) * sin_a,
+            )
+            for q in interior
+        ]
+        placed = _spine_targets(
+            rotated, picks, sides, width, rotated + rotated_interior
+        )
+        targets = {point: restore(x, y) for point, (x, y) in zip(points, placed)}
+        inner = {q: restore(x, y) for q, (x, y) in zip(interior, placed[len(points) :])}
+        return targets, inner
+
     targets = {}
     for s in range(4):
         ax, ay = rectangle[s]
@@ -402,35 +420,67 @@ def _rectangle_targets(loop, area, interior=None):
             x = ax + (bx - ax) * t
             y = ay + (by - ay) * t
             targets[points[(picks[s] + step) % len(points)]] = restore(x, y)
+    return targets, None
 
-    inner = None
-    if turned and interior:
-        placed = _spine_targets(
-            rotated,
-            picks,
-            sides,
-            width,
-            height,
-            [
-                (
-                    (q[0] - mean_x) * cos_a + (q[1] - mean_y) * sin_a,
-                    (q[1] - mean_y) * cos_a - (q[0] - mean_x) * sin_a,
-                )
-                for q in interior
-            ],
-        )
-        inner = {q: restore(x, y) for q, (x, y) in zip(interior, placed)}
-    return targets, inner
+
+def _relax_flips(group, uvs, targets, inner):
+    """Untangle the triangles a direct placement flipped, moving their uv
+    points and a ring around them onto the average of their neighbors. The
+    spine projection can jump between samples where the strip wiggles, and one
+    flipped sliver would revert the whole island at the distortion gate.
+    Updates targets and inner in place."""
+    position = dict(targets)
+    position.update(inner)
+    neighbors = {}
+    for fi in group:
+        face = uvs[fi]
+        n = len(face)
+        for i in range(n):
+            a, b = face[i], face[(i + 1) % n]
+            neighbors.setdefault(a, set()).add(b)
+            neighbors.setdefault(b, set()).add(a)
+
+    def placed(fi):
+        return [position.get(uv, uv) for uv in uvs[fi]]
+
+    total = sum(signed_area(placed(fi)) for fi in group)
+    orientation = 1.0 if total >= 0 else -1.0
+    floor = FLIP_NOISE * abs(total)
+    for _ in range(RELAX_ROUNDS):
+        flipped = [
+            fi
+            for fi in group
+            if any(
+                signed_area([pts[0], pts[i], pts[i + 1]]) * orientation < -floor
+                for pts in (placed(fi),)
+                for i in range(1, len(pts) - 1)
+            )
+        ]
+        if not flipped:
+            break
+        free = {uv for fi in flipped for uv in uvs[fi]}
+        for _ in range(RELAX_RING):
+            free |= {other for uv in free for other in neighbors[uv]}
+        for uv in free:
+            around = neighbors[uv]
+            position[uv] = (
+                sum(position.get(o, o)[0] for o in around) / len(around),
+                sum(position.get(o, o)[1] for o in around) / len(around),
+            )
+    for uv, p in position.items():
+        if uv in inner:
+            inner[uv] = p
+        else:
+            targets[uv] = p
 
 
 def rectify_targets(uvs, groups):
-    """Per qualifying island, the faces, each boundary uv mapped onto the
-    island's fitted rectangle (corners from boundary turning, or nearest
-    the bounding box when no four corners stand out, everything between
-    spread by arc length), and, when the corners came from turning, every
-    interior uv placed directly by its spine coordinates. A plan with
-    interior positions needs no solve, one without pins its boundary for
-    the pinned unwrap."""
+    """Per qualifying island, the faces, the boundary targets, and the
+    interior positions. Corners found by boundary turning make a strip: every
+    uv is placed directly by its spine coordinates, so no solve is needed.
+    Without four turning corners the boundary maps onto the fitted rectangle
+    by arc length (corners nearest the bounding box) and the interior is None,
+    for the pinned unwrap."""
     plans = []
     for group in groups:
         loop = _boundary_loop(group, uvs)
@@ -443,5 +493,7 @@ def rectify_targets(uvs, groups):
         result = _rectangle_targets(loop, area, interior)
         if result is not None:
             targets, inner = result
+            if inner is not None:
+                _relax_flips(group, uvs, targets, inner)
             plans.append((group, targets, inner))
     return plans
