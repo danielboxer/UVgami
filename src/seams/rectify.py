@@ -5,6 +5,8 @@ a pinned unwrap over the island interior. Everything walks uv points, not
 mesh vertices: an island bordering its own cut carries two uvs on each cut
 vertex and the slit is part of the boundary."""
 
+import bisect
+import itertools
 import math
 
 from .mesh import signed_area
@@ -16,6 +18,23 @@ RECTANGLE_SHARE = 0.8
 # measure 3 and up, blobs 1 to 2.5, so this admits the wavy and curled
 # strips the share gate misses
 STRIP_ELONGATION = 3.0
+# corner picking by boundary turning: a corner concentrates about 90
+# degrees inside a window this share of the perimeter, a bend spreads its
+# turn thin and never reaches the floor. the window must stay under a
+# slender strip's short side or one end's corners crowd each other out
+CORNER_WINDOW = 0.02
+CORNER_TURN = 45
+# opposite sides of a real strip match in arc length, and the rectangle
+# the corners cut must hold about the island's own area. picks that break
+# either caught a tooth or a jag, not a corner, and the island falls back
+# to the nearest-to-box picking
+CORNER_SIDE_RATIO = 2.0
+CORNER_FIT_AREA = 1.6
+# corner windows tried against the fit, so a jagged edge full of sharp
+# turns cannot crowd out a strip's real end corners
+CORNER_CANDIDATES = 12
+# spine samples for the interior placement of a curled strip
+SPINE_SAMPLES = 64
 
 
 def island_area(group, uvs):
@@ -125,7 +144,168 @@ def _arc_lengths(points, start, stop):
     return lengths
 
 
-def _rectangle_targets(loop, area):
+def _turning_corners(points, area):
+    """Four boundary indices where turning concentrates, in loop order, None
+    when four clear corners do not stand out. Nearest-to-box picking twists
+    a curled strip, its outer bulge sits closer to the box corner than the
+    strip's real end does, so corners are read from the boundary itself: a
+    corner keeps its turn sharp, a bend spreads it, and a tooth's zigzag
+    cancels inside the window."""
+    n = len(points)
+    if n < 4:
+        return None
+    positions = []
+    total = 0.0
+    for i in range(n):
+        positions.append(total)
+        total += math.dist(points[i], points[(i + 1) % n])
+    if total <= 0:
+        return None
+    turns = []
+    for i in range(n):
+        before, here, after = points[i - 1], points[i], points[(i + 1) % n]
+        v0 = (here[0] - before[0], here[1] - before[1])
+        v1 = (after[0] - here[0], after[1] - here[1])
+        turns.append(
+            math.atan2(v0[0] * v1[1] - v0[1] * v1[0], v0[0] * v1[0] + v0[1] * v1[1])
+        )
+    window = total * CORNER_WINDOW
+    doubled = positions + [p + total for p in positions]
+    prefix = [0.0]
+    for i in range(2 * n):
+        prefix.append(prefix[-1] + turns[i % n])
+
+    def window_turn(i):
+        center = positions[i] + total
+        lo = bisect.bisect_left(doubled, center - window / 2)
+        hi = bisect.bisect_right(doubled, center + window / 2)
+        return prefix[hi] - prefix[lo]
+
+    floor = math.radians(CORNER_TURN)
+    candidates = []
+    for score, i in sorted(((window_turn(i), i) for i in range(n)), reverse=True):
+        if score < floor or len(candidates) == CORNER_CANDIDATES:
+            break
+        apart = all(
+            min(
+                (positions[i] - positions[j]) % total,
+                (positions[j] - positions[i]) % total,
+            )
+            >= window
+            for j in candidates
+        )
+        if apart:
+            candidates.append(i)
+    if len(candidates) < 4:
+        return None
+
+    # sharpest four is not the right rule: a jagged seam edge outscores a
+    # strip's real end corners. the right four are whichever candidates
+    # partition the loop into a rectangle that fits the island, matching
+    # area and opposite sides
+    best, best_fit = None, math.inf
+    for combo in itertools.combinations(sorted(candidates), 4):
+        arcs = [
+            (positions[combo[(s + 1) % 4]] - positions[combo[s]]) % total
+            for s in range(4)
+        ]
+        if any(arc <= 0 for arc in arcs):
+            continue
+        rectangle = (arcs[0] + arcs[2]) / 2 * (arcs[1] + arcs[3]) / 2
+        ratio_across = max(arcs[0], arcs[2]) / min(arcs[0], arcs[2])
+        ratio_along = max(arcs[1], arcs[3]) / min(arcs[1], arcs[3])
+        if (
+            not area / CORNER_FIT_AREA <= rectangle <= area * CORNER_FIT_AREA
+            or ratio_across > CORNER_SIDE_RATIO
+            or ratio_along > CORNER_SIDE_RATIO
+        ):
+            continue
+        fit = (
+            abs(math.log(rectangle / area))
+            + math.log(ratio_across)
+            + math.log(ratio_along)
+        )
+        if fit < best_fit:
+            best, best_fit = list(combo), fit
+    return best
+
+
+def _spine_targets(rotated, picks, sides, width, height, interior):
+    """Rectangle positions for interior points of a strip: each keeps its
+    fraction along the strip's spine and its offset across it. A direct
+    placement because blender's unwrap reinitializes from scratch, so a
+    pinned solve cannot unbend a deep curl without folding, however the
+    pins are staged."""
+    n = len(rotated)
+
+    def along(side, lengths, fraction):
+        distance = fraction * lengths[-1]
+        k = bisect.bisect_right(lengths, distance) - 1
+        if k >= len(lengths) - 1:
+            return rotated[side[-1]]
+        a, b = rotated[side[k]], rotated[side[k + 1]]
+        span = lengths[k + 1] - lengths[k]
+        t = (distance - lengths[k]) / span if span > 0 else 0.0
+        return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+
+    def walk(a, b):
+        out = [a]
+        i = a
+        while i != b:
+            i = (i + 1) % n
+            out.append(i)
+        return out
+
+    side0 = walk(picks[0], picks[1])
+    side2 = walk(picks[2], picks[3])
+    spine = []
+    half = []
+    for k in range(SPINE_SAMPLES + 1):
+        fraction = k / SPINE_SAMPLES
+        p0 = along(side0, sides[0], fraction)
+        # the far side walks the loop backward relative to the near one
+        p2 = along(side2, sides[2], 1.0 - fraction)
+        spine.append(((p0[0] + p2[0]) / 2, (p0[1] + p2[1]) / 2))
+        half.append(math.dist(p0, p2) / 2)
+
+    placed = []
+    for q in interior:
+        best, best_k = math.inf, 0
+        for k, s in enumerate(spine):
+            d = (q[0] - s[0]) ** 2 + (q[1] - s[1]) ** 2
+            if d < best:
+                best, best_k = d, k
+        # project onto the straighter of the two segments at the sample
+        fraction = best_k / SPINE_SAMPLES
+        offset = 0.0
+        for k in (best_k - 1, best_k):
+            if not 0 <= k < SPINE_SAMPLES:
+                continue
+            a, b = spine[k], spine[k + 1]
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            span2 = dx * dx + dy * dy
+            if span2 <= 0:
+                continue
+            t = ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / span2
+            if 0.0 <= t <= 1.0:
+                fraction = (k + t) / SPINE_SAMPLES
+                offset = ((q[0] - a[0]) * dy - (q[1] - a[1]) * dx) / math.sqrt(span2)
+                break
+        else:
+            a = spine[max(best_k - 1, 0)]
+            b = spine[min(best_k + 1, SPINE_SAMPLES)]
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            span = math.hypot(dx, dy)
+            if span > 0:
+                offset = ((q[0] - a[0]) * dy - (q[1] - a[1]) * dx) / span
+        hw = max(half[min(round(fraction * SPINE_SAMPLES), SPINE_SAMPLES)], 1e-12)
+        x = -width / 2 + fraction * width
+        y = max(-0.5, min(0.5, -offset / (2 * hw))) * height
+        placed.append((x, y))
+    return placed
+
+
+def _rectangle_targets(loop, area, interior=None):
     points = loop
     if signed_area(points) < 0:
         points = points[::-1]
@@ -155,32 +335,46 @@ def _rectangle_targets(loop, area):
     if share < RECTANGLE_SHARE and elongation < STRIP_ELONGATION:
         return None
 
-    box_corners = [
-        (min(xs), min(ys)),
-        (max(xs), min(ys)),
-        (max(xs), max(ys)),
-        (min(xs), max(ys)),
-    ]
-    picks = []
-    for corner_x, corner_y in box_corners:
-        picks.append(
-            min(
-                range(len(rotated)),
-                key=lambda i: (
-                    ((rotated[i][0] - corner_x) / box_width) ** 2
-                    + ((rotated[i][1] - corner_y) / box_height) ** 2
-                ),
-            )
-        )
-    if len(set(picks)) != 4:
-        return None
-    offsets = [(k - picks[0]) % len(points) for k in picks]
-    if not offsets[1] < offsets[2] < offsets[3]:
-        return None
+    def sides_for(picks):
+        if picks is None or len(set(picks)) != 4:
+            return None
+        offsets = [(k - picks[0]) % len(points) for k in picks]
+        if not offsets[1] < offsets[2] < offsets[3]:
+            return None
+        sides = [_arc_lengths(rotated, picks[s], picks[(s + 1) % 4]) for s in range(4)]
+        if any(side[-1] == 0 for side in sides):
+            return None
+        return sides
 
-    sides = [_arc_lengths(rotated, picks[s], picks[(s + 1) % 4]) for s in range(4)]
-    if any(side[-1] == 0 for side in sides):
-        return None
+    picks = _turning_corners(points, area)
+    sides = sides_for(picks)
+    if sides is not None and sides[0][-1] + sides[2][-1] < sides[1][-1] + sides[3][-1]:
+        # the longer side pair maps onto the rectangle's width along the
+        # fitted axis, so the island does not land turned a quarter over
+        picks = picks[1:] + picks[:1]
+        sides = sides[1:] + sides[:1]
+    turned = sides is not None
+    if sides is None:
+        box_corners = [
+            (min(xs), min(ys)),
+            (max(xs), min(ys)),
+            (max(xs), max(ys)),
+            (min(xs), max(ys)),
+        ]
+        picks = []
+        for corner_x, corner_y in box_corners:
+            picks.append(
+                min(
+                    range(len(rotated)),
+                    key=lambda i: (
+                        ((rotated[i][0] - corner_x) / box_width) ** 2
+                        + ((rotated[i][1] - corner_y) / box_height) ** 2
+                    ),
+                )
+            )
+        sides = sides_for(picks)
+        if sides is None:
+            return None
     # side lengths come from the boundary itself, not the box: a strip that
     # still curls unrolls to its real length, which the box undershoots
     width = (sides[0][-1] + sides[2][-1]) / 2
@@ -192,6 +386,12 @@ def _rectangle_targets(loop, area):
         (-width / 2, height / 2),
     ]
 
+    def restore(x, y):
+        return (
+            x * cos_a - y * sin_a + mean_x,
+            x * sin_a + y * cos_a + mean_y,
+        )
+
     targets = {}
     for s in range(4):
         ax, ay = rectangle[s]
@@ -201,17 +401,36 @@ def _rectangle_targets(loop, area):
             t = distance / lengths[-1]
             x = ax + (bx - ax) * t
             y = ay + (by - ay) * t
-            targets[points[(picks[s] + step) % len(points)]] = (
-                x * cos_a - y * sin_a + mean_x,
-                x * sin_a + y * cos_a + mean_y,
-            )
-    return targets
+            targets[points[(picks[s] + step) % len(points)]] = restore(x, y)
+
+    inner = None
+    if turned and interior:
+        placed = _spine_targets(
+            rotated,
+            picks,
+            sides,
+            width,
+            height,
+            [
+                (
+                    (q[0] - mean_x) * cos_a + (q[1] - mean_y) * sin_a,
+                    (q[1] - mean_y) * cos_a - (q[0] - mean_x) * sin_a,
+                )
+                for q in interior
+            ],
+        )
+        inner = {q: restore(x, y) for q, (x, y) in zip(interior, placed)}
+    return targets, inner
 
 
 def rectify_targets(uvs, groups):
-    """Per qualifying island, the faces and each boundary uv mapped onto the
-    island's fitted rectangle: corners at the boundary points nearest the
-    bounding box corners, everything between spread by arc length."""
+    """Per qualifying island, the faces, each boundary uv mapped onto the
+    island's fitted rectangle (corners from boundary turning, or nearest
+    the bounding box when no four corners stand out, everything between
+    spread by arc length), and, when the corners came from turning, every
+    interior uv placed directly by its spine coordinates. A plan with
+    interior positions needs no solve, one without pins its boundary for
+    the pinned unwrap."""
     plans = []
     for group in groups:
         loop = _boundary_loop(group, uvs)
@@ -220,7 +439,9 @@ def rectify_targets(uvs, groups):
         area = island_area(group, uvs)
         if area <= 0:
             continue
-        targets = _rectangle_targets(loop, area)
-        if targets is not None:
-            plans.append((group, targets))
+        interior = list({uv for fi in group for uv in uvs[fi]} - set(loop))
+        result = _rectangle_targets(loop, area, interior)
+        if result is not None:
+            targets, inner = result
+            plans.append((group, targets, inner))
     return plans
