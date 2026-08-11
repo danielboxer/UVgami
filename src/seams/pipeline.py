@@ -8,7 +8,7 @@ import collections
 
 from .boundaries import boundary_edges, flatten_teeth, reroute_boundaries
 from .cuts import crease_relief, disk_cuts
-from .mesh import LOW_ANGLE, build, diagonal, norm, turn_angle
+from .mesh import LOW_ANGLE, build, diagonal, norm, pair, turn_angle
 from .regions import (
     CREASE_ANGLE,
     PANEL_SHARE,
@@ -33,7 +33,11 @@ def feature_labels(
     model size the width cap reads, the full diagonal of verts by default.
     walls are faces sweep_rims verified as one swept wall: they partition as
     one region however sharply the coarse wall turns, so an annulus never
-    depends on the merges rebuilding it from columns."""
+    depends on the merges rebuilding it from columns.
+
+    Also returns the absorb width and the deliberate boundary pairs, region
+    pairs a forced edge or the sweep split separates, so a later width pass
+    can absorb leftovers without dissolving structure."""
     weighted, areas, edges = build(verts, faces)
     smooth = None
     if walls:
@@ -52,9 +56,19 @@ def feature_labels(
     label = merge_smooth(edges, label, bounds, min_width, angle, forced)
     label = merge_flat(weighted, areas, edges, label, angle, forced)
     label = close_rings(verts, weighted, areas, edges, label, angle, forced)
+    presplit = label
     if rims:
-        label = split_sweeps(verts, faces, weighted, areas, edges, label)
-    return weighted, areas, edges, label
+        label = split_sweeps(verts, faces, weighted, areas, edges, label, min_width)
+    locked = set()
+    for key, owners in edges.items():
+        if len(owners) != 2:
+            continue
+        a, b = owners
+        if label[a] == label[b]:
+            continue
+        if (forced and key in forced) or presplit[a] == presplit[b]:
+            locked.add(pair(label[a], label[b]))
+    return weighted, areas, edges, label, min_width, locked
 
 
 # auto mode guards, tuned on the bench sets.
@@ -90,7 +104,7 @@ def is_hard_surface(verts, faces):
     used = {v for face in faces for v in face}
     part_scale = diagonal([verts[v] for v in used])
     rims, walls = sweep_rims(verts, faces)
-    weighted, areas, edges, presweep = feature_labels(
+    weighted, areas, edges, presweep, _, _ = feature_labels(
         verts, faces, rims=False, forced=rims or None, scale=part_scale, walls=walls
     )
     label = split_sweeps(verts, faces, weighted, areas, edges, presweep)
@@ -175,12 +189,25 @@ def seam_edges(verts, faces, angle=CREASE_ANGLE, rims=True, weights=None, forced
         rim_edges, walls = sweep_rims(verts, faces)
         if rim_edges:
             cut_from_start = rim_edges | (forced or set())
-    weighted, areas, edges, label = feature_labels(
+    weighted, areas, edges, label, min_width, locked = feature_labels(
         verts, faces, angle, rims, cut_from_start, walls=walls
     )
     label = flatten_teeth(weighted, faces, edges, label, angle, forced)
     relief = crease_relief(verts, faces, weighted, edges)
     label = reroute_boundaries(verts, faces, areas, edges, label, relief, forced)
+    # everything since absorb can leave a region under its width floor, so
+    # absorb again, with the deliberate boundaries locked
+    label, _ = absorb(
+        verts,
+        faces,
+        weighted,
+        areas,
+        edges,
+        label.__getitem__,
+        min_width,
+        forced,
+        locked,
+    )
     hinges = (
         unfold_hinges(verts, faces, weighted, edges, label, cut_from_start)
         if rims
