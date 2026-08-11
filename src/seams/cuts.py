@@ -28,8 +28,10 @@ RELIEF_FULL_ANGLE = 45
 # relief below this counts an edge as creased
 CREASED_RELIEF = 0.9
 # each step turning between two dull edges costs up to this fraction of its
-# length extra, so among near-equal paths the straight one wins. creased
-# edges are exempt, a seam follows a crease around any corner
+# length extra, so among near-equal paths the straight one wins. a turn with
+# both edges creased is exempt, a seam follows a crease around any corner.
+# one alone is not enough: bevel rows read as creases, and a path would
+# zigzag between parallel rows for free
 TURN_COST = 1.0
 
 
@@ -102,7 +104,7 @@ def turn_cost(verts, u, v, w, relief):
     """
     if (
         relief.get(pair(u, v), 1.0) < CREASED_RELIEF
-        or relief.get(pair(v, w), 1.0) < CREASED_RELIEF
+        and relief.get(pair(v, w), 1.0) < CREASED_RELIEF
     ):
         return 0.0
     a = [verts[v][i] - verts[u][i] for i in range(3)]

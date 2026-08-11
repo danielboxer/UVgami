@@ -189,6 +189,45 @@ def class_components(group, is_cap, edges, areas):
     return parent, contact, comp_area
 
 
+def merge_slivers(wall, parent, contact, comp_area, edges):
+    """Merge every panel too narrow to hold an interior face into whichever
+    neighbour it touches most. Such a strip's two boundary seams run a single
+    face apart with no crease between them, a pair an artist never cuts: the
+    sloped wall of a shallow indent reads as its own panel this way. A face
+    on the mesh's own open border is not exposed, that border is no seam
+    this pass placed, so a one-face-tall open tube still panels."""
+    in_wall = set(wall)
+    while len(comp_area) > 1:
+        exposed = set()
+        for key, owners in edges.items():
+            if len(owners) != 2:
+                continue
+            a, b = owners
+            a_in, b_in = a in in_wall, b in in_wall
+            if a_in != b_in:
+                exposed.add(a if a_in else b)
+            elif a_in and find(parent, a) != find(parent, b):
+                exposed.update((a, b))
+        interior = collections.Counter()
+        for i in wall:
+            if i not in exposed:
+                interior[find(parent, i)] += 1
+        slivers = [c for c in comp_area if not interior[c]]
+        if not slivers:
+            return
+        sliver = min(slivers, key=comp_area.get)
+        touch = collections.Counter()
+        for (a, b), count in contact.items():
+            ra, rb = find(parent, a), find(parent, b)
+            if ra != rb and sliver in (ra, rb):
+                touch[rb if ra == sliver else ra] += count
+        if not touch:
+            return
+        into = touch.most_common(1)[0][0]
+        parent[sliver] = into
+        comp_area[into] += comp_area.pop(sliver)
+
+
 def merge_specks(parent, contact, comp_area, floor):
     """Merge every component smaller than floor into whichever neighbour it
     touches most: a rim seam is not worth a speck."""
@@ -697,6 +736,7 @@ def profile_panels(wall, axis, entries, edges, areas):
     wall_area = sum(areas[i] for i in wall)
     parent, contact, comp_area = class_components(wall, panel, edges, areas)
     merge_specks(parent, contact, comp_area, SWEEP_CAP_MIN * wall_area)
+    merge_slivers(wall, parent, contact, comp_area, edges)
     if len(comp_area) < 2:
         return None
     return {i: find(parent, i) for i in wall}
