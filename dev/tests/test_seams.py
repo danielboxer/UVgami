@@ -60,6 +60,7 @@ from seams import (  # noqa: E402
     vertex_components,
 )
 from seams.islands import absorb_fragments, split_pieces  # noqa: E402
+from seams.sweeps import fork_runs  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 HEX_HEAD = Path(__file__).parents[1] / "bench/models/hard-surface/sharp/fastener_03.obj"
@@ -1531,6 +1532,102 @@ def test_sweep_rims_split_bent_tubes_into_straight_runs():
     assert len(rims) >= 16
 
 
+def stadium_tube(height=4.0, width=2.0, radius=0.3, arc=8, flats=4):
+    """Open tube over a stadium profile, a flat bar: two flat sides joined
+    by semicircular ends whose segments turn under the crease angle."""
+    profile = []
+    half = width / 2 - radius
+    for k in range(arc + 1):
+        a = -math.pi / 2 + math.pi * k / arc
+        profile.append((half + radius * math.cos(a), radius * math.sin(a)))
+    for k in range(1, flats):
+        profile.append((half - 2 * half * k / flats, radius))
+    for k in range(arc + 1):
+        a = math.pi / 2 + math.pi * k / arc
+        profile.append((-half + radius * math.cos(a), radius * math.sin(a)))
+    for k in range(1, flats):
+        profile.append((-half + 2 * half * k / flats, -radius))
+    verts, faces = [], []
+    for x, y in profile:
+        verts.append([x, y, 0.0])
+        verts.append([x, y, height])
+    sides = len(profile)
+    for i in range(sides):
+        low, high = 2 * i, 2 * i + 1
+        next_low = 2 * ((i + 1) % sides)
+        faces.append([low, next_low, high])
+        faces.append([next_low, next_low + 1, high])
+    return verts, faces
+
+
+def test_flat_bar_wall_panels_at_its_soft_ridges():
+    # the wall splits lengthwise at the rounded ends into two panels, the
+    # cut an artist puts on the ridge
+    verts, faces = stadium_tube()
+    rims, walls = sweep_rims(verts, faces)
+    assert walls == set(range(len(faces)))
+    groups = island_groups(faces, rims, face_edges(faces))
+    assert len(groups) == 2
+    assert min(len(g) for g in groups) > len(faces) // 4
+
+
+def cell_grid(cells):
+    """Flat grid of triangulated unit quads over these (x, y) cells."""
+    verts = {}
+    faces = []
+
+    def vid(x, y):
+        if (x, y) not in verts:
+            verts[(x, y)] = len(verts)
+        return verts[(x, y)]
+
+    for x, y in cells:
+        a, b = vid(x, y), vid(x + 1, y)
+        c, d = vid(x + 1, y + 1), vid(x, y + 1)
+        faces.append((a, b, c))
+        faces.append((a, c, d))
+    vert_list = [None] * len(verts)
+    for (x, y), i in verts.items():
+        vert_list[i] = [float(x), float(y), 0.0]
+    return vert_list, faces
+
+
+def test_fork_runs_cut_a_branched_panel_at_its_junction():
+    # a T of strips: the runs part where the arms meet, so no run spans
+    # two arms, the wrench-head branch in miniature
+    bar = [(x, y) for x in range(16) for y in range(8, 12)]
+    trunk = [(x, y) for x in range(6, 10) for y in range(8)]
+    cells = bar + trunk
+    verts, faces = cell_grid(cells)
+    edges = face_edges(faces)
+    runs = fork_runs(range(len(faces)), edges)
+    assert sum(len(r) for r in runs) == len(faces)
+    assert len(runs) >= 3
+    run_of = {}
+    for k, run in enumerate(runs):
+        for i in run:
+            run_of[i] = k
+    tips = [2 * cells.index(cell) for cell in ((0, 9), (15, 9), (7, 0))]
+    assert len({run_of[t] for t in tips}) == 3
+
+
+def test_fork_runs_keep_a_straight_strip_whole():
+    verts, faces = cell_grid([(x, y) for x in range(16) for y in range(4)])
+    runs = fork_runs(range(len(faces)), edges=face_edges(faces))
+    assert len(runs) == 1
+    assert len(runs[0]) == len(faces)
+
+
+def test_round_tube_wall_keeps_one_wrap():
+    # a circular profile has no ridge to cut, coarse or fine: facet spikes
+    # alone must not shred the wall into lengthwise strips
+    for sides in (16, 32):
+        verts, faces = tube(sides=sides, height=4.0)
+        rims, walls = sweep_rims(verts, faces)
+        assert walls == set(range(len(faces)))
+        assert not rims
+
+
 def test_sweep_rims_still_reject_shattered_coarse_elbows():
     # at 12 sides the cross-tube edges turn past the partition angle, the
     # cluster shatters into lengthwise strips and no strip is a wall
@@ -1588,7 +1685,7 @@ def test_rectify_straightens_a_wavy_strip():
     uvs = [[wobble(uv) for uv in face] for face in uvs]
     plans = rectify_targets(uvs, uv_groups(faces, uvs))
     assert len(plans) == 1
-    group, targets = plans[0]
+    group, targets, inner = plans[0]
     assert sorted(group) == list(range(len(faces)))
     box = target_box(targets)
     assert all(on_perimeter(t, box) for t in targets.values())
@@ -1599,6 +1696,54 @@ def test_rectify_straightens_a_wavy_strip():
     assert hits == 4
     # the wavy long sides actually moved onto the straight edges
     assert any(math.dist(p, t) > 0.01 for p, t in targets.items())
+
+
+def arc_island(radius=2.0, width=0.5, span=240, segments=24, rows=2):
+    """A curled strip: an annular arc in uv, the shape a bent panel
+    flattens into. Nearest-to-box corner picking lands on the outer bulge
+    of a curl this deep, only turning finds the real ends."""
+    points = []
+    for k in range(segments + 1):
+        a = math.radians(span) * k / segments
+        for r in range(rows + 1):
+            rad = radius - width / 2 + width * r / rows
+            points.append((rad * math.cos(a), rad * math.sin(a)))
+    faces, uvs = [], []
+    for k in range(segments):
+        for r in range(rows):
+            base = k * (rows + 1) + r
+            quad = (base, base + 1, base + rows + 2, base + rows + 1)
+            faces.append(quad)
+            uvs.append([points[v] for v in quad])
+    return faces, uvs
+
+
+def test_rectify_straightens_a_curled_strip():
+    radius, width, span, segments = 2.0, 0.5, 240, 24
+    faces, uvs = arc_island(radius, width, span, segments)
+    plans = rectify_targets(uvs, uv_groups(faces, uvs))
+    assert len(plans) == 1
+    _, targets, inner = plans[0]
+    # unrolled to its true arc length: the chord-based box fit reads a 240
+    # degree curl far shorter than its spine
+    spine = math.radians(span) * radius
+    diagonal = math.sqrt(spine**2 + width**2)
+    reach = max(math.dist(a, b) for a in targets.values() for b in targets.values())
+    assert abs(reach - diagonal) / diagonal < 0.05
+    # the mid ring rides along, unrolled evenly down the rectangle's middle
+    assert inner
+    step = spine / segments
+    mids = [
+        inner[
+            (
+                radius * math.cos(math.radians(span) * k / segments),
+                radius * math.sin(math.radians(span) * k / segments),
+            )
+        ]
+        for k in range(1, segments)
+    ]
+    for a, b in zip(mids, mids[1:]):
+        assert 0.8 * step < math.dist(a, b) < 1.2 * step
 
 
 def test_rectify_skips_a_blob():
@@ -1624,7 +1769,7 @@ def test_rectify_admits_a_toothed_strip_by_its_boundary():
     uvs = [[tooth(uv) for uv in face] for face in uvs]
     plans = rectify_targets(uvs, uv_groups(faces, uvs))
     assert len(plans) == 1
-    _, targets = plans[0]
+    _, targets, inner = plans[0]
     box = target_box(targets)
     assert all(on_perimeter(t, box) for t in targets.values())
     assert box[2] - box[0] > 14
@@ -1636,7 +1781,7 @@ def test_rectify_reaches_islands_bordering_their_own_cut():
     verts, faces, uvs, seams, row_of = tube_island(6, 8, 0.0)
     plans = rectify_targets(uvs, uv_groups(faces, uvs))
     assert len(plans) == 1
-    group, targets = plans[0]
+    group, targets, inner = plans[0]
     assert sorted(group) == list(range(len(faces)))
     box = target_box(targets)
     assert all(on_perimeter(t, box) for t in targets.values())

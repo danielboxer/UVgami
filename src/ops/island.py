@@ -212,11 +212,15 @@ def finish_preseed(obj, ranges=None):
 
 
 def rectify_islands(obj):
-    """Straighten near-rectangular islands: pin each one's boundary onto its
-    fitted rectangle and re-solve the interior, conformal first because the
-    minimum stretch needs a flip free start and the pinned rectangle rarely
-    is one, then minimum stretch to polish. An island the solve collapsed or
-    left overlapping goes back untouched."""
+    """Straighten near-rectangular islands. A strip whose corners the
+    boundary turning found gets every uv placed directly by its spine
+    coordinates, no solve: blender's unwrap reinitializes from scratch, so
+    a pinned solve cannot unbend a deep curl without folding. The rest pin
+    their boundary onto the fitted rectangle and re-solve the interior,
+    conformal first because the minimum stretch needs a flip free start
+    and the pinned rectangle rarely is one, then minimum stretch to
+    polish. An island the solve collapsed, blew up, or left overlapping
+    goes back untouched."""
     mesh = obj.data
     if mesh.uv_layers.active is None:
         return
@@ -228,7 +232,7 @@ def rectify_islands(obj):
         return
     coords = [tuple(v.co) for v in mesh.vertices]
     before_distortion = [
-        flatten_distortion(coords, faces, uvs, group) for group, _ in plans
+        flatten_distortion(coords, faces, uvs, group) for group, _, _ in plans
     ]
 
     bm = new_bmesh(obj)
@@ -245,23 +249,26 @@ def rectify_islands(obj):
                 if uv_at.setdefault(corner.vert.index, uv) != uv:
                     seam = True
         edge.seam = seam
-    for group, targets in plans:
+    for group, targets, inner in plans:
         for fi in group:
             for corner, loop in enumerate(bm.faces[fi].loops):
                 target = targets.get(uvs[fi][corner])
+                if target is None and inner is not None:
+                    target = inner.get(uvs[fi][corner])
                 if target is not None:
                     loop[uvl].uv = target
-                    loop[uvl].pin_uv = True
+                    loop[uvl].pin_uv = inner is None
     set_bmesh(bm, obj)
 
-    planned_faces = [fi for group, _ in plans for fi in group]
-    unwrap(obj, planned_faces, REPAIR_ITERATIONS, method="CONFORMAL")
-    unwrap(obj, planned_faces, REPAIR_ITERATIONS)
+    solver_faces = [fi for group, _, inner in plans if inner is None for fi in group]
+    if solver_faces:
+        unwrap(obj, solver_faces, REPAIR_ITERATIONS, method="CONFORMAL")
+        unwrap(obj, solver_faces, REPAIR_ITERATIONS)
 
     bm = new_bmesh(obj)
     uvl = bm.loops.layers.uv.active
     bm.faces.ensure_lookup_table()
-    for (group, _), before in zip(plans, before_distortion):
+    for (group, _, _), before in zip(plans, before_distortion):
         total = sum(signed_area(uvs[fi]) for fi in group)
         orientation = 1 if total >= 0 else -1
         area_before = abs(total)
@@ -276,11 +283,13 @@ def rectify_islands(obj):
                 area_after += a
                 if a < 0:
                     overlap -= a
+        after = flatten_distortion(coords, faces, solved, group)
         bad = (
-            area_after < RECTIFY_COLLAPSE * area_before
+            not RECTIFY_COLLAPSE * area_before
+            <= area_after
+            <= area_before / RECTIFY_COLLAPSE
             or overlap > RECTIFY_OVERLAP * area_before
-            or flatten_distortion(coords, faces, solved, group)
-            > before + RECTIFY_DISTORTION
+            or after > before + RECTIFY_DISTORTION
         )
         for fi in group:
             for corner, loop in enumerate(bm.faces[fi].loops):

@@ -8,6 +8,7 @@ that, so the structure is read off the normals: against the right
 axis a swept region's faces are either wall or cap with little in
 between, while a bent tube fills the middle band."""
 
+import bisect
 import collections
 import math
 
@@ -34,6 +35,24 @@ WALL_ROUND = 0.7
 # two touching walls sweeping the same axis need no rim between them: a
 # grooved ring's bands unroll together
 SHARED_AXIS_COS = 0.95
+# profile ridge cuts: a wall's cross-section reads as a mass histogram of
+# normal direction around the axis, where a flat side spikes and a round or
+# evenly faceted profile stays near uniform (wrench handle peaks 7.6x,
+# screwdriver grip 2.2x). only a spiky profile panels at its soft corners
+PROFILE_BINS = 60
+PROFILE_PEAK = 3.0
+PROFILE_FLAT = 2.0
+# a corner arc must hold real surface to take a cut: a coarse round tube
+# also spikes, but the space between its facet spikes is empty, a rounded
+# ridge spreads mass across its arc
+PROFILE_CORNER = 0.02
+# and the flat sides it separates must face different ways: a multi-bump
+# shell whose flats sit a few degrees apart is one panel, only a real
+# quarter-turn corner is worth a seam
+PROFILE_TURN = 45
+# a panel run's growth front splits into one piece per branch at a junction;
+# a front piece this small is a straggler of the ring walk, not a branch
+FORK_FRONT_NOISE = 3
 # how finely a wall with a handle through it is trimmed back along its axis
 # while hunting the cut that leaves a flattenable surface
 GENUS_TRIM_LEVELS = 24
@@ -520,6 +539,169 @@ def claim_wall(group, axial, axis, total, verts, faces, edges, areas):
     return wall
 
 
+def spread_rings(adjacency, seed, allowed):
+    """Reachable faces grouped by steps taken from the seed."""
+    layers = [[seed]]
+    seen = {seed}
+    while True:
+        grown = []
+        for face in layers[-1]:
+            for other in adjacency[face]:
+                if other in allowed and other not in seen:
+                    seen.add(other)
+                    grown.append(other)
+        if not grown:
+            return layers
+        layers.append(grown)
+
+
+def fork_runs(piece, edges):
+    """Panel piece faces grouped into runs that part where the ring walk's
+    growth front splits: rings grow from an extremity, the run closes on
+    the last ring whose front is one polyline, and the walk reseeds in what
+    is left. At a junction the front splits into one piece per branch, so
+    the cut lands where the arms meet, the seam an artist ends a strip at.
+    The front rejoins once a branch is consumed, so this walks ring by ring
+    instead of riding straight_runs, whose probe doubling jumps the
+    junction window. A hole wide enough to split the front cuts too, which
+    only helps: a chart with a hole is not a disk and the engine recuts
+    it anyway."""
+    in_piece = set(piece)
+    adjacency = collections.defaultdict(list)
+    links = []
+    for key, owners in edges.items():
+        if len(owners) == 2:
+            a, b = owners
+            if a in in_piece and b in in_piece:
+                adjacency[a].append(b)
+                adjacency[b].append(a)
+                links.append((key, a, b))
+
+    def front_splits(prefix, allowed):
+        front = []
+        for key, a, b in links:
+            if a not in allowed or b not in allowed:
+                continue
+            if (a in prefix) != (b in prefix):
+                front.append(key)
+        parent = {}
+        for v0, v1 in front:
+            parent.setdefault(v0, v0)
+            parent.setdefault(v1, v1)
+            ra, rb = find(parent, v0), find(parent, v1)
+            if ra != rb:
+                parent[ra] = rb
+        count = collections.Counter(find(parent, v0) for v0, _ in front)
+        branches = sum(1 for c in count.values() if c > FORK_FRONT_NOISE)
+        return branches > 1
+
+    remaining = set(piece)
+    runs = []
+    while remaining:
+        start = next(iter(remaining))
+        seed = spread_rings(adjacency, start, remaining)[-1][0]
+        layers = spread_rings(adjacency, seed, remaining)
+        run = set(layers[0])
+        for layer in layers[1:]:
+            candidate = run | set(layer)
+            if front_splits(candidate, remaining):
+                break
+            run = candidate
+        runs.append(sorted(run))
+        remaining -= run
+    return runs
+
+
+def profile_panels(wall, axis, entries, edges, areas):
+    """Face -> lengthwise panel of a wall whose profile has flat sides, None
+    when it reads round or faceted. One cut lands in each corner arc between
+    flat sides, at its emptiest bin: the soft ridge an artist cuts along.
+    Narrow panels are what let rectify straighten a bowed shell, one wide
+    strip flattens into a banana it reverts on. A panel that branches (one
+    flat side running through a wrench head into three arms) parts at its
+    junctions, since no rectangle fit can straighten a Y."""
+    u = None
+    for candidate in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)):
+        c = cross(axis, candidate)
+        length = norm(c)
+        if length > 0.1:
+            u = [x / length for x in c]
+            break
+    v = cross(axis, u)
+    theta = {}
+    mass = [0.0] * PROFILE_BINS
+    for i in wall:
+        if i not in entries:
+            continue
+        w, n = entries[i]
+        axial = sum(x * y for x, y in zip(n, axis))
+        perp = [n[k] - axial * axis[k] for k in range(3)]
+        if norm(perp) <= 0:
+            continue
+        angle = math.atan2(
+            sum(x * y for x, y in zip(perp, v)),
+            sum(x * y for x, y in zip(perp, u)),
+        )
+        theta[i] = angle
+        b = int((angle + math.pi) / (2 * math.pi) * PROFILE_BINS)
+        mass[min(b, PROFILE_BINS - 1)] += w
+    total = sum(mass)
+    uniform = total / PROFILE_BINS
+    if uniform <= 0 or max(mass) < PROFILE_PEAK * uniform:
+        return None
+    flat = [m > PROFILE_FLAT * uniform for m in mass]
+    starts = [b for b in range(PROFILE_BINS) if flat[b] and not flat[b - 1]]
+    if len(starts) < 2:
+        return None
+    runs = []
+    for start in starts:
+        length = 1
+        while flat[(start + length) % PROFILE_BINS]:
+            length += 1
+        runs.append((start, length))
+    cuts = []
+    for (start, length), (following, next_length) in zip(runs, runs[1:] + runs[:1]):
+        gap = [
+            (start + length + k) % PROFILE_BINS
+            for k in range((following - start - length) % PROFILE_BINS)
+        ]
+        if not gap or sum(mass[g] for g in gap) < PROFILE_CORNER * total:
+            continue
+        mid = start + (length - 1) / 2
+        next_mid = following + (next_length - 1) / 2
+        turn = (next_mid - mid) % PROFILE_BINS * 360 / PROFILE_BINS
+        if turn < PROFILE_TURN:
+            continue
+        center = (len(gap) - 1) / 2
+        low = min(range(len(gap)), key=lambda k: (mass[gap[k]], abs(k - center)))
+        cuts.append(-math.pi + (gap[low] + 0.5) * 2 * math.pi / PROFILE_BINS)
+    if len(cuts) < 2:
+        return None
+    cuts.sort()
+    panel = {i: -1 for i in wall}
+    for i, angle in theta.items():
+        panel[i] = bisect.bisect_left(cuts, angle) % len(cuts)
+    parent, _, _ = class_components(wall, panel, edges, areas)
+    pieces = collections.defaultdict(list)
+    for i in wall:
+        pieces[find(parent, i)].append(i)
+    fresh = PROFILE_BINS
+    for piece in pieces.values():
+        runs = fork_runs(piece, edges)
+        if len(runs) == 1:
+            continue
+        for run in runs:
+            for i in run:
+                panel[i] = fresh
+            fresh += 1
+    wall_area = sum(areas[i] for i in wall)
+    parent, contact, comp_area = class_components(wall, panel, edges, areas)
+    merge_specks(parent, contact, comp_area, SWEEP_CAP_MIN * wall_area)
+    if len(comp_area) < 2:
+        return None
+    return {i: find(parent, i) for i in wall}
+
+
 def straight_runs(group, entries, edges, fit_of=None, snap=None):
     """Contiguous pieces of a bent swept cluster, each straight enough to
     pass the wall test against its own axis, with that axis.
@@ -542,21 +724,6 @@ def straight_runs(group, entries, edges, fit_of=None, snap=None):
                 adjacency[a].append(b)
                 adjacency[b].append(a)
 
-    def spread(seed, allowed):
-        """Reachable faces grouped by steps taken from the seed."""
-        layers = [[seed]]
-        seen = {seed}
-        while True:
-            grown = []
-            for face in layers[-1]:
-                for other in adjacency[face]:
-                    if other in allowed and other not in seen:
-                        seen.add(other)
-                        grown.append(other)
-            if not grown:
-                return layers
-            layers.append(grown)
-
     if fit_of is None:
         fit_of = normal_fit(entries)
 
@@ -566,8 +733,8 @@ def straight_runs(group, entries, edges, fit_of=None, snap=None):
     while remaining:
         if seed is None or seed not in remaining:
             start = next(iter(remaining))
-            seed = spread(start, remaining)[-1][0]
-        layers = spread(seed, remaining)
+            seed = spread_rings(adjacency, start, remaining)[-1][0]
+        layers = spread_rings(adjacency, seed, remaining)
         flat, ends = [], []
         for layer in layers:
             flat.extend(layer)
@@ -645,19 +812,23 @@ def sweep_rims(verts, faces):
     wall_axis = {}
     wall_run = {}
     wall_cluster = {}
+    wall_panel = {}
     run_count = 0
 
-    def claim(run, axis, cluster, axial, total):
+    def claim(run, axis, cluster, axial, total, entries):
         nonlocal run_count
         wall = claim_wall(run, axial, axis, total, verts, faces, edges, areas)
         if not wall:
             return
         run_count += 1
         walls.update(wall)
+        panels = profile_panels(wall, axis, entries, edges, areas)
         for i in wall:
             wall_axis[i] = axis
             wall_run[i] = run_count
             wall_cluster[i] = cluster
+            if panels:
+                wall_panel[i] = panels[i]
 
     for group in groups.values():
         normals = []
@@ -708,9 +879,9 @@ def sweep_rims(verts, faces):
                                 + n[1] * run_axis[1]
                                 + n[2] * run_axis[2]
                             ) ** 2
-                    claim(run, run_axis, group[0], run_axial, run_total)
+                    claim(run, run_axis, group[0], run_axial, run_total, entries)
             continue
-        claim(group, axis, group[0], axial, total)
+        claim(group, axis, group[0], axial, total, {i: (w, n) for i, w, n in normals})
 
     if not walls:
         return set(), walls
@@ -731,4 +902,6 @@ def sweep_rims(verts, faces):
                 dot = abs(sum(x * y for x, y in zip(wall_axis[a], wall_axis[b])))
                 if dot < SHARED_AXIS_COS:
                     rims.add(key)
+        elif in_a and wall_panel.get(a) != wall_panel.get(b):
+            rims.add(key)
     return rims, walls
