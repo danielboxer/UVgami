@@ -237,10 +237,26 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         description=(
             "Transfer the UV map from the output mesh to the original input mesh."
             " Works when the output has the same topology as the input, or a"
-            " triangulated version of it. The original object must be unchanged"
-            " since starting the unwrap"
+            " triangulated version of it. A face crossed by a UV cut is glued"
+            " back into one piece when it fits, and split otherwise."
+            " The original object must be unchanged since starting the unwrap."
+            " With Proxy, unchecking unwraps a duplicate and leaves the"
+            " original untouched"
         ),
+        default=True,
     )
+
+    @property
+    def preserve_mesh(self):
+        # a transfer writes onto the original, which never lost its quads.
+        # engines without preserve renumber verts, dissolving the wrong edges
+        engine = ENGINES.get(self.engine)
+        return (
+            self.untriangulate
+            and not self.transfer_uvs
+            and engine is not None
+            and engine.supports_preserve
+        )
 
     @property
     def avoid_seams(self):

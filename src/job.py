@@ -59,8 +59,8 @@ def face_vertices(mesh):
 
 
 def output_mesh_data(output, output_uv):
-    """World positions, polygons, per-face loop uvs and seams of an engine
-    output object, in the plain form plan_transfer takes."""
+    """World positions, polygons and per-face loop uvs of an engine output
+    object, in the plain form plan_transfer takes."""
     output_data = output.data
 
     output_positions = world_positions(output)
@@ -72,13 +72,7 @@ def output_mesh_data(output, output_uv):
         coords.reshape(-1, 2).tolist(), _loop_totals(output_data)
     )
 
-    seamed = numpy.empty(len(output_data.edges), dtype=bool)
-    output_data.edges.foreach_get("use_seam", seamed)
-    edge_verts = numpy.empty(len(output_data.edges) * 2, dtype=numpy.int64)
-    output_data.edges.foreach_get("vertices", edge_verts)
-    output_seams = edge_verts.reshape(-1, 2)[seamed].tolist()
-
-    return output_positions, output_polygons, output_uvs, output_seams
+    return output_positions, output_polygons, output_uvs
 
 
 class Preserve:
@@ -253,7 +247,10 @@ class TransferUVs:
                 bpy.context.view_layer.objects.active = input_mesh
                 bpy.ops.object.mode_set(mode="OBJECT")
 
-            plan = plan_transfer(*self._extract(input_mesh, output, output_uv))
+            plan = plan_transfer(
+                *self._extract(input_mesh, output, output_uv),
+                repack=self.repack_input,
+            )
             if not plan.ok:
                 return TransferReport(False, 0, f"{plan.reason}: {plan.detail}")
 
