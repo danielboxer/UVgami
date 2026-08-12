@@ -15,6 +15,7 @@ import collections
 
 import bmesh
 import bpy
+from mathutils import Matrix, Vector
 from mathutils.kdtree import KDTree
 
 from .hard_surface import (
@@ -76,13 +77,26 @@ def cut_edges(output):
     return torn
 
 
-def vertex_map(input_mesh, output):
-    """Each proxy vertex to the nearest input vertex facing the same way.
+def bounds_frame(obj):
+    """The space of the mesh's own bounding box, so two copies of a model
+    line up wherever each one is placed and whatever size it is."""
+    corners = [Vector(corner) for corner in obj.bound_box]
+    low = Vector([min(corner[axis] for corner in corners) for axis in range(3)])
+    high = Vector([max(corner[axis] for corner in corners) for axis in range(3)])
+    return Matrix.Scale(1 / max(high - low), 4) @ Matrix.Translation(-(low + high) / 2)
+
+
+def vertex_map(input_mesh, output, matrix=None, out_matrix=None):
+    """Each output vertex to the nearest input vertex facing the same way,
+    matched in world space unless a frame is given for each mesh.
 
     Thin walls put the far side of the wall nearest, and a cut snapped
     through the wall would seam both sides at once."""
     data = input_mesh.data
-    matrix = input_mesh.matrix_world
+    if matrix is None:
+        matrix = input_mesh.matrix_world
+    if out_matrix is None:
+        out_matrix = output.matrix_world
     rotation = matrix.to_3x3().inverted_safe().transposed()
     kd = KDTree(len(data.vertices))
     for i, vertex in enumerate(data.vertices):
@@ -90,7 +104,6 @@ def vertex_map(input_mesh, output):
     kd.balance()
     normals = [(rotation @ vertex.normal).normalized() for vertex in data.vertices]
 
-    out_matrix = output.matrix_world
     out_rotation = out_matrix.to_3x3().inverted_safe().transposed()
     mapped = []
     for vertex in output.data.vertices:
@@ -129,11 +142,8 @@ def repair_proxy(output, weights):
     return marked_seams(output.data)
 
 
-def transfer_cuts(input_mesh, output):
-    """Seam the original along the proxy's cuts and unwrap it there."""
-    mapped = vertex_map(input_mesh, output)
-    cuts = repair_proxy(output, proxy_weights(input_mesh, mapped))
-
+def snap_cuts(input_mesh, mapped, cuts):
+    """Another mesh's cut network redrawn along input_mesh's own edges."""
     data = input_mesh.data
     verts = [tuple(vertex.co) for vertex in data.vertices]
     adjacent = collections.defaultdict(set)
@@ -141,13 +151,22 @@ def transfer_cuts(input_mesh, output):
         a, b = edge.vertices
         adjacent[a].add(b)
         adjacent[b].add(a)
-    seams = snap_paths(verts, adjacent, mapped, cuts)
+    return snap_paths(verts, adjacent, mapped, cuts)
 
+
+def transfer_cuts(input_mesh, output):
+    """Seam the original along the proxy's cuts and unwrap it there."""
+    mapped = vertex_map(input_mesh, output)
+    cuts = repair_proxy(output, proxy_weights(input_mesh, mapped))
+
+    data = input_mesh.data
+    seams = snap_cuts(input_mesh, mapped, cuts)
     apply_seams(data, seams)
     if not data.uv_layers:
         data.uv_layers.new()
     # the proxy already settled which cuts the shape needs, so the dense mesh
     # only has to flatten and pack once
+    verts = [tuple(vertex.co) for vertex in data.vertices]
     faces = [tuple(poly.vertices) for poly in data.polygons]
     check_manifold(faces)
     uvs = flatten_engine().flatten(verts, faces, seams)

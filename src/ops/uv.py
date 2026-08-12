@@ -1,6 +1,8 @@
 import bmesh
 import bpy
 
+from ..hard_surface import apply_seams, marked_seams
+from ..proxy import bounds_frame, snap_cuts, vertex_map
 from ..seams import face_edges, uv_island_groups
 from ..similar import find_stacks
 from ..utils.mesh import edit_restore, select_uvs, validate_obj
@@ -130,6 +132,41 @@ def show_seams():
     bpy.ops.uv.seams_from_islands()
     bpy.ops.uv.select_all(action="DESELECT")
     bpy.ops.mesh.select_all(action="DESELECT")
+
+
+class UVGAMI_OT_transfer_seams(bpy.types.Operator):
+    bl_idname = "uvgami.transfer_seams"
+    bl_label = "Transfer Seams"
+    bl_description = (
+        "Copy the seams of the other selected object onto the active object,"
+        " redrawn along its own edges"
+    )
+    bl_options = {"UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == "OBJECT"
+
+    def execute(self, context):
+        target = context.view_layer.objects.active
+        if target is None or not validate_obj(self, target, report=True):
+            return {"CANCELLED"}
+        others = [obj for obj in context.selected_objects if obj is not target]
+        if len(others) != 1:
+            self.report({"ERROR"}, "Select one other object to copy the seams from")
+            return {"CANCELLED"}
+        donor = others[0]
+        if not validate_obj(self, donor, report=True):
+            return {"CANCELLED"}
+        seams = marked_seams(donor.data)
+        if not seams:
+            self.report({"ERROR"}, f"{donor.name} has no seams")
+            return {"CANCELLED"}
+
+        mapped = vertex_map(target, donor, bounds_frame(target), bounds_frame(donor))
+        apply_seams(target.data, snap_cuts(target, mapped, seams))
+        self.report({"INFO"}, f"Transferred {len(seams)} seams from {donor.name}")
+        return {"FINISHED"}
 
 
 class UVGAMI_OT_pack(bpy.types.Operator):
