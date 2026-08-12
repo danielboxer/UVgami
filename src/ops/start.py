@@ -343,10 +343,9 @@ class InputExporter:
                         ngon_dict[vert.index] = set()
                     ngon_dict[vert.index].add(face_idx)
 
-        # the panel hides the setting on engines without preserve, but the value
-        # persists, so check it here too: added edges are input vertex indices
-        # and engines that renumber vertices would dissolve the wrong ones
-        untriangulate = props.untriangulate and self.engine.supports_preserve
+        # the panel hides the setting where it doesn't apply but the value
+        # persists, so read the same derived flag the panel does
+        untriangulate = props.preserve_mesh
 
         edge_path = None
         if must_triangulate:
