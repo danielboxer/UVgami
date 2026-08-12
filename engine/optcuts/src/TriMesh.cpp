@@ -2414,6 +2414,8 @@ TriMesh::computeLocalLDec(int vI, double lambda_t, std::vector<int> &path_max,
     }
 
     // split:
+    // a full reversal triples an edge's seam cost
+    const double turnPenalty = 2.0;
     std::vector<int> umbrella;
     std::pair<int, int> boundaryEdge;
     if (isBoundaryVert(vI, *(vNeighbor[vI].begin()), umbrella, boundaryEdge,
@@ -2423,6 +2425,18 @@ TriMesh::computeLocalLDec(int vI, double lambda_t, std::vector<int> &path_max,
         energyChanges_max.first = DBL_MAX;
         energyChanges_max.second = DBL_MAX;
         path_max.resize(2);
+        // at a cut tip the two boundary neighbors are copies of one vertex
+        std::vector<int> umbrella_other;
+        std::pair<int, int> boundaryEdge_other;
+        isBoundaryVert(vI, *(vNeighbor[vI].begin()), umbrella_other,
+                       boundaryEdge_other, true);
+        const int bndNb0 = boundaryEdge.first;
+        const int bndNb1 = boundaryEdge_other.second;
+        const bool atCutTip =
+            (V_rest.row(bndNb0) - V_rest.row(bndNb1)).squaredNorm() == 0.0;
+        Eigen::RowVector3d arrivalDir;
+        if (atCutTip)
+            arrivalDir = (V_rest.row(vI) - V_rest.row(bndNb0)).normalized();
         for (const auto &nbVI : vNeighbor[vI]) {
             const std::pair<int, int> edge(vI, nbVI);
             if ((edge2Tri.find(edge) != edge2Tri.end()) &&
@@ -2433,9 +2447,15 @@ TriMesh::computeLocalLDec(int vI, double lambda_t, std::vector<int> &path_max,
                 Eigen::MatrixXd newVertPosI;
                 const double SDDec = queryLocalEdDec_bSplit(edge, newVertPosI);
 
-                const double seInc =
+                double seInc =
                     (V_rest.row(vI) - V_rest.row(nbVI)).norm() / virtualRadius *
                     (vertWeight[vI] + vertWeight[nbVI]) / 2.0;
+                if (atCutTip) {
+                    const Eigen::RowVector3d extendDir =
+                        (V_rest.row(nbVI) - V_rest.row(vI)).normalized();
+                    seInc *= 1.0 + turnPenalty * 0.5 *
+                                       (1.0 - arrivalDir.dot(extendDir));
+                }
                 const double curEwDec =
                     (1.0 - lambda_t) * SDDec - lambda_t * seInc;
                 if (curEwDec > maxEwDec) {
@@ -2499,12 +2519,19 @@ TriMesh::computeLocalLDec(int vI, double lambda_t, std::vector<int> &path_max,
                                                    newVertPos);
                 // TODO: share local mesh before split, also for boundary splits
 
-                const double seInc =
+                double seInc =
                     ((V_rest.row(path[0]) - V_rest.row(path[1])).norm() *
                          (vertWeight[path[0]] + vertWeight[path[1]]) +
                      (V_rest.row(path[1]) - V_rest.row(path[2])).norm() *
                          (vertWeight[path[1]] + vertWeight[path[2]])) /
                     virtualRadius / 2.0;
+                // a bent starting path seeds a zigzag
+                const Eigen::RowVector3d legDir0 =
+                    (V_rest.row(path[1]) - V_rest.row(path[0])).normalized();
+                const Eigen::RowVector3d legDir1 =
+                    (V_rest.row(path[2]) - V_rest.row(path[1])).normalized();
+                seInc *=
+                    1.0 + turnPenalty * 0.5 * (1.0 - legDir0.dot(legDir1));
                 const double EwDec =
                     (1.0 - lambda_t) * SDDec - lambda_t * seInc;
                 if (EwDec > EwDec_max) {
