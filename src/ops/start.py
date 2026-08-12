@@ -334,8 +334,8 @@ class InputExporter:
             if len(face.edges) > 3:
                 must_triangulate = True
                 # n-gon vertices are only needed in full mode
-                if props.maintain_mode == "PARTIAL":
-                    break
+                # if props.maintain_mode == "PARTIAL":
+                #     break
 
             if len(face.edges) > 4:
                 # found n-gon
@@ -612,7 +612,7 @@ class SessionBuilder:
             input_name=input_name,
             path=path,
             jobs=jobs,
-            maintain_mode=props.maintain_mode,
+            # maintain_mode=props.maintain_mode,
             preseeded=preseeded and uses_uvs,
         )
         self.piece_unwrap[obj] = unwrap

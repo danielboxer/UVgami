@@ -160,8 +160,6 @@ class UVGAMI_PT_hard_surface(bpy.types.Panel):
         row.label(icon="DRIVER_ROTATIONAL_DIFFERENCE", text="Angle")
         row.prop(optcuts, "hard_surface_angle", text="")
 
-        box.operator("uvgami.quick_unwrap", icon="UV_EDGESEL")
-
 
 class OptcutsEngine(BinaryEngine):
     id = "OPTCUTS"

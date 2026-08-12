@@ -28,7 +28,7 @@ class Unwrap:
         input_name: str,
         path: pathlib.Path,
         jobs: tuple,
-        maintain_mode: str,
+        maintain_mode: str = "FULL",
         preseeded: bool = False,
     ):
         self.name = name
