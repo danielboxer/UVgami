@@ -46,29 +46,29 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     import_uvs: bpy.props.BoolProperty(
         name="", description="Use the UV map on the mesh as input"
     )
-    # preserve mesh
-    untriangulate: bpy.props.BoolProperty(
-        name="",
-        description="Untriangulate mesh after unwrap. N-gons might not be preserved",
-    )
-    maintain_mode: bpy.props.EnumProperty(
-        name="Preserve",
-        description="How much of the mesh to untriangulate after unwrap",
-        items=(
-            (
-                "FULL",
-                "Full",
-                (
-                    "Fully untriangulate mesh and reroute seams."
-                    " This might cause some areas to overlap slightly."
-                    " There might also be a small amount of increased stretching."
-                    " N-gons will remain triangulated."
-                ),
-            ),
-            ("PARTIAL", "Partial", "Untriangulate all areas except for the seams"),
-        ),
-        default="FULL",
-    )
+    # TODO: preserve mesh is off, delete these props and the untriangulate code
+    # untriangulate: bpy.props.BoolProperty(
+    #     name="",
+    #     description="Untriangulate mesh after unwrap. N-gons might not be preserved",
+    # )
+    # maintain_mode: bpy.props.EnumProperty(
+    #     name="Preserve",
+    #     description="How much of the mesh to untriangulate after unwrap",
+    #     items=(
+    #         (
+    #             "FULL",
+    #             "Full",
+    #             (
+    #                 "Fully untriangulate mesh and reroute seams."
+    #                 " This might cause some areas to overlap slightly."
+    #                 " There might also be a small amount of increased stretching."
+    #                 " N-gons will remain triangulated."
+    #             ),
+    #         ),
+    #         ("PARTIAL", "Partial", "Untriangulate all areas except for the seams"),
+    #     ),
+    #     default="FULL",
+    # )
     # speed
     concurrent: bpy.props.BoolProperty(
         name="",
@@ -248,15 +248,16 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
 
     @property
     def preserve_mesh(self):
+        return False
         # a transfer writes onto the original, which never lost its quads.
         # engines without preserve renumber verts, dissolving the wrong edges
-        engine = ENGINES.get(self.engine)
-        return (
-            self.untriangulate
-            and not self.transfer_uvs
-            and engine is not None
-            and engine.supports_preserve
-        )
+        # engine = ENGINES.get(self.engine)
+        # return (
+        #     self.untriangulate
+        #     and not self.transfer_uvs
+        #     and engine is not None
+        #     and engine.supports_preserve
+        # )
 
     @property
     def avoid_seams(self):
