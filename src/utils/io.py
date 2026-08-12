@@ -4,7 +4,7 @@ import bpy
 import numpy
 
 
-def export_obj(obj, path, export_uv, flip_mirrored=False):
+def export_obj(obj, path, export_uv, flip_mirrored=False, matrix=None):
     """Write the mesh as an obj in world space, 9 decimals.
 
     The built-in exporter rounds to 6 decimals, which can flip tiny uv
@@ -19,9 +19,11 @@ def export_obj(obj, path, export_uv, flip_mirrored=False):
     (the engine's rebuilt vertices), this is the mapping.
 
     flip_mirrored is for callers that keep the engine result as the user's
-    mesh. Ones that write the uvs back onto the original leave it off."""
+    mesh. Ones that write the uvs back onto the original leave it off.
+
+    matrix stands in for obj.matrix_world when the object's own is stale."""
     mesh = obj.data
-    matrix = numpy.array(obj.matrix_world)
+    matrix = numpy.array(obj.matrix_world if matrix is None else matrix)
     co = numpy.empty(len(mesh.vertices) * 3)
     mesh.vertices.foreach_get("co", co)
     co = co.reshape(-1, 3) @ matrix[:3, :3].T + matrix[:3, 3]

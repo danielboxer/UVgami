@@ -163,6 +163,7 @@ class InputExporter:
         engine_ctx,
         piece_unwrap,
         piece_has_uvs,
+        piece_matrix,
         separated_objects,
         start_objects,
         temp_collection,
@@ -171,6 +172,7 @@ class InputExporter:
         self.engine_ctx = engine_ctx
         self.piece_unwrap = piece_unwrap
         self.piece_has_uvs = piece_has_uvs
+        self.piece_matrix = piece_matrix
         self.remaining = deque(separated_objects)
         self.start_objects = start_objects
         self.temp_collection = temp_collection
@@ -233,10 +235,7 @@ class InputExporter:
         fix_inconsistent_winding(obj)
         edge_path, new_edges = self._triangulate_mesh(obj, unwrap, path, props)
 
-        # relink to the scene so matrix_world is evaluated for the world-space
-        # export, all within one tick so no redraw shows the object
-        bpy.context.scene.collection.objects.link(obj)
-        bpy.context.view_layer.update()
+        matrix = self.piece_matrix[obj]
 
         # seams and uvs were built before separation, see create_jobs
         has_uvs = self.piece_has_uvs[obj]
@@ -244,7 +243,9 @@ class InputExporter:
             normalize_uvs(obj.data)
         # only the plain path owns the winding, a transfer writes onto the original
         keeps_output = input_job(props) is None
-        vt_verts = export_obj(obj, path, has_uvs, flip_mirrored=keeps_output)
+        vt_verts = export_obj(
+            obj, path, has_uvs, flip_mirrored=keeps_output, matrix=matrix
+        )
 
         guide_path = self._create_guide_file(obj, path, props, vt_verts)
 
@@ -255,7 +256,7 @@ class InputExporter:
         unwrap.set_export_data(
             guide_path=guide_path,
             edge_path=edge_path,
-            origin=obj.matrix_world.translation,
+            origin=matrix.translation,
             materials=materials,
             added_edges=new_edges,
             vertex_count=len(obj.data.vertices),
@@ -483,6 +484,7 @@ class SessionBuilder:
         self.separated_objects = []
         self.piece_unwrap = {}
         self.piece_has_uvs = {}
+        self.piece_matrix = {}
         self.pending = None
         # queue ui placeholders until each object's pieces exist
         self.preparing = [names[obj.name][0] for _, obj in self.remaining]
@@ -623,6 +625,8 @@ class SessionBuilder:
         bpy.context.scene.collection.objects.link(obj)
         self.temp_collection.objects.unlink(obj)
         bpy.context.view_layer.update()
+        # the pieces share this transform, their own matrix is never updated
+        matrix = obj.matrix_world.copy()
         deselect_all()
         obj.select_set(True)
 
@@ -680,6 +684,7 @@ class SessionBuilder:
 
         deselect_all()
         for piece in added:
+            self.piece_matrix[piece] = matrix
             self.separated_objects.append(piece)
             for coll in piece.users_collection:
                 coll.objects.unlink(piece)
@@ -698,6 +703,7 @@ class SessionBuilder:
             engine_ctx=self.engine_ctx,
             piece_unwrap=self.piece_unwrap,
             piece_has_uvs=self.piece_has_uvs,
+            piece_matrix=self.piece_matrix,
             separated_objects=self.separated_objects,
             start_objects=self.start_objects,
             temp_collection=self.temp_collection,
