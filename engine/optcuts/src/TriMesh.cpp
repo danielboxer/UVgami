@@ -2341,6 +2341,56 @@ void TriMesh::compute2DInwardNormal(int vI, Eigen::RowVector2d &normal) const {
         normal *= -1.0;
 }
 
+// concave gets the deeper discount, a groove hides a seam best
+static const double CONCAVE_RELIEF = 0.5;
+static const double CONVEX_RELIEF = 0.3;
+static const double RELIEF_LOW_ANGLE = 10.0;
+static const double RELIEF_FULL_ANGLE = 45.0;
+
+double TriMesh::creaseReliefTris(int triA, int triB, int baseVI) const {
+    const double normalDot = std::max(
+        -1.0,
+        std::min(1.0, triNormal.row(triA).dot(triNormal.row(triB))));
+    const double angle = std::acos(normalDot) * 180.0 / M_PI;
+    if (angle <= RELIEF_LOW_ANGLE)
+        return 1.0;
+    // a neighbour risen above the face plane means concave
+    const Eigen::RowVector3d centroidOpp =
+        (V_rest.row(F(triB, 0)) + V_rest.row(F(triB, 1)) +
+         V_rest.row(F(triB, 2))) /
+        3.0;
+    const double lift =
+        triNormal.row(triA).dot(centroidOpp - V_rest.row(baseVI));
+    const double depth = std::min(
+        (angle - RELIEF_LOW_ANGLE) / (RELIEF_FULL_ANGLE - RELIEF_LOW_ANGLE),
+        1.0);
+    return 1.0 - (lift > 0.0 ? CONCAVE_RELIEF : CONVEX_RELIEF) * depth;
+}
+
+double TriMesh::creaseRelief(int vI, int nbVI) const {
+    const auto tri = edge2Tri.find(std::pair<int, int>(vI, nbVI));
+    const auto triOpp = edge2Tri.find(std::pair<int, int>(nbVI, vI));
+    if ((tri == edge2Tri.end()) || (triOpp == edge2Tri.end()))
+        return 1.0;
+    return creaseReliefTris(tri->second, triOpp->second, vI);
+}
+
+int TriMesh::edgeOwnerTri(int vI, int nbVI) const {
+    auto finder = edge2Tri.find(std::pair<int, int>(vI, nbVI));
+    if (finder == edge2Tri.end())
+        finder = edge2Tri.find(std::pair<int, int>(nbVI, vI));
+    return (finder == edge2Tri.end()) ? -1 : finder->second;
+}
+
+// a seam edge's two sides are separate copies, so edge2Tri holds one of them
+double TriMesh::creaseReliefSeam(int vI, int nbVI, int vTwinI) const {
+    const int tri = edgeOwnerTri(vI, nbVI);
+    const int triTwin = edgeOwnerTri(vTwinI, nbVI);
+    if ((tri < 0) || (triTwin < 0) || (tri == triTwin))
+        return 1.0;
+    return creaseReliefTris(tri, triTwin, nbVI);
+}
+
 double
 TriMesh::computeLocalLDec(int vI, double lambda_t, std::vector<int> &path_max,
                           Eigen::MatrixXd &newVertPos_max,
@@ -2361,10 +2411,13 @@ TriMesh::computeLocalLDec(int vI, double lambda_t, std::vector<int> &path_max,
             assert(isBoundaryVert(pI));
         if (path_max.size() == 3) {
             // zipper merge
+            // the same discount as seInc, so a split and the merge undoing
+            // it net zero
             double seDec =
                 (V_rest.row(path_max[0]) - V_rest.row(path_max[1])).norm() /
                 virtualRadius *
-                (vertWeight[path_max[0]] + vertWeight[path_max[1]]) / 2.0;
+                (vertWeight[path_max[0]] + vertWeight[path_max[1]]) / 2.0 *
+                creaseReliefSeam(path_max[0], path_max[1], path_max[2]);
             // closing up split diamond
             bool closeup = false;
             for (const auto &nbVI : vNeighbor[path_max[0]]) {
@@ -2377,7 +2430,9 @@ TriMesh::computeLocalLDec(int vI, double lambda_t, std::vector<int> &path_max,
                                     .norm() /
                                 virtualRadius *
                                 (vertWeight[path_max[0]] + vertWeight[nbVI]) /
-                                2.0;
+                                2.0 *
+                                creaseReliefSeam(path_max[0], nbVI,
+                                                 path_max[2]);
                             closeup = true;
                             break;
                         }
@@ -2449,7 +2504,8 @@ TriMesh::computeLocalLDec(int vI, double lambda_t, std::vector<int> &path_max,
 
                 double seInc =
                     (V_rest.row(vI) - V_rest.row(nbVI)).norm() / virtualRadius *
-                    (vertWeight[vI] + vertWeight[nbVI]) / 2.0;
+                    (vertWeight[vI] + vertWeight[nbVI]) / 2.0 *
+                    creaseRelief(vI, nbVI);
                 if (atCutTip) {
                     const Eigen::RowVector3d extendDir =
                         (V_rest.row(nbVI) - V_rest.row(vI)).normalized();
@@ -2519,19 +2575,23 @@ TriMesh::computeLocalLDec(int vI, double lambda_t, std::vector<int> &path_max,
                                                    newVertPos);
                 // TODO: share local mesh before split, also for boundary splits
 
-                double seInc =
-                    ((V_rest.row(path[0]) - V_rest.row(path[1])).norm() *
-                         (vertWeight[path[0]] + vertWeight[path[1]]) +
-                     (V_rest.row(path[1]) - V_rest.row(path[2])).norm() *
-                         (vertWeight[path[1]] + vertWeight[path[2]])) /
-                    virtualRadius / 2.0;
+                const double legLen0 =
+                    (V_rest.row(path[0]) - V_rest.row(path[1])).norm() *
+                    (vertWeight[path[0]] + vertWeight[path[1]]);
+                const double legLen1 =
+                    (V_rest.row(path[1]) - V_rest.row(path[2])).norm() *
+                    (vertWeight[path[1]] + vertWeight[path[2]]);
                 // a bent starting path seeds a zigzag
                 const Eigen::RowVector3d legDir0 =
                     (V_rest.row(path[1]) - V_rest.row(path[0])).normalized();
                 const Eigen::RowVector3d legDir1 =
                     (V_rest.row(path[2]) - V_rest.row(path[1])).normalized();
-                seInc *=
+                const double turnFactor =
                     1.0 + turnPenalty * 0.5 * (1.0 - legDir0.dot(legDir1));
+                const double seInc =
+                    (legLen0 * creaseRelief(path[0], path[1]) +
+                     legLen1 * creaseRelief(path[1], path[2])) /
+                    virtualRadius / 2.0 * turnFactor;
                 const double EwDec =
                     (1.0 - lambda_t) * SDDec - lambda_t * seInc;
                 if (EwDec > EwDec_max) {

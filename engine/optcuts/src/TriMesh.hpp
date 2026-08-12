@@ -163,6 +163,12 @@ class TriMesh {
                             const std::pair<int, int> &edge1,
                             const Eigen::RowVectorXd &mergedPos);
 
+    // per-edge length factor under 1 on a crease, 1.0 everywhere else
+    double creaseRelief(int vI, int nbVI) const;
+    double creaseReliefSeam(int vI, int nbVI, int vTwinI) const;
+    double creaseReliefTris(int triA, int triB, int baseVI) const;
+    // owning triangle of either direction of an edge, -1 if none
+    int edgeOwnerTri(int vI, int nbVI) const;
     // query vertex candidate for either split or merge
     double computeLocalLDec(
         int vI, double lambda_t, std::vector<int> &path,
