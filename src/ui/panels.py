@@ -67,6 +67,7 @@ def fix_settings(props):
                 "optcuts.quality",
                 props.optcuts.quality != "BALANCED",
             ),
+            ("MOD_DECIM", "Proxy", "use_proxy", props.use_proxy),
             ("CON_ROTLIKE", "Concurrent", "concurrent", props.concurrent),
             (
                 "TIME",
@@ -340,6 +341,15 @@ def draw_concurrent(layout, props, engine):
         split.prop(props, "max_cores", slider=True)
 
 
+def draw_proxy(layout, props):
+    """Shared with the uv editor settings."""
+    sub = toggle(layout, props, "use_proxy", "Proxy", "MOD_DECIM")
+    if sub is not None:
+        row = sub.row()
+        row.label(text="Proxy Faces", icon="MESH_DATA")
+        row.prop(props, "proxy_faces")
+
+
 def draw_timeout(layout, props):
     """Shared with the uv editor settings."""
     row = layout.row()
@@ -367,11 +377,7 @@ class UVGAMI_PT_speed(EnginePanel, bpy.types.Panel):
         engine = active_engine(props.engine)
         draw_concurrent(box, props, engine)
 
-        sub = toggle(box, props, "use_proxy", "Proxy", "MOD_DECIM")
-        if sub is not None:
-            row = sub.row()
-            row.label(text="Proxy Faces", icon="MESH_DATA")
-            row.prop(props, "proxy_faces")
+        draw_proxy(box, props)
 
         split = box.split(factor=0.7)
         split.label(icon="MOD_ARRAY", text="Stack Similar")
@@ -575,6 +581,7 @@ class UVGAMI_PT_island_settings(bpy.types.Panel):
         # these operators always run optcuts, whatever the main panel is set to
         engine = get_engine("OPTCUTS")
         draw_concurrent(box, props, engine)
+        draw_proxy(box, props)
         draw_timeout(box, props)
 
 

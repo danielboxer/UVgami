@@ -594,6 +594,106 @@ class ProxyUVs:
         return TransferReport(True, 0, "")
 
 
+class ProxyIslandUVs:
+    """Put a proxy re-unwrap of one island back into the input mesh, scaled to
+    the uv area it used to cover like IslandUVs. The island is rebuilt at full
+    density to take the proxy's cuts."""
+
+    repack_input = False
+
+    def __init__(self, faces, bbox, area):
+        self.faces = faces
+        self.bbox = bbox
+        self.area = area
+
+    def finish(self, input_mesh, output):
+        if not check_exists(input_mesh) or not check_exists(output):
+            return TransferReport(False, 0, "input or output object missing")
+        if output.data.uv_layers.active is None:
+            return TransferReport(False, 0, "output mesh has no uv layer")
+
+        # mesh writes need object mode
+        old_active = bpy.context.view_layer.objects.active
+        was_in_edit = input_mesh.mode == "EDIT"
+        try:
+            if was_in_edit:
+                bpy.context.view_layer.objects.active = input_mesh
+                bpy.ops.object.mode_set(mode="OBJECT")
+
+            data = input_mesh.data
+            used = sorted({v for fi in self.faces for v in data.polygons[fi].vertices})
+            local = {v: i for i, v in enumerate(used)}
+            island_mesh = bpy.data.meshes.new("uvgami_island")
+            island_mesh.from_pydata(
+                [data.vertices[v].co.copy() for v in used],
+                [],
+                [[local[v] for v in data.polygons[fi].vertices] for fi in self.faces],
+            )
+            temp = bpy.data.objects.new("uvgami_island", island_mesh)
+            bpy.context.scene.collection.objects.link(temp)
+            temp.matrix_world = input_mesh.matrix_world.copy()
+            try:
+                transfer_cuts(temp, output)
+                self._apply(data, used, island_mesh)
+            except FlattenError as error:
+                return TransferReport(False, 0, str(error))
+            finally:
+                bpy.data.objects.remove(temp, do_unlink=True)
+                bpy.data.meshes.remove(island_mesh)
+        finally:
+            if was_in_edit:
+                bpy.context.view_layer.objects.active = input_mesh
+                bpy.ops.object.mode_set(mode="EDIT")
+            bpy.context.view_layer.objects.active = old_active
+
+        bpy.data.objects.remove(output, do_unlink=True)
+        input_mesh.hide_set(False)
+        return TransferReport(True, 0, "")
+
+    def _apply(self, data, used, island_mesh):
+        layer = island_mesh.uv_layers.active
+        polygons = [
+            [
+                tuple(layer.uv[poly.loop_start + c].vector)
+                for c in range(poly.loop_total)
+            ]
+            for poly in island_mesh.polygons
+        ]
+        move = uv_area_fit(polygons, self.area, self.bbox)
+
+        input_layer = data.uv_layers.active
+        for fi, pts in zip(self.faces, polygons):
+            poly = data.polygons[fi]
+            for c in range(poly.loop_total):
+                input_layer.uv[poly.loop_start + c].vector = move(pts[c])
+
+        seams = set()
+        for edge in island_mesh.edges:
+            if edge.use_seam:
+                a, b = used[edge.vertices[0]], used[edge.vertices[1]]
+                seams.add((a, b) if a < b else (b, a))
+
+        # only interior edges take the new seams, the island boundary and the
+        # rest of the mesh keep their marks
+        owner_count = {}
+        for fi in self.faces:
+            poly = data.polygons[fi].vertices
+            n = len(poly)
+            for i in range(n):
+                a, b = poly[i], poly[(i + 1) % n]
+                key = (a, b) if a < b else (b, a)
+                owner_count[key] = owner_count.get(key, 0) + 1
+        interior = {key for key, count in owner_count.items() if count == 2}
+
+        for edge in data.edges:
+            a, b = edge.vertices
+            key = (a, b) if a < b else (b, a)
+            if key in interior:
+                edge.use_seam = key in seams
+
+        data.update()
+
+
 class Symmetrise:
     def __init__(self, axes, center, overlap):
         self.x = "X" in axes
