@@ -29,6 +29,8 @@ CHECKPOINT_URL = "https://github.com/DanielBoxer/UVgami/releases/download/checkp
 TORCH_SCATTER_FIND_LINKS = "https://data.pyg.org/whl/torch-2.3.0+cu121.html"
 # partuv is a cuda wheel (nvidia-only), so no macos build exists
 PARTUV_PLATFORMS = ("Windows", "Linux")
+GEOMETRIC_DOWNLOAD_SIZE = "200 MB"
+AI_DOWNLOAD_SIZE = "5 GB"
 # partuv runs in a managed 3.11 venv, decoupled from blender's python version
 VENV_PYTHON = "3.11"
 PARTUV_PY_TAG = "cp311"
@@ -193,12 +195,22 @@ class UVGAMI_OT_install_partuv(PartuvTask, bpy.types.Operator):
     def description(cls, context, properties):
         if properties.tier == "AI":
             return (
-                "Download PartUV with AI segmentation, ~5 GB. Includes geometric."
-                " Needs an NVIDIA GPU"
+                f"Download PartUV with AI segmentation, ~{AI_DOWNLOAD_SIZE}. Includes"
+                " geometric. Needs an NVIDIA GPU"
             )
         return (
             "Download PartUV with geometric segmentation only, a much smaller"
             " download. Needs an NVIDIA GPU"
+        )
+
+    def invoke(self, context, event):
+        ai = self.tier == "AI"
+        return context.window_manager.invoke_confirm(
+            self,
+            event,
+            title="Download PartUV AI" if ai else "Download PartUV",
+            message=AI_DOWNLOAD_SIZE if ai else GEOMETRIC_DOWNLOAD_SIZE,
+            confirm_text="Download",
         )
 
     tier: bpy.props.EnumProperty(

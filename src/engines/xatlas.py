@@ -6,7 +6,7 @@ from .binary_engine import BinaryEngine, EngineRelease, InstallEngineTask
 
 # must match engine/xatlas/VERSION (check-engine-versions.yml fails on drift)
 XATLAS_VERSION = "0.2.1"
-XATLAS = EngineRelease("xatlas", "xatlas", XATLAS_VERSION)
+XATLAS = EngineRelease("xatlas", "xatlas", XATLAS_VERSION, "300 KB")
 
 
 class UVGAMI_OT_install_xatlas(InstallEngineTask, bpy.types.Operator):
