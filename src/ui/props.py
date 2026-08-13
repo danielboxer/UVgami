@@ -77,6 +77,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
             " This only has an effect if you are unwrapping multiple meshes, "
             "or if the mesh is made up of multiple joined meshes"
         ),
+        default=True,
     )
     max_cores: bpy.props.IntProperty(
         name="",
