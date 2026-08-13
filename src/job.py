@@ -7,12 +7,22 @@ import numpy
 
 from .logger import logger
 from .objfile import merge_obj_files
-from .proxy import transfer_cuts
+from .hard_surface import apply_face_uvs
+from .proxy import begin_transfer, transfer_cuts
 from .seams import FlattenError, stack_mirrored, uv_area_fit
 from .similar import mirror_permutations
 from .uv_transfer import plan_transfer
 from .utils.geometry import cut_on_axes
-from .utils.mesh import check_exists, face_uvs, new_bmesh, set_bmesh, triangulate
+from .utils.mesh import (
+    check_exists,
+    face_uvs,
+    face_vertices,
+    loop_totals,
+    new_bmesh,
+    set_bmesh,
+    split_per_face,
+    triangulate,
+)
 
 TransferReport = namedtuple("TransferReport", ["applied", "split_count", "detail"])
 
@@ -34,30 +44,6 @@ def world_positions(obj):
     return flat.reshape(-1, 3) @ matrix[:3, :3].T + matrix[:3, 3]
 
 
-def _loop_totals(mesh):
-    totals = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
-    mesh.polygons.foreach_get("loop_total", totals)
-    return totals.tolist()
-
-
-def _split_per_face(values, totals):
-    """Slice one entry per loop into one list per face. Polygons own a
-    contiguous run of loops, so the totals alone place every face."""
-    faces = []
-    start = 0
-    for total in totals:
-        faces.append(values[start : start + total])
-        start += total
-    return faces
-
-
-def face_vertices(mesh):
-    """Per-face vertex index lists, read in bulk."""
-    corners = numpy.empty(len(mesh.loops), dtype=numpy.int64)
-    mesh.loops.foreach_get("vertex_index", corners)
-    return _split_per_face(corners.tolist(), _loop_totals(mesh))
-
-
 def output_mesh_data(output, output_uv):
     """World positions, polygons and per-face loop uvs of an engine output
     object, in the plain form plan_transfer takes."""
@@ -68,8 +54,8 @@ def output_mesh_data(output, output_uv):
 
     coords = numpy.empty(len(output_data.loops) * 2)
     output_uv.uv.foreach_get("vector", coords)
-    output_uvs = _split_per_face(
-        coords.reshape(-1, 2).tolist(), _loop_totals(output_data)
+    output_uvs = split_per_face(
+        coords.reshape(-1, 2).tolist(), loop_totals(output_data)
     )
 
     return output_positions, output_polygons, output_uvs
@@ -538,40 +524,34 @@ class AreaUVs(IslandUVs):
 
 
 class ProxyUVs:
-    """Cut the original along the unwrapped proxy's seams and unwrap it."""
+    """Cut the original along the unwrapped proxy's seams and unwrap it.
+
+    Two phases so the dense flatten doesn't freeze the ui: start() seams the
+    original and spawns the engine flatten, poll() applies the result on the
+    dispatch timer once the process exits."""
 
     def __init__(self, transfer):
         self.repack_input = transfer
         # the duplicate that stands in for the deleted output, transfer off only
         self.replacement = None
+        self.input_mesh = None
+        self.target = None
+        self.output = None
+        self.run = None
 
-    def finish(self, input_mesh, output):
-        if not check_exists(input_mesh) or not check_exists(output):
-            return TransferReport(False, 0, "input or output object missing")
-        if output.data.uv_layers.active is None:
-            return TransferReport(False, 0, "output mesh has no uv layer")
+    @property
+    def progress(self):
+        return self.run.progress if self.run is not None else 0.0
 
+    @staticmethod
+    def _in_object_mode(func, *args):
+        # mesh writes need object mode
         old_active = bpy.context.view_layer.objects.active
         old_mode = old_active.mode if old_active is not None else "OBJECT"
-        # mesh writes need object mode, the flatten itself runs outside blender
         if old_mode != "OBJECT":
             bpy.ops.object.mode_set(mode="OBJECT")
-
-        target = input_mesh
-        if not self.repack_input:
-            target = input_mesh.copy()
-            target.data = input_mesh.data.copy()
-            bpy.context.scene.collection.objects.link(target)
-            bm = new_bmesh(target)
-            triangulate(bm)
-            set_bmesh(bm, target)
-
         try:
-            transfer_cuts(target, output)
-        except FlattenError as error:
-            if target is not input_mesh:
-                bpy.data.objects.remove(target, do_unlink=True)
-            return TransferReport(False, 0, str(error))
+            return func(*args)
         finally:
             if (
                 old_active is not None
@@ -580,6 +560,50 @@ class ProxyUVs:
             ):
                 bpy.context.view_layer.objects.active = old_active
                 bpy.ops.object.mode_set(mode=old_mode)
+
+    def start(self, input_mesh, output):
+        """Seam the mesh and spawn the flatten. None means it is running and
+        poll() finishes it, a report means it failed before starting."""
+        if not check_exists(input_mesh) or not check_exists(output):
+            return TransferReport(False, 0, "input or output object missing")
+        if output.data.uv_layers.active is None:
+            return TransferReport(False, 0, "output mesh has no uv layer")
+
+        target = input_mesh
+        if not self.repack_input:
+            # data only until the uvs land, linked would sit on the original
+            target = input_mesh.copy()
+            target.data = input_mesh.data.copy()
+            bm = new_bmesh(target)
+            triangulate(bm)
+            set_bmesh(bm, target)
+
+        try:
+            self.run = self._in_object_mode(begin_transfer, target, output)
+        except FlattenError as error:
+            if target is not input_mesh:
+                bpy.data.objects.remove(target, do_unlink=True)
+            return TransferReport(False, 0, str(error))
+        self.input_mesh = input_mesh
+        self.target = target
+        self.output = output
+        return None
+
+    def poll(self):
+        """None while the flatten runs, the final report once it is done."""
+        if self.run.poll() is None:
+            return None
+        try:
+            uvs = self.run.result()
+        except FlattenError as error:
+            return self._fail(str(error))
+        input_mesh, target, output = self.input_mesh, self.target, self.output
+        if not check_exists(target) or not check_exists(output):
+            return self._fail("input or output object missing")
+        if len(uvs) != len(target.data.polygons):
+            # an undo while the flatten ran swapped the mesh out under it
+            return self._fail("mesh changed during the unwrap")
+        self._in_object_mode(apply_face_uvs, target.data, uvs)
 
         bpy.data.objects.remove(output, do_unlink=True)
         if target is input_mesh:
@@ -592,6 +616,20 @@ class ProxyUVs:
             target.name = f"{input_mesh.name}_unwrapped"
             self.replacement = target
         return TransferReport(True, 0, "")
+
+    def _fail(self, detail):
+        if self.target is not self.input_mesh and check_exists(self.target):
+            bpy.data.objects.remove(self.target, do_unlink=True)
+        return TransferReport(False, 0, detail)
+
+    def cancel(self):
+        """Kill a still-running flatten, for a stop or a file load. Its two
+        objects only make sense with the uvs applied, so they go too."""
+        if self.run is not None:
+            self.run.stop()
+        for obj in (self.target, self.output):
+            if obj is not None and obj is not self.input_mesh and check_exists(obj):
+                bpy.data.objects.remove(obj, do_unlink=True)
 
 
 class ProxyIslandUVs:

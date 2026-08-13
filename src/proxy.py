@@ -15,6 +15,7 @@ import collections
 
 import bmesh
 import bpy
+import numpy
 from mathutils import Matrix, Vector
 from mathutils.kdtree import KDTree
 
@@ -33,7 +34,7 @@ from .seams import (
     snap_paths,
     uv_topology,
 )
-from .utils.mesh import new_bmesh, set_bmesh
+from .utils.mesh import face_vertices, new_bmesh, set_bmesh, vertex_positions
 
 # candidates to pick a facing match from when snapping a cut vertex
 NEAREST_VERTS = 8
@@ -103,21 +104,30 @@ def vertex_map(input_mesh, output, matrix=None, out_matrix=None):
         matrix = input_mesh.matrix_world
     if out_matrix is None:
         out_matrix = output.matrix_world
-    rotation = matrix.to_3x3().inverted_safe().transposed()
+    flat = numpy.empty(len(data.vertices) * 3)
+    data.vertices.foreach_get("co", flat)
+    m = numpy.array(matrix)
+    positions = flat.reshape(-1, 3) @ m[:3, :3].T + m[:3, 3]
     kd = KDTree(len(data.vertices))
-    for i, vertex in enumerate(data.vertices):
-        kd.insert(matrix @ vertex.co, i)
+    for i, position in enumerate(positions):
+        kd.insert(position, i)
     kd.balance()
-    normals = [(rotation @ vertex.normal).normalized() for vertex in data.vertices]
+
+    rotation = numpy.array(matrix.to_3x3().inverted_safe().transposed())
+    data.vertices.foreach_get("normal", flat)
+    normals = flat.reshape(-1, 3) @ rotation.T
+    lengths = numpy.linalg.norm(normals, axis=1)
+    lengths[lengths == 0] = 1.0
+    normals /= lengths[:, None]
 
     out_rotation = out_matrix.to_3x3().inverted_safe().transposed()
     mapped = []
     for vertex in output.data.vertices:
-        facing = out_rotation @ vertex.normal
+        facing = numpy.array(out_rotation @ vertex.normal)
         found = kd.find_n(out_matrix @ vertex.co, NEAREST_VERTS)
         best = found[0][1]
         for _, index, _ in found:
-            if normals[index].dot(facing) > 0:
+            if normals[index] @ facing > 0:
                 best = index
                 break
         mapped.append(best)
@@ -170,17 +180,20 @@ def repair_proxy(output, weights):
 def snap_cuts(input_mesh, mapped, cuts):
     """Another mesh's cut network redrawn along input_mesh's own edges."""
     data = input_mesh.data
-    verts = [tuple(vertex.co) for vertex in data.vertices]
+    verts = vertex_positions(data)
+    pairs = numpy.empty(len(data.edges) * 2, dtype=numpy.int64)
+    data.edges.foreach_get("vertices", pairs)
     adjacent = collections.defaultdict(set)
-    for edge in data.edges:
-        a, b = edge.vertices
+    for a, b in pairs.reshape(-1, 2).tolist():
         adjacent[a].add(b)
         adjacent[b].add(a)
     return snap_paths(verts, adjacent, mapped, cuts)
 
 
-def transfer_cuts(input_mesh, output):
-    """Seam the original along the proxy's cuts and unwrap it there."""
+def begin_transfer(input_mesh, output):
+    """Seam the original along the proxy's cuts and start its flatten.
+
+    Returns the FlattenRun, the caller applies its uvs once it exits."""
     mapped = vertex_map(input_mesh, output)
     cuts = repair_proxy(output, proxy_weights(input_mesh, mapped))
 
@@ -191,8 +204,12 @@ def transfer_cuts(input_mesh, output):
         data.uv_layers.new()
     # the proxy already settled which cuts the shape needs, so the dense mesh
     # only has to flatten and pack once
-    verts = [tuple(vertex.co) for vertex in data.vertices]
-    faces = [tuple(poly.vertices) for poly in data.polygons]
+    faces = face_vertices(data)
     check_manifold(faces)
-    uvs = flatten_engine().flatten(verts, faces, seams)
-    apply_face_uvs(data, uvs)
+    return flatten_engine().start(vertex_positions(data), faces, seams)
+
+
+def transfer_cuts(input_mesh, output):
+    """Seam the original along the proxy's cuts and unwrap it there."""
+    uvs = begin_transfer(input_mesh, output).wait()
+    apply_face_uvs(input_mesh.data, uvs)

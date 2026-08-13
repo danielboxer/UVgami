@@ -5,9 +5,11 @@ is plain data: verts, polygon faces, per-face corner uvs. hard_surface.py
 adapts a Blender mesh onto these calls, so this module stays unit-testable
 and can run off the main thread."""
 
+import collections
 import shutil
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 from .mesh import face_edges
@@ -29,6 +31,67 @@ def check_manifold(faces):
         raise FlattenError("Non Manifold Edges")
 
 
+class FlattenRun:
+    """One flatten subprocess. poll() is None while it runs, result() parses
+    the uvs and removes the workdir, progress is the engine's done fraction."""
+
+    def __init__(self, process, workdir, out_path, face_count):
+        self.process = process
+        self.workdir = workdir
+        self.out_path = out_path
+        self.face_count = face_count
+        self.progress = 0.0
+        self.stderr_tail = collections.deque(maxlen=10)
+        self._stdout_thread = threading.Thread(target=self._read_stdout, daemon=True)
+        self._stdout_thread.start()
+        self._stderr_thread = threading.Thread(target=self._read_stderr, daemon=True)
+        self._stderr_thread.start()
+
+    def _read_stdout(self):
+        for line in iter(self.process.stdout.readline, ""):
+            if line.startswith("progress: "):
+                try:
+                    self.progress = float(line.split()[1])
+                except (IndexError, ValueError):
+                    pass
+
+    def _read_stderr(self):
+        for line in iter(self.process.stderr.readline, ""):
+            self.stderr_tail.append(line.rstrip("\r\n"))
+
+    def poll(self):
+        return self.process.poll()
+
+    def wait(self):
+        self.process.wait()
+        return self.result()
+
+    def result(self):
+        """Uvs of a finished run. Raises FlattenError on a failed exit."""
+        code = self.process.wait()
+        self._close()
+        try:
+            if code != 0:
+                detail = " ".join(self.stderr_tail).strip()
+                raise FlattenError(f"flatten engine exited {code}: {detail}")
+            return _read_uvs(self.out_path, self.face_count)
+        finally:
+            shutil.rmtree(self.workdir, ignore_errors=True)
+
+    def stop(self):
+        if self.process.poll() is None:
+            self.process.kill()
+            self.process.wait()
+        self._close()
+        shutil.rmtree(self.workdir, ignore_errors=True)
+
+    def _close(self):
+        for thread in (self._stdout_thread, self._stderr_thread):
+            thread.join(timeout=5)
+        for pipe in (self.process.stdout, self.process.stderr):
+            pipe.close()
+
+
 class FlattenEngine:
     """Client for the engine's flatten mode. Each call gets its own subdir of
     workdir: the preview operator, a builder thread and transfer_cuts can all
@@ -40,17 +103,12 @@ class FlattenEngine:
 
     def flatten(self, verts, faces, seams):
         """Per-face corner uvs for faces cut along seams, packed."""
-        return self._run(verts, faces, seams)
+        return self.start(verts, faces, seams).wait()
 
-    def _run(self, verts, faces, seams):
+    def start(self, verts, faces, seams):
+        """Spawn the flatten and return its FlattenRun without waiting."""
         self.workdir.mkdir(parents=True, exist_ok=True)
         workdir = Path(tempfile.mkdtemp(dir=self.workdir))
-        try:
-            return self._run_in(workdir, verts, faces, seams)
-        finally:
-            shutil.rmtree(workdir, ignore_errors=True)
-
-    def _run_in(self, workdir, verts, faces, seams):
         obj_path = workdir / "flatten.obj"
         seam_path = workdir / "flatten_seams"
         out_dir = workdir / "flatten_out"
@@ -67,16 +125,17 @@ class FlattenEngine:
         args = [self.engine_path, "-i", str(obj_path), "-o", str(out_dir), "-flatten"]
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
-            result = subprocess.run(
-                args, capture_output=True, text=True, creationflags=creationflags
+            process = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=creationflags,
             )
         except OSError as error:
+            shutil.rmtree(workdir, ignore_errors=True)
             raise FlattenError(f"flatten engine failed to start: {error}") from error
-        if result.returncode != 0:
-            raise FlattenError(
-                f"flatten engine exited {result.returncode}: {result.stderr.strip()}"
-            )
-        return _read_uvs(out_dir / "flatten.obj", len(faces))
+        return FlattenRun(process, workdir, out_dir / "flatten.obj", len(faces))
 
 
 def _read_uvs(path, face_count):

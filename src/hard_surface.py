@@ -1,3 +1,5 @@
+import numpy
+
 from .ops.guides import SEAM_RESTRICTIONS_GROUP
 from .seams import (
     CREASE_ANGLE,
@@ -61,9 +63,15 @@ def auto_hard_faces(obj, marked="NONE"):
 
 
 def apply_seams(mesh, seams):
-    for edge in mesh.edges:
-        a, b = edge.vertices
-        edge.use_seam = ((a, b) if a < b else (b, a)) in seams
+    """Mark exactly these edges as seams, given as (low, high) index pairs."""
+    pairs = numpy.empty(len(mesh.edges) * 2, dtype=numpy.int64)
+    mesh.edges.foreach_get("vertices", pairs)
+    pairs = pairs.reshape(-1, 2)
+    keys = (pairs.min(axis=1) << 32) | pairs.max(axis=1)
+    wanted = numpy.fromiter(
+        ((a << 32) | b for a, b in seams), dtype=numpy.int64, count=len(seams)
+    )
+    mesh.edges.foreach_set("use_seam", numpy.isin(keys, wanted))
 
 
 def marked_seams(mesh):

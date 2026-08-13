@@ -142,7 +142,7 @@ def draw_summary(layout):
 def draw_queue(box):
     """The running and queued unwraps, with their stop and cancel buttons."""
     active_unwraps = manager.active
-    if not active_unwraps and not manager.preparing:
+    if not active_unwraps and not manager.preparing and not manager.pending_transfers:
         return
     row = box.box().row()
     row.alignment = "CENTER"
@@ -160,6 +160,11 @@ def draw_queue(box):
     for name in manager.preparing:
         row = box.box().row()
         row.label(text=name, icon="SORTTIME")
+
+    # proxy unwraps whose dense flatten is still running
+    for transfer in manager.pending_transfers:
+        row = box.box().row()
+        row.label(text=f"{transfer.name} (finishing)", icon="SORTTIME")
 
     if len(groups) > 1:
         row = box.row()
