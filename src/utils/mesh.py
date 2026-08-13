@@ -1,12 +1,44 @@
 import bmesh
 import bmesh.utils
 import bpy
+import numpy
 
 
 def new_bmesh(obj):
     bm = bmesh.new()
     bm.from_mesh(obj.data)
     return bm
+
+
+def loop_totals(mesh):
+    totals = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
+    mesh.polygons.foreach_get("loop_total", totals)
+    return totals.tolist()
+
+
+def split_per_face(values, totals):
+    """Slice one entry per loop into one list per face. Polygons own a
+    contiguous run of loops, so the totals alone place every face."""
+    faces = []
+    start = 0
+    for total in totals:
+        faces.append(values[start : start + total])
+        start += total
+    return faces
+
+
+def face_vertices(mesh):
+    """Per-face vertex index lists, read in bulk."""
+    corners = numpy.empty(len(mesh.loops), dtype=numpy.int64)
+    mesh.loops.foreach_get("vertex_index", corners)
+    return split_per_face(corners.tolist(), loop_totals(mesh))
+
+
+def vertex_positions(mesh):
+    """Vertex positions as float lists, read in bulk."""
+    flat = numpy.empty(len(mesh.vertices) * 3)
+    mesh.vertices.foreach_get("co", flat)
+    return flat.reshape(-1, 3).tolist()
 
 
 def face_uvs(mesh):

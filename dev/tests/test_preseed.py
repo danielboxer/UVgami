@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -133,6 +134,19 @@ def test_preseed_cube_with_real_engine(tmp_path):
     # a seamed cube flattens without repair only if the layout held up, and
     # either way every corner has finite uvs and the seams cut it open
     assert seams
+
+
+@pytest.mark.smoke
+@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled engine missing")
+def test_flatten_start_poll_matches_flatten(tmp_path):
+    engine = FlattenEngine(BUNDLED, tmp_path)
+    seams = {(0, 1), (1, 2), (2, 3), (0, 3)}
+    run = engine.start(CUBE_VERTS, CUBE_FACES, seams)
+    while run.poll() is None:
+        time.sleep(0.05)
+    uvs = run.result()
+    assert not run.workdir.exists()
+    assert uvs == engine.flatten(CUBE_VERTS, CUBE_FACES, seams)
 
 
 def test_preseed_mirrors_close_the_seam_set():

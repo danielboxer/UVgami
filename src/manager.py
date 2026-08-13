@@ -1,13 +1,13 @@
 import functools
 import time
 import traceback
-from collections import deque
+from collections import deque, namedtuple
 
 import bpy
 import numpy
 
 from .batch import BatchProcess, last_meaningful_line
-from .job import Join, Result
+from .job import Join, ProxyUVs, Result, TransferReport
 from .logger import logger
 from .ops.grid import add_grid, make_grid_img, make_grid_mat
 from .ops.uv import pack, show_seams
@@ -27,6 +27,8 @@ from .utils.ui import popup, set_status, switch_shading, tag_redraw
 
 # how long a clean run's status bar message stays up
 STATUS_SECONDS = 5
+
+PendingTransfer = namedtuple("PendingTransfer", ["job", "output", "pack_index", "name"])
 # how long to wait for the engine to stop before killing it
 STOP_SECONDS = 180
 
@@ -63,6 +65,9 @@ class UnwrapManager:
         # settled groups and solo unwraps waiting for the dispatch timer to
         # import them
         self._to_import = []
+        # one per proxy flatten still running outside blender, applied by the
+        # dispatch timer when its process exits
+        self.pending_transfers = []
         self.transfer_uv_failed = False
         self.transfer_uv_fail_detail = ""
         self.transfer_uv_split_count = 0
@@ -261,6 +266,7 @@ class UnwrapManager:
                     self.record_result(unwrap, Result.INVALID)
 
             self._drain_imports()
+            self._finish_transfers()
 
             # requeue detached batch members so _fill_slots re-batches them
             for unwrap in requeued:
@@ -274,10 +280,12 @@ class UnwrapManager:
             self._fill_slots()
 
             # an empty queue is not the end, an exporter may still be writing
+            # and a proxy flatten may still be running
             if (
                 not self._running
                 and not self._queue
                 and self.pieces_still_arriving == 0
+                and not self.pending_transfers
             ):
                 self._finish_batch()
                 return None
@@ -295,6 +303,11 @@ class UnwrapManager:
         # unexported pieces sit at (0, 0, 1) until they start reporting
         progress = [numpy.array(unwrap.progress) for unwrap in self.active]
         progress += [numpy.array((1, 0, 0))] * len(self.results)
+        # a running proxy flatten holds the bar below done until it applies
+        progress += [
+            numpy.array((t.job.progress, 0, 1 - t.job.progress))
+            for t in self.pending_transfers
+        ]
         if not progress:
             return
         self.progress = sum(progress) / len(progress)
@@ -314,6 +327,7 @@ class UnwrapManager:
             len(self.results),
             self.is_viewer_active,
             tuple(self.preparing),
+            tuple(t.name for t in self.pending_transfers),
             tuple(
                 (
                     unwrap.path.stem,
@@ -463,49 +477,97 @@ class UnwrapManager:
         # transfer UVs to original input mesh if enabled
         if unwrap.transfer_uvs_job is not None:
             job = unwrap.transfer_uvs_job
-            input_mesh = self.input[job]
-            # locate output in the pack list before finish deletes output
+            # locate output in the pack list before the transfer deletes output
             pack_index = None
             if props.pack_after_unwrap:
                 for i, obj in enumerate(self._pack_output_objects):
                     if obj == output:
                         pack_index = i
                         break
-            pack_replaced = False
-            if pack_index is not None and job.repack_input:
-                self._pack_output_objects[pack_index] = input_mesh
-                pack_replaced = True
-            report = job.finish(input_mesh, output)
-            if report.applied:
-                self.transfer_uv_split_count += report.split_count
-                replacement = getattr(job, "replacement", None)
-                if replacement is None:
-                    self._add_auto_grid(props, input_mesh)
+            if isinstance(job, ProxyUVs):
+                report = job.start(self.input[job], output)
+                if report is None:
+                    # _finish_transfers settles it when the process exits
+                    self.pending_transfers.append(
+                        PendingTransfer(job, output, pack_index, unwrap.input_name)
+                    )
+                    # data only while it waits, linked it would sit in the
+                    # scene beside the original
+                    for collection in output.users_collection:
+                        collection.objects.unlink(output)
                     return
-                # proxy with transfer off: a duplicate of the original takes
-                # the deleted output's place in packing and collecting
-                if pack_index is not None:
-                    self._pack_output_objects[pack_index] = replacement
-                output = replacement
             else:
-                # transfer failed, restore pack list if we changed it
-                if pack_replaced:
-                    self._pack_output_objects[pack_index] = output
-                # no hide job exists when a transfer job holds the slot, so
-                # without this the original sits on top of the kept output
-                if check_exists(input_mesh):
-                    input_mesh.hide_set(True)
-                self.transfer_uv_failed = True
-                self.transfer_uv_fail_detail = report.detail
-                logger.add_data(
-                    "errors",
-                    f"UV transfer failed ({report.detail}), keeping output",
-                )
+                report = job.finish(self.input[job], output)
+            self._settle_transfer(job, output, pack_index, report)
+            return
 
         self._add_auto_grid(props, output)
 
         collection = check_collection("UVgami Unwrapped", bpy.context.scene.collection)
         move_to_collection(output, collection)
+
+    def _settle_transfer(self, job, output, pack_index, report):
+        """Everything after a transfer's report: pack list, hide state, grid,
+        collection. Shared between the in-tick transfers and the proxy
+        flattens that finish later."""
+        props = bpy.context.scene.uvgami
+        input_mesh = self.input[job]
+        if report.applied:
+            self.transfer_uv_split_count += report.split_count
+            if pack_index is not None and job.repack_input:
+                self._pack_output_objects[pack_index] = input_mesh
+            replacement = getattr(job, "replacement", None)
+            if replacement is None:
+                self._add_auto_grid(props, input_mesh)
+                return
+            # proxy with transfer off: a duplicate of the original takes
+            # the deleted output's place in packing and collecting
+            if pack_index is not None:
+                self._pack_output_objects[pack_index] = replacement
+            output = replacement
+        else:
+            # no hide job exists when a transfer job holds the slot, so
+            # without this the original sits on top of the kept output
+            if check_exists(input_mesh):
+                input_mesh.hide_set(True)
+            self.transfer_uv_failed = True
+            self.transfer_uv_fail_detail = report.detail
+            logger.add_data(
+                "errors",
+                f"UV transfer failed ({report.detail}), keeping output",
+            )
+            if not check_exists(output):
+                return
+
+        self._add_auto_grid(props, output)
+
+        collection = check_collection("UVgami Unwrapped", bpy.context.scene.collection)
+        move_to_collection(output, collection)
+
+    def _finish_transfers(self):
+        """Apply proxy flattens whose engine process has exited."""
+        for entry in list(self.pending_transfers):
+            job, output, pack_index, _ = entry
+            try:
+                report = job.poll()
+            except Exception:
+                error_list = traceback.format_exc().split("\n")[:-1]
+                logger.add_data("errors", "Error finishing UV transfer:")
+                for line in error_list:
+                    logger.add_data("errors", line)
+                    print(line)
+                report = TransferReport(False, 0, "see the console")
+            if report is None:
+                continue
+            self.pending_transfers.remove(entry)
+            try:
+                self._settle_transfer(job, output, pack_index, report)
+            except Exception:
+                error_list = traceback.format_exc().split("\n")[:-1]
+                logger.add_data("errors", "Error finishing UV transfer:")
+                for line in error_list:
+                    logger.add_data("errors", line)
+                    print(line)
 
     def _add_auto_grid(self, props, obj):
         """Grid goes on whichever object survives the run, which is the input
@@ -753,6 +815,9 @@ class UnwrapManager:
             unwrap.cleanup()
         for unwrap in list(self._queue):
             unwrap.cleanup()
+        for transfer in self.pending_transfers:
+            transfer.job.cancel()
+        self.pending_transfers.clear()
         self._running.clear()
         self._queue.clear()
         # a file load kills the builder timers that would have cleared these
