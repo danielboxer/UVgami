@@ -4,7 +4,15 @@ Modules in pipeline order: mesh, regions, sweeps, cuts, boundaries,
 islands, pipeline."""
 
 from .boundaries import boundary_edges, flatten_teeth, reroute_boundaries
-from .cuts import TURN_COST, crease_relief, cut_path, disk_cuts, path_cost, snap_paths
+from .cuts import (
+    TURN_COST,
+    connect_loops,
+    crease_relief,
+    cut_path,
+    disk_cuts,
+    path_cost,
+    snap_paths,
+)
 from .islands import (
     crosses,
     island_ruined,
@@ -69,6 +77,7 @@ __all__ = [
     "build",
     "check_manifold",
     "close_rings",
+    "connect_loops",
     "crease_relief",
     "cross",
     "crosses",
