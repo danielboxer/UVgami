@@ -2344,7 +2344,8 @@ void TriMesh::compute2DInwardNormal(int vI, Eigen::RowVector2d &normal) const {
 // concave gets the deeper discount, a groove hides a seam best
 static const double CONCAVE_RELIEF = 0.5;
 static const double CONVEX_RELIEF = 0.3;
-static const double RELIEF_LOW_ANGLE = 10.0;
+// below this a curved surface reads as flat, so a sculpt is left alone
+static const double RELIEF_LOW_ANGLE = 20.0;
 static const double RELIEF_FULL_ANGLE = 45.0;
 
 double TriMesh::creaseReliefTris(int triA, int triB, int baseVI) const {
