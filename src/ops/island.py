@@ -6,6 +6,7 @@ from ..job import AreaUVs, IslandUVs
 from ..logger import logger
 from ..manager import manager
 from ..seams import (
+    FLIP_NOISE,
     face_edges,
     flatten_distortion,
     pair,
@@ -31,10 +32,6 @@ REPAIR_ITERATIONS = 50
 # a rectified island reverts when its solved area fell under this fraction of
 # the original, which is how a refused solve comes back
 RECTIFY_COLLAPSE = 0.5
-# or when its flipped area passes this fraction of the original. boundary
-# triangles pinned collinear read as flipped at noise scale, so zero is too
-# strict
-RECTIFY_OVERLAP = 1e-3
 # or when its scale-free Dirichlet rose more than this over the engine's map:
 # straightening costs a little stretch, a pinned solve that collapsed the
 # interior costs orders of magnitude more while keeping area and few flips
@@ -211,6 +208,18 @@ def finish_preseed(obj, ranges=None):
         layer.data[loop_index].uv = (u, v)
 
 
+def _fan_triangle_has_area(coords, face, i):
+    x0, y0, z0 = coords[face[0]]
+    ax, ay, az = coords[face[i]]
+    bx, by, bz = coords[face[i + 1]]
+    ux, uy, uz = ax - x0, ay - y0, az - z0
+    vx, vy, vz = bx - x0, by - y0, bz - z0
+    cx = uy * vz - uz * vy
+    cy = uz * vx - ux * vz
+    cz = ux * vy - uy * vx
+    return cx * cx + cy * cy + cz * cz > 0.0
+
+
 def rectify_islands(obj):
     """Straighten near-rectangular islands. A strip whose corners the
     boundary turning found gets every uv placed directly by its spine
@@ -272,23 +281,27 @@ def rectify_islands(obj):
         total = sum(signed_area(uvs[fi]) for fi in group)
         orientation = 1 if total >= 0 else -1
         area_before = abs(total)
+        # the distortion measure skips faces at or under this floor, so a
+        # crushed sliver passes every other gate
+        floor = FLIP_NOISE * area_before
         area_after = 0.0
-        overlap = 0.0
+        crushed = False
         solved = {}
         for fi in group:
             pts = [tuple(loop[uvl].uv) for loop in bm.faces[fi].loops]
             solved[fi] = pts
+            face = faces[fi]
             for i in range(1, len(pts) - 1):
                 a = signed_area([pts[0], pts[i], pts[i + 1]]) * orientation
                 area_after += a
-                if a < 0:
-                    overlap -= a
+                if a <= floor and _fan_triangle_has_area(coords, face, i):
+                    crushed = True
         after = flatten_distortion(coords, faces, solved, group)
         bad = (
-            not RECTIFY_COLLAPSE * area_before
+            crushed
+            or not RECTIFY_COLLAPSE * area_before
             <= area_after
             <= area_before / RECTIFY_COLLAPSE
-            or overlap > RECTIFY_OVERLAP * area_before
             or after > before + RECTIFY_DISTORTION
         )
         for fi in group:
