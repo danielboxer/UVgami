@@ -65,8 +65,8 @@ class UnwrapManager:
         # settled groups and solo unwraps waiting for the dispatch timer to
         # import them
         self._to_import = []
-        # one per proxy flatten still running outside blender, applied by the
-        # dispatch timer when its process exits
+        # one per proxy finish still running in its worker thread, applied by
+        # the dispatch timer when it is done
         self.pending_transfers = []
         self.transfer_uv_failed = False
         self.transfer_uv_fail_detail = ""
@@ -280,7 +280,7 @@ class UnwrapManager:
             self._fill_slots()
 
             # an empty queue is not the end, an exporter may still be writing
-            # and a proxy flatten may still be running
+            # and a proxy finish may still be running
             if (
                 not self._running
                 and not self._queue
@@ -303,7 +303,7 @@ class UnwrapManager:
         # unexported pieces sit at (0, 0, 1) until they start reporting
         progress = [numpy.array(unwrap.progress) for unwrap in self.active]
         progress += [numpy.array((1, 0, 0))] * len(self.results)
-        # a running proxy flatten holds the bar below done until it applies
+        # a running proxy finish holds the bar below done until it applies
         progress += [
             numpy.array((t.job.progress, 0, 1 - t.job.progress))
             for t in self.pending_transfers
@@ -509,7 +509,7 @@ class UnwrapManager:
     def _settle_transfer(self, job, output, pack_index, report):
         """Everything after a transfer's report: pack list, hide state, grid,
         collection. Shared between the in-tick transfers and the proxy
-        flattens that finish later."""
+        finishes that land later."""
         props = bpy.context.scene.uvgami
         input_mesh = self.input[job]
         if report.applied:
@@ -545,7 +545,7 @@ class UnwrapManager:
         move_to_collection(output, collection)
 
     def _finish_transfers(self):
-        """Apply proxy flattens whose engine process has exited."""
+        """Apply proxy finishes whose worker thread is done."""
         for entry in list(self.pending_transfers):
             job, output, pack_index, _ = entry
             try:

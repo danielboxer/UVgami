@@ -1,3 +1,4 @@
+import threading
 from collections import namedtuple
 from enum import Enum
 
@@ -7,8 +8,8 @@ import numpy
 
 from .logger import logger
 from .objfile import merge_obj_files
-from .hard_surface import apply_face_uvs
-from .proxy import begin_transfer, transfer_cuts
+from .hard_surface import apply_face_uvs, apply_seams, flatten_engine
+from .proxy import finish_transfer, transfer_cuts, transfer_inputs
 from .seams import FlattenError, stack_mirrored, uv_area_fit
 from .similar import mirror_permutations
 from .uv_transfer import plan_transfer
@@ -526,9 +527,9 @@ class AreaUVs(IslandUVs):
 class ProxyUVs:
     """Cut the original along the unwrapped proxy's seams and unwrap it.
 
-    Two phases so the dense flatten doesn't freeze the ui: start() seams the
-    original and spawns the engine flatten, poll() applies the result on the
-    dispatch timer once the process exits."""
+    The finish runs in a worker thread on extracted arrays, and poll() applies
+    seams and uvs in one step once it is done. The original is untouched until
+    then, so nothing is left half done while it runs."""
 
     def __init__(self, transfer):
         self.repack_input = transfer
@@ -537,11 +538,11 @@ class ProxyUVs:
         self.input_mesh = None
         self.target = None
         self.output = None
-        self.run = None
-
-    @property
-    def progress(self):
-        return self.run.progress if self.run is not None else 0.0
+        self.thread = None
+        # the thread's result or error
+        self.box = {}
+        self.stopped = False
+        self.progress = 0.0
 
     @staticmethod
     def _in_object_mode(func, *args):
@@ -562,12 +563,16 @@ class ProxyUVs:
                 bpy.ops.object.mode_set(mode=old_mode)
 
     def start(self, input_mesh, output):
-        """Seam the mesh and spawn the flatten. None means it is running and
-        poll() finishes it, a report means it failed before starting."""
+        """Extract the meshes and start the finish thread. None means poll()
+        finishes it, a report means it failed before starting."""
         if not check_exists(input_mesh) or not check_exists(output):
             return TransferReport(False, 0, "input or output object missing")
         if output.data.uv_layers.active is None:
             return TransferReport(False, 0, "output mesh has no uv layer")
+        try:
+            engine = flatten_engine()
+        except FlattenError as error:
+            return TransferReport(False, 0, str(error))
 
         target = input_mesh
         if not self.repack_input:
@@ -578,32 +583,48 @@ class ProxyUVs:
             triangulate(bm)
             set_bmesh(bm, target)
 
-        try:
-            self.run = self._in_object_mode(begin_transfer, target, output)
-        except FlattenError as error:
-            if target is not input_mesh:
-                bpy.data.objects.remove(target, do_unlink=True)
-            return TransferReport(False, 0, str(error))
+        dense, proxy, weights = self._in_object_mode(transfer_inputs, target, output)
+
+        def run():
+            try:
+                self.box["result"] = finish_transfer(
+                    dense,
+                    proxy,
+                    weights,
+                    engine,
+                    progress=self._report,
+                    cancelled=lambda: self.stopped,
+                )
+            except BaseException as error:  # rethrown on the dispatch timer
+                self.box["error"] = error
+
+        self.thread = threading.Thread(target=run, daemon=True)
+        self.thread.start()
         self.input_mesh = input_mesh
         self.target = target
         self.output = output
         return None
 
+    def _report(self, fraction):
+        self.progress = fraction
+
     def poll(self):
-        """None while the flatten runs, the final report once it is done."""
-        if self.run.poll() is None:
+        """None while the finish runs, the final report once it is done."""
+        if self.thread.is_alive():
             return None
-        try:
-            uvs = self.run.result()
-        except FlattenError as error:
+        error = self.box.get("error")
+        if isinstance(error, FlattenError):
             return self._fail(str(error))
+        if error is not None:
+            raise error
+        seams, uvs = self.box["result"]
         input_mesh, target, output = self.input_mesh, self.target, self.output
         if not check_exists(target) or not check_exists(output):
             return self._fail("input or output object missing")
         if len(uvs) != len(target.data.polygons):
-            # an undo while the flatten ran swapped the mesh out under it
+            # an undo while it ran swapped the mesh out under us
             return self._fail("mesh changed during the unwrap")
-        self._in_object_mode(apply_face_uvs, target.data, uvs)
+        self._in_object_mode(self._apply, target, seams, uvs)
 
         bpy.data.objects.remove(output, do_unlink=True)
         if target is input_mesh:
@@ -617,16 +638,23 @@ class ProxyUVs:
             self.replacement = target
         return TransferReport(True, 0, "")
 
+    @staticmethod
+    def _apply(target, seams, uvs):
+        data = target.data
+        apply_seams(data, seams)
+        if not data.uv_layers:
+            data.uv_layers.new()
+        apply_face_uvs(data, uvs)
+
     def _fail(self, detail):
         if self.target is not self.input_mesh and check_exists(self.target):
             bpy.data.objects.remove(self.target, do_unlink=True)
         return TransferReport(False, 0, detail)
 
     def cancel(self):
-        """Kill a still-running flatten, for a stop or a file load. Its two
+        """Stop a still-running finish, for a stop or a file load. Its two
         objects only make sense with the uvs applied, so they go too."""
-        if self.run is not None:
-            self.run.stop()
+        self.stopped = True
         for obj in (self.target, self.output):
             if obj is not None and obj is not self.input_mesh and check_exists(obj):
                 bpy.data.objects.remove(obj, do_unlink=True)
