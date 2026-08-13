@@ -39,7 +39,7 @@ from .preseed import (
     check_manifold,
     preseed_uvs,
 )
-from .rectify import flatten_distortion, rectify_targets
+from .rectify import FLIP_NOISE, flatten_distortion, rectify_targets
 from .regions import (
     CREASE_ANGLE,
     FLAT_ANGLE,
@@ -59,6 +59,7 @@ from .symmetry import mirror_seams, stack_mirrored
 __all__ = [
     "CREASE_ANGLE",
     "FLAT_ANGLE",
+    "FLIP_NOISE",
     "LOW_ANGLE",
     "TURN_COST",
     "FlattenEngine",
