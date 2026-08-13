@@ -39,19 +39,13 @@ def unwrap_settings(props):
             ("MOD_ARRAY", "Stack Similar", "stack_similar", props.stack_similar),
             ("MOD_MIRROR", "Symmetry", "use_symmetry", props.use_symmetry),
             (
-                "CON_ROTLIKE",
-                "Concurrent",
-                "concurrent",
-                props.concurrent and not engine.batches_queue(props),
-            ),
-            (
                 "TIME",
                 "Timeout",
                 "unwrap_timeout",
                 props.unwrap_timeout != UNWRAP_TIMEOUT_DEFAULT_MINUTES,
             ),
             # ("MOD_TRIANGULATE", "Preserve Mesh", "untriangulate", props.preserve_mesh),
-            ("UV_DATA", "Transfer UVs", "transfer_uvs", props.transfer_uvs),
+            ("UV_DATA", "No Transfer UVs", "transfer_uvs", not props.transfer_uvs),
         )
     )
 
@@ -68,7 +62,6 @@ def fix_settings(props):
                 props.optcuts.quality != "BALANCED",
             ),
             ("MOD_DECIM", "Proxy", "use_proxy", props.use_proxy),
-            ("CON_ROTLIKE", "Concurrent", "concurrent", props.concurrent),
             (
                 "TIME",
                 "Timeout",
