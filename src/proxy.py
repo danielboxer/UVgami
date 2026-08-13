@@ -9,9 +9,11 @@ because the original is really unwrapped.
 
 Chart labels cannot carry a cut. Most of what the engine makes is a slit
 inside one chart, which separates nothing and so has no boundary to label,
-and a single chart output is nothing but slit."""
+and a single chart output is nothing but slit.
 
-import collections
+The pipeline is seams.proxy_transfer, plain data only. This module reads the
+meshes into arrays and applies the results, so the work between can run in a
+worker thread."""
 
 import bmesh
 import bpy
@@ -25,19 +27,14 @@ from .hard_surface import (
     flatten_engine,
     seam_restrictions,
 )
-from .seams import (
-    check_manifold,
-    connect_loops,
-    face_edges,
-    island_groups,
-    pair,
-    snap_paths,
-    uv_topology,
+from .seams import proxy_transfer
+from .utils.mesh import (
+    face_vertices,
+    loop_totals,
+    new_bmesh,
+    set_bmesh,
+    split_per_face,
 )
-from .utils.mesh import face_vertices, new_bmesh, set_bmesh, vertex_positions
-
-# candidates to pick a facing match from when snapping a cut vertex
-NEAREST_VERTS = 8
 
 
 def make_proxy(obj, target_faces):
@@ -61,29 +58,6 @@ def make_proxy(obj, target_faces):
     return True
 
 
-def cut_edges(output):
-    """Proxy edges the uv map is torn across, as vertex index pairs.
-
-    An edge already on the mesh boundary is a cut the original has of its own,
-    so only interior tears count."""
-    data = output.data
-    uv = data.uv_layers.active.data
-    faces = [tuple(poly.vertices) for poly in data.polygons]
-    uvs = [[tuple(uv[i].uv) for i in poly.loop_indices] for poly in data.polygons]
-
-    def corner(f, v):
-        return uvs[f][faces[f].index(v)]
-
-    torn = set()
-    for (u, v), owners in face_edges(faces).items():
-        if len(owners) != 2:
-            continue
-        f, g = owners
-        if corner(f, u) != corner(g, u) or corner(f, v) != corner(g, v):
-            torn.add((u, v))
-    return torn
-
-
 def bounds_frame(obj):
     """The space of the mesh's own bounding box, so two copies of a model
     line up wherever each one is placed and whatever size it is."""
@@ -93,38 +67,70 @@ def bounds_frame(obj):
     return Matrix.Scale(1 / max(high - low), 4) @ Matrix.Translation(-(low + high) / 2)
 
 
-def vertex_map(input_mesh, output, matrix=None, out_matrix=None):
+def _vertex_array(data, attribute):
+    flat = numpy.empty(len(data.vertices) * 3)
+    data.vertices.foreach_get(attribute, flat)
+    return flat.reshape(-1, 3)
+
+
+def _edge_array(data):
+    pairs = numpy.empty(len(data.edges) * 2, dtype=numpy.int64)
+    data.edges.foreach_get("vertices", pairs)
+    return pairs.reshape(-1, 2)
+
+
+def _corner_uvs(data):
+    layer = data.uv_layers.active.data
+    flat = numpy.empty(len(layer) * 2)
+    layer.foreach_get("uv", flat)
+    corners = [tuple(uv) for uv in flat.reshape(-1, 2).tolist()]
+    return split_per_face(corners, loop_totals(data))
+
+
+# candidates to pick a facing match from when snapping a cut vertex
+NEAREST_VERTS = 8
+
+
+def _rotation_array(matrix):
+    return numpy.array(Matrix(matrix.tolist()).to_3x3().inverted_safe().transposed())
+
+
+def nearest_facing_vertices(
+    input_positions,
+    input_normals,
+    input_matrix,
+    output_positions,
+    output_normals,
+    output_matrix,
+):
     """Each output vertex to the nearest input vertex facing the same way,
-    matched in world space unless a frame is given for each mesh.
+    matched in world space.
 
     Thin walls put the far side of the wall nearest, and a cut snapped
     through the wall would seam both sides at once."""
-    data = input_mesh.data
-    if matrix is None:
-        matrix = input_mesh.matrix_world
-    if out_matrix is None:
-        out_matrix = output.matrix_world
-    flat = numpy.empty(len(data.vertices) * 3)
-    data.vertices.foreach_get("co", flat)
-    m = numpy.array(matrix)
-    positions = flat.reshape(-1, 3) @ m[:3, :3].T + m[:3, 3]
-    kd = KDTree(len(data.vertices))
+    matrix = numpy.asarray(input_matrix, dtype=numpy.float64)
+    positions = numpy.asarray(input_positions).reshape(-1, 3)
+    positions = positions @ matrix[:3, :3].T + matrix[:3, 3]
+    kd = KDTree(len(positions))
     for i, position in enumerate(positions):
         kd.insert(position, i)
     kd.balance()
 
-    rotation = numpy.array(matrix.to_3x3().inverted_safe().transposed())
-    data.vertices.foreach_get("normal", flat)
-    normals = flat.reshape(-1, 3) @ rotation.T
+    normals = numpy.asarray(input_normals).reshape(-1, 3) @ _rotation_array(matrix).T
     lengths = numpy.linalg.norm(normals, axis=1)
     lengths[lengths == 0] = 1.0
     normals /= lengths[:, None]
 
-    out_rotation = out_matrix.to_3x3().inverted_safe().transposed()
+    out_matrix = numpy.asarray(output_matrix, dtype=numpy.float64)
+    queries = numpy.asarray(output_positions).reshape(-1, 3)
+    queries = queries @ out_matrix[:3, :3].T + out_matrix[:3, 3]
+    # only the sign of the dot is read, so these stay unnormalized
+    facings = numpy.asarray(output_normals).reshape(-1, 3)
+    facings = facings @ _rotation_array(out_matrix).T
+
     mapped = []
-    for vertex in output.data.vertices:
-        facing = numpy.array(out_rotation @ vertex.normal)
-        found = kd.find_n(out_matrix @ vertex.co, NEAREST_VERTS)
+    for position, facing in zip(queries, facings):
+        found = kd.find_n(position, NEAREST_VERTS)
         best = found[0][1]
         for _, index, _ in found:
             if normals[index] @ facing > 0:
@@ -134,82 +140,80 @@ def vertex_map(input_mesh, output, matrix=None, out_matrix=None):
     return mapped
 
 
-def proxy_weights(input_mesh, mapped):
-    """The painted restrictions on the proxy's own vertices, read off the
-    original through the same map the cuts are snapped back with. The engine
-    got this paint decimated with the proxy, so both rounds of cutting steer
-    by it."""
-    if not bpy.context.scene.uvgami.avoid_seams:
-        return None
-    weights = seam_restrictions(input_mesh)
-    if weights is None:
-        return None
-    moved = {i: weights[v] for i, v in enumerate(mapped) if v in weights}
-    return moved or None
-
-
-def repair_proxy(output, weights):
-    """Open every non-disk island so the final flatten can succeed.
-
-    The engine's cuts are slits that never reach the mesh's own holes, so an
-    island can keep extra boundary loops. The flatten only maps a disk, and
-    the extra loops collapse into one crushed circle."""
-    data = output.data
-    seams = cut_edges(output)
-    verts = [tuple(vertex.co) for vertex in data.vertices]
-    faces = [tuple(poly.vertices) for poly in data.polygons]
-    edges = face_edges(faces)
-    for group in island_groups(faces, seams, edges):
-        loops = uv_topology(group, faces, edges, seams)[1]
-        if len(loops) < 2:
-            continue
-        adjacent = collections.defaultdict(set)
-        for f in group:
-            face = faces[f]
-            n = len(face)
-            for i in range(n):
-                key = pair(face[i], face[(i + 1) % n])
-                if len(edges[key]) == 2 and key not in seams:
-                    adjacent[key[0]].add(key[1])
-                    adjacent[key[1]].add(key[0])
-        seams |= connect_loops(verts, adjacent, loops, weights)
-    apply_seams(data, seams)
-    return seams
+def vertex_map(input_mesh, output, matrix=None, out_matrix=None):
+    """nearest_facing_vertices on two objects, in world space unless a frame
+    is given for each."""
+    if matrix is None:
+        matrix = input_mesh.matrix_world
+    if out_matrix is None:
+        out_matrix = output.matrix_world
+    return nearest_facing_vertices(
+        _vertex_array(input_mesh.data, "co"),
+        _vertex_array(input_mesh.data, "normal"),
+        numpy.array(matrix, dtype=numpy.float64),
+        _vertex_array(output.data, "co"),
+        _vertex_array(output.data, "normal"),
+        numpy.array(out_matrix, dtype=numpy.float64),
+    )
 
 
 def snap_cuts(input_mesh, mapped, cuts):
     """Another mesh's cut network redrawn along input_mesh's own edges."""
     data = input_mesh.data
-    verts = vertex_positions(data)
-    pairs = numpy.empty(len(data.edges) * 2, dtype=numpy.int64)
-    data.edges.foreach_get("vertices", pairs)
-    adjacent = collections.defaultdict(set)
-    for a, b in pairs.reshape(-1, 2).tolist():
-        adjacent[a].add(b)
-        adjacent[b].add(a)
-    return snap_paths(verts, adjacent, mapped, cuts)
+    verts = _vertex_array(data, "co").tolist()
+    return proxy_transfer.snap_cuts(verts, _edge_array(data), mapped, cuts)
 
 
-def begin_transfer(input_mesh, output):
-    """Seam the original along the proxy's cuts and start its flatten.
+def restriction_weights(input_mesh):
+    """The painted seam restrictions when avoid seams is on."""
+    if not bpy.context.scene.uvgami.avoid_seams:
+        return None
+    return seam_restrictions(input_mesh)
 
-    Returns the FlattenRun, the caller applies its uvs once it exits."""
-    mapped = vertex_map(input_mesh, output)
-    cuts = repair_proxy(output, proxy_weights(input_mesh, mapped))
 
+def transfer_inputs(input_mesh, output):
+    """The (dense, proxy, weights) arrays the transfer pipeline reads."""
     data = input_mesh.data
-    seams = snap_cuts(input_mesh, mapped, cuts)
-    apply_seams(data, seams)
-    if not data.uv_layers:
-        data.uv_layers.new()
-    # the proxy already settled which cuts the shape needs, so the dense mesh
-    # only has to flatten and pack once
-    faces = face_vertices(data)
-    check_manifold(faces)
-    return flatten_engine().start(vertex_positions(data), faces, seams)
+    dense = {
+        "positions": _vertex_array(data, "co"),
+        "normals": _vertex_array(data, "normal"),
+        "matrix": numpy.array(input_mesh.matrix_world, dtype=numpy.float64),
+        "edges": _edge_array(data),
+        "faces": face_vertices(data),
+    }
+    out_data = output.data
+    proxy = {
+        "positions": _vertex_array(out_data, "co"),
+        "normals": _vertex_array(out_data, "normal"),
+        "matrix": numpy.array(output.matrix_world, dtype=numpy.float64),
+        "faces": face_vertices(out_data),
+        "corner_uvs": _corner_uvs(out_data),
+    }
+    return dense, proxy, restriction_weights(input_mesh)
+
+
+def finish_transfer(dense, proxy, weights, engine, progress=None, cancelled=None):
+    """Map, repair, snap and flatten extracted arrays. No bpy, so this is the
+    half that runs off the main thread."""
+    mapped = nearest_facing_vertices(
+        dense["positions"],
+        dense["normals"],
+        dense["matrix"],
+        proxy["positions"],
+        proxy["normals"],
+        proxy["matrix"],
+    )
+    return proxy_transfer.finish_proxy(
+        dense, proxy, weights, engine, mapped, progress, cancelled
+    )
 
 
 def transfer_cuts(input_mesh, output):
     """Seam the original along the proxy's cuts and unwrap it there."""
-    uvs = begin_transfer(input_mesh, output).wait()
-    apply_face_uvs(input_mesh.data, uvs)
+    dense, proxy, weights = transfer_inputs(input_mesh, output)
+    seams, uvs = finish_transfer(dense, proxy, weights, flatten_engine())
+    data = input_mesh.data
+    apply_seams(data, seams)
+    if not data.uv_layers:
+        data.uv_layers.new()
+    apply_face_uvs(data, uvs)

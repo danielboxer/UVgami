@@ -154,7 +154,7 @@ def draw_queue(box):
         row = box.box().row()
         row.label(text=name, icon="SORTTIME")
 
-    # proxy unwraps whose dense flatten is still running
+    # proxy unwraps whose finish is still running
     for transfer in manager.pending_transfers:
         row = box.box().row()
         row.label(text=f"{transfer.name} (finishing)", icon="SORTTIME")

@@ -33,6 +33,17 @@ def pair(a, b):
     return (a, b) if a < b else (b, a)
 
 
+def split_per_face(values, totals):
+    """Slice one entry per loop into one list per face. Polygons own a
+    contiguous run of loops, so the totals alone place every face."""
+    faces = []
+    start = 0
+    for total in totals:
+        faces.append(values[start : start + total])
+        start += total
+    return faces
+
+
 def find(parent, x):
     """Union-find root of x with path compression. parent is a list or a dict
     mapping each element to its parent, itself for a root."""
