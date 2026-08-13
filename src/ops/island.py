@@ -2,9 +2,10 @@ import bmesh
 import bpy
 
 from ..engines import get_engine
-from ..job import AreaUVs, IslandUVs
+from ..job import AreaUVs, IslandUVs, ProxyIslandUVs
 from ..logger import logger
 from ..manager import manager
+from ..proxy import make_proxy
 from ..seams import (
     FLIP_NOISE,
     face_edges,
@@ -135,6 +136,8 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
     else:
         bm.free()
 
+    proxied = props.use_proxy and make_proxy(temp, props.proxy_faces)
+
     name = f"{obj.name}_island_{k}"
     path = input_path / f"{engine_file_stem(name)}.obj"
     while path.is_file():
@@ -144,7 +147,12 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
     bpy.data.objects.remove(temp, do_unlink=True)
     bpy.data.meshes.remove(island_mesh)
 
-    queue_fix(obj, IslandUVs(list(group), bbox, area), name, path, vertex_count, props)
+    job = (
+        ProxyIslandUVs(list(group), bbox, area)
+        if proxied
+        else IslandUVs(list(group), bbox, area)
+    )
+    queue_fix(obj, job, name, path, vertex_count, props)
 
 
 def repair_flipped_island(obj, temp):
