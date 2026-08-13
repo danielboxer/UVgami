@@ -21,12 +21,18 @@ from mathutils.kdtree import KDTree
 from .hard_surface import (
     apply_face_uvs,
     apply_seams,
-    build_seam_uvs,
     flatten_engine,
-    marked_seams,
     seam_restrictions,
 )
-from .seams import check_manifold, face_edges, snap_paths
+from .seams import (
+    check_manifold,
+    connect_loops,
+    face_edges,
+    island_groups,
+    pair,
+    snap_paths,
+    uv_topology,
+)
 from .utils.mesh import new_bmesh, set_bmesh
 
 # candidates to pick a facing match from when snapping a cut vertex
@@ -133,13 +139,32 @@ def proxy_weights(input_mesh, mapped):
 
 
 def repair_proxy(output, weights):
-    """Add the cuts an island needs to flatten, on the proxy.
+    """Open every non-disk island so the final flatten can succeed.
 
-    What ruins an island is its shape, which the proxy has too, so the repair
-    belongs here where a round costs a second instead of a minute."""
-    apply_seams(output.data, cut_edges(output))
-    build_seam_uvs(output, marked="ONLY", weights=weights)
-    return marked_seams(output.data)
+    The engine's cuts are slits that never reach the mesh's own holes, so an
+    island can keep extra boundary loops. The flatten only maps a disk, and
+    the extra loops collapse into one crushed circle."""
+    data = output.data
+    seams = cut_edges(output)
+    verts = [tuple(vertex.co) for vertex in data.vertices]
+    faces = [tuple(poly.vertices) for poly in data.polygons]
+    edges = face_edges(faces)
+    for group in island_groups(faces, seams, edges):
+        loops = uv_topology(group, faces, edges, seams)[1]
+        if len(loops) < 2:
+            continue
+        adjacent = collections.defaultdict(set)
+        for f in group:
+            face = faces[f]
+            n = len(face)
+            for i in range(n):
+                key = pair(face[i], face[(i + 1) % n])
+                if len(edges[key]) == 2 and key not in seams:
+                    adjacent[key[0]].add(key[1])
+                    adjacent[key[1]].add(key[0])
+        seams |= connect_loops(verts, adjacent, loops, weights)
+    apply_seams(data, seams)
+    return seams
 
 
 def snap_cuts(input_mesh, mapped, cuts):
