@@ -295,17 +295,12 @@ def _spine_targets(rotated, picks, sides, width, queries):
                 offset = ((q[0] - a[0]) * dy - (q[1] - a[1]) * dx) / math.sqrt(span2)
                 break
         else:
-            # a fraction snapped to the sample lands every point past the
-            # spine's end on one x, which flattens the strip's end cap
-            lo = max(best_k - 1, 0)
-            hi = min(best_k + 1, SPINE_SAMPLES)
-            a, b = spine[lo], spine[hi]
+            a = spine[max(best_k - 1, 0)]
+            b = spine[min(best_k + 1, SPINE_SAMPLES)]
             dx, dy = b[0] - a[0], b[1] - a[1]
-            span2 = dx * dx + dy * dy
-            if span2 > 0:
-                t = ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / span2
-                fraction = (lo + t * (hi - lo)) / SPINE_SAMPLES
-                offset = ((q[0] - a[0]) * dy - (q[1] - a[1]) * dx) / math.sqrt(span2)
+            span = math.hypot(dx, dy)
+            if span > 0:
+                offset = ((q[0] - a[0]) * dy - (q[1] - a[1]) * dx) / span
         x = -width / 2 + fraction * width
         placed.append((x, -offset))
     return placed
