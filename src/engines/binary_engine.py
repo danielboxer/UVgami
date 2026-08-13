@@ -33,10 +33,11 @@ class EngineRelease:
     """An engine binary published as a <name>-v<version> GitHub release. The
     addon ships no binaries, so this download is how the engine arrives."""
 
-    def __init__(self, name, label, version):
+    def __init__(self, name, label, version, download_size):
         self.name = name
         self.label = label
         self.version = version
+        self.download_size = download_size
         self.phase = f"Downloading {label}"
         self.install_op = f"uvgami.install_{name}"
 
@@ -63,10 +64,23 @@ class EngineRelease:
         return any(d.is_dir() and d.name != self.version for d in root.iterdir())
 
     def install(self):
-        asset = f"{self.name}-engine-{self.version}-{get_platform_tag()}.zip"
-        url = f"{RELEASES_URL}/download/{self.name}-v{self.version}/{asset}"
         install_dir = self.install_dir()
         install_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.fetch_binary(install_dir)
+        except Exception:
+            # an empty version dir counts as downloaded
+            shutil.rmtree(install_dir, ignore_errors=True)
+            raise
+
+        # drop engines left behind by older addon versions
+        for old in install_dir.parent.iterdir():
+            if old.is_dir() and old != install_dir:
+                shutil.rmtree(old)
+
+    def fetch_binary(self, install_dir):
+        asset = f"{self.name}-engine-{self.version}-{get_platform_tag()}.zip"
+        url = f"{RELEASES_URL}/download/{self.name}-v{self.version}/{asset}"
         archive_path = install_dir / asset
         task_state["phase"] = self.phase
         download_file(url, archive_path, progress=report_progress)
@@ -88,11 +102,6 @@ class EngineRelease:
                 shutil.copyfileobj(src, dst)
         archive_path.unlink()
         binary.chmod(0o755)
-
-        # drop engines left behind by older addon versions
-        for old in install_dir.parent.iterdir():
-            if old.is_dir() and old != install_dir:
-                shutil.rmtree(old)
 
 
 class UVGAMI_OT_delete_engine(InstallTask, bpy.types.Operator):
@@ -134,6 +143,15 @@ class InstallEngineTask(InstallTask):
         if get_platform_tag() is None:
             return f"{self.release.label} has no build for this platform"
         return None
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(
+            self,
+            event,
+            title=f"Download {self.release.label}",
+            message=self.release.download_size,
+            confirm_text="Download",
+        )
 
     def build_task(self):
         return self.release.install

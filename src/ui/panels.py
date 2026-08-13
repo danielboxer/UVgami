@@ -103,7 +103,10 @@ def draw_missing_engine(layout):
     row.label(text="Engine not installed", icon="INFO")
     split = box.split(factor=0.85)
     split.scale_y = 1.5
+    # skip the confirmation, this is the only way to get an engine
+    split.operator_context = "EXEC_DEFAULT"
     split.operator("uvgami.install_optcuts", text="Download Engine", icon="IMPORT")
+    split.operator_context = "INVOKE_DEFAULT"
     split.operator("uvgami.open_preferences", text="", icon="PREFERENCES")
 
 

@@ -228,12 +228,12 @@ class PartuvEngine(Engine):
             if not installed:
                 row.operator(
                     "uvgami.install_partuv",
-                    text="Download Geometric (200 MB)",
+                    text="Download Geometric",
                     icon="IMPORT",
                 ).tier = "GEOMETRIC"
             if not ai_installed:
                 row.operator(
-                    "uvgami.install_partuv", text="Download AI (5 GB)", icon="IMPORT"
+                    "uvgami.install_partuv", text="Download AI", icon="IMPORT"
                 ).tier = "AI"
         if installed:
             row = layout.row()
