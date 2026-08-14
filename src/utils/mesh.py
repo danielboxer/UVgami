@@ -26,14 +26,44 @@ def face_vertices(mesh):
     return split_per_face(corners.tolist(), loop_totals(mesh))
 
 
+def vertex_positions(mesh):
+    """Vertex positions in the mesh's own space, read in bulk."""
+    flat = numpy.empty(len(mesh.vertices) * 3)
+    mesh.vertices.foreach_get("co", flat)
+    return flat.reshape(-1, 3).tolist()
+
+
+def loop_starts(mesh):
+    """Each face's first loop index, read in bulk."""
+    starts = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
+    mesh.polygons.foreach_get("loop_start", starts)
+    return starts
+
+
+def loop_uvs(mesh):
+    """The active layer's uvs, one loop per row, written back with
+    set_loop_uvs."""
+    flat = numpy.empty(len(mesh.loops) * 2)
+    mesh.uv_layers.active.data.foreach_get("uv", flat)
+    return flat.reshape(-1, 2)
+
+
+def set_loop_uvs(mesh, coords):
+    mesh.uv_layers.active.data.foreach_set("uv", coords.ravel())
+
+
+def corner_uvs(mesh):
+    """Per-face loop uvs from the active layer, in face vertex order, read in
+    bulk."""
+    corners = [tuple(uv) for uv in loop_uvs(mesh).tolist()]
+    return split_per_face(corners, loop_totals(mesh))
+
+
 def face_uvs(mesh):
-    """Per-face loop uvs from the active layer, in face vertex order, rounded
-    so float noise between loops of one vert doesn't read as a seam."""
-    uv = mesh.uv_layers.active.data
-    return [
-        [(round(uv[i].uv[0], 6), round(uv[i].uv[1], 6)) for i in poly.loop_indices]
-        for poly in mesh.polygons
-    ]
+    """corner_uvs rounded, so float noise between loops of one vert doesn't
+    read as a seam. Rounded in python: numpy rounds by scaling and lands a ulp
+    off on some values, which would split an island this kept together."""
+    return [[(round(u, 6), round(v, 6)) for u, v in face] for face in corner_uvs(mesh)]
 
 
 def triangulate(bm):

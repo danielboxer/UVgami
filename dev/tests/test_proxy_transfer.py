@@ -12,7 +12,7 @@ spec = importlib.util.spec_from_file_location(
 )
 sys.modules["seams"] = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sys.modules["seams"])
-from seams import FlattenError, face_edges  # noqa: E402
+from seams import Cancelled, face_edges  # noqa: E402
 from seams.proxy_transfer import (  # noqa: E402
     cut_edges,
     finish_proxy,
@@ -56,27 +56,15 @@ def torn_proxy(spacing=2.0):
     return verts, faces, uvs
 
 
-class StubRun:
-    def __init__(self, uvs):
-        self.uvs = uvs
-        self.progress = 1.0
-
-    def poll(self):
-        return 0
-
-    def result(self):
-        return self.uvs
-
-
 class StubEngine:
     def __init__(self):
         self.verts = None
         self.faces = None
         self.seams = None
 
-    def start(self, verts, faces, seams):
+    def flatten(self, verts, faces, seams, cancelled=None, progress=None):
         self.verts, self.faces, self.seams = verts, faces, set(seams)
-        return StubRun([[(0.25, 0.75)] * len(face) for face in faces])
+        return [[(0.25, 0.75)] * len(face) for face in faces]
 
 
 def test_cut_edges_finds_only_the_torn_interior_edge():
@@ -170,7 +158,7 @@ def test_finish_proxy_cuts_the_dense_mesh_and_returns_its_uvs():
 def test_finish_proxy_stops_on_cancel():
     dense, proxy, mapped = plane_inputs()
     engine = StubEngine()
-    with pytest.raises(FlattenError):
+    with pytest.raises(Cancelled):
         finish_proxy(dense, proxy, None, engine, mapped, cancelled=lambda: True)
     # cancelled before the flatten was asked for anything
     assert engine.faces is None

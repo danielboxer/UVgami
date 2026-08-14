@@ -1,4 +1,3 @@
-import threading
 from collections import namedtuple
 from enum import Enum
 
@@ -8,7 +7,13 @@ import numpy
 
 from .logger import logger
 from .objfile import merge_obj_files
-from .hard_surface import apply_face_uvs, apply_seams, flatten_engine
+from .hard_surface import (
+    apply_face_uvs,
+    apply_interior_seams,
+    apply_seams,
+    flatten_engine,
+    marked_seams,
+)
 from .proxy import finish_transfer, transfer_cuts, transfer_inputs
 from .seams import FlattenError, stack_mirrored, uv_area_fit
 from .similar import mirror_permutations
@@ -16,14 +21,19 @@ from .uv_transfer import plan_transfer
 from .utils.geometry import cut_on_axes
 from .utils.mesh import (
     check_exists,
+    corner_uvs,
     face_uvs,
     face_vertices,
+    loop_starts,
     loop_totals,
+    loop_uvs,
     new_bmesh,
+    set_loop_uvs,
     set_bmesh,
     split_per_face,
     triangulate,
 )
+from .utils.task import BackgroundTask
 
 TransferReport = namedtuple("TransferReport", ["applied", "split_count", "detail"])
 
@@ -267,18 +277,11 @@ class TransferUVs:
         input_data = input_mesh.data
         if not input_data.uv_layers:
             input_data.uv_layers.new(name="UVMap")
-        input_uv = input_data.uv_layers.active
 
-        loop_idx = 0
-        for poly in input_data.polygons:
-            for c in range(poly.loop_total):
-                input_uv.uv[poly.loop_start + c].vector = plan.loop_uvs[loop_idx]
-                loop_idx += 1
+        coords = [plan.loop_uvs[i] for i in range(len(input_data.loops))]
+        set_loop_uvs(input_data, numpy.array(coords))
 
-        for edge in input_data.edges:
-            a, b = edge.vertices[0], edge.vertices[1]
-            edge.use_seam = ((a, b) if a < b else (b, a)) in plan.seam_edges
-
+        apply_seams(input_data, plan.seam_edges)
         input_data.update()
 
     def _apply_with_splits(self, input_mesh, plan):
@@ -416,19 +419,13 @@ class IslandUVs(TransferUVs):
             self._apply_island_splits(input_mesh, plan, split_faces, seams, interior)
             return
 
-        layer = data.uv_layers.active
-        for fi in self.faces:
-            poly = data.polygons[fi]
+        uvs = [None] * len(data.polygons)
+        for i, fi in enumerate(self.faces):
             base = self.loop_base[fi]
-            for c in range(poly.loop_total):
-                layer.uv[poly.loop_start + c].vector = plan.loop_uvs[base + c]
+            uvs[fi] = [plan.loop_uvs[base + c] for c in range(self.loop_counts[i])]
+        apply_face_uvs(data, uvs, self.faces)
 
-        for edge in data.edges:
-            a, b = edge.vertices
-            key = (a, b) if a < b else (b, a)
-            if key in interior:
-                edge.use_seam = key in seams
-
+        apply_interior_seams(data, interior, seams)
         data.update()
 
     def _apply_island_splits(self, input_mesh, plan, split_faces, seams, interior):
@@ -538,10 +535,7 @@ class ProxyUVs:
         self.input_mesh = None
         self.target = None
         self.output = None
-        self.thread = None
-        # the thread's result or error
-        self.box = {}
-        self.stopped = False
+        self.task = None
         self.progress = 0.0
 
     @staticmethod
@@ -585,21 +579,11 @@ class ProxyUVs:
 
         dense, proxy, weights = self._in_object_mode(transfer_inputs, target, output)
 
-        def run():
-            try:
-                self.box["result"] = finish_transfer(
-                    dense,
-                    proxy,
-                    weights,
-                    engine,
-                    progress=self._report,
-                    cancelled=lambda: self.stopped,
-                )
-            except BaseException as error:  # rethrown on the dispatch timer
-                self.box["error"] = error
-
-        self.thread = threading.Thread(target=run, daemon=True)
-        self.thread.start()
+        self.task = BackgroundTask(
+            lambda cancelled: finish_transfer(
+                dense, proxy, weights, engine, self._report, cancelled
+            )
+        )
         self.input_mesh = input_mesh
         self.target = target
         self.output = output
@@ -610,14 +594,12 @@ class ProxyUVs:
 
     def poll(self):
         """None while the finish runs, the final report once it is done."""
-        if self.thread.is_alive():
+        if not self.task.done():
             return None
-        error = self.box.get("error")
-        if isinstance(error, FlattenError):
+        try:
+            seams, uvs = self.task.result()
+        except FlattenError as error:
             return self._fail(str(error))
-        if error is not None:
-            raise error
-        seams, uvs = self.box["result"]
         input_mesh, target, output = self.input_mesh, self.target, self.output
         if not check_exists(target) or not check_exists(output):
             return self._fail("input or output object missing")
@@ -652,9 +634,10 @@ class ProxyUVs:
         return TransferReport(False, 0, detail)
 
     def cancel(self):
-        """Stop a still-running finish, for a stop or a file load. Its two
-        objects only make sense with the uvs applied, so they go too."""
-        self.stopped = True
+        """Stop a still-running finish, for a cancel, a stop or a file load.
+        Its two objects only make sense with the uvs applied, so they go
+        too."""
+        self.task.cancel()
         for obj in (self.target, self.output):
             if obj is not None and obj is not self.input_mesh and check_exists(obj):
                 bpy.data.objects.remove(obj, do_unlink=True)
@@ -717,27 +700,18 @@ class ProxyIslandUVs:
         return TransferReport(True, 0, "")
 
     def _apply(self, data, used, island_mesh):
-        layer = island_mesh.uv_layers.active
-        polygons = [
-            [
-                tuple(layer.uv[poly.loop_start + c].vector)
-                for c in range(poly.loop_total)
-            ]
-            for poly in island_mesh.polygons
-        ]
+        polygons = corner_uvs(island_mesh)
         move = uv_area_fit(polygons, self.area, self.bbox)
 
-        input_layer = data.uv_layers.active
+        uvs = [None] * len(data.polygons)
         for fi, pts in zip(self.faces, polygons):
-            poly = data.polygons[fi]
-            for c in range(poly.loop_total):
-                input_layer.uv[poly.loop_start + c].vector = move(pts[c])
+            uvs[fi] = [move(uv) for uv in pts]
+        apply_face_uvs(data, uvs, self.faces)
 
         seams = set()
-        for edge in island_mesh.edges:
-            if edge.use_seam:
-                a, b = used[edge.vertices[0]], used[edge.vertices[1]]
-                seams.add((a, b) if a < b else (b, a))
+        for a, b in marked_seams(island_mesh):
+            a, b = used[a], used[b]
+            seams.add((a, b) if a < b else (b, a))
 
         # only interior edges take the new seams, the island boundary and the
         # rest of the mesh keep their marks
@@ -751,12 +725,7 @@ class ProxyIslandUVs:
                 owner_count[key] = owner_count.get(key, 0) + 1
         interior = {key for key, count in owner_count.items() if count == 2}
 
-        for edge in data.edges:
-            a, b = edge.vertices
-            key = (a, b) if a < b else (b, a)
-            if key in interior:
-                edge.use_seam = key in seams
-
+        apply_interior_seams(data, interior, seams)
         data.update()
 
 
@@ -787,13 +756,15 @@ class Symmetrise:
         mirrors = mirror_permutations(mesh, center, self.axis_names())
         if mirrors is None:
             return
-        faces = [tuple(p.vertices) for p in mesh.polygons]
+        faces = face_vertices(mesh)
         moves = stack_mirrored(faces, face_uvs(mesh), mirrors)
-        layer = mesh.uv_layers.active.data
+        if not moves:
+            return
+        starts = loop_starts(mesh)
+        coords = loop_uvs(mesh)
         for target, corner, source, source_corner in moves:
-            layer[mesh.polygons[target].loop_indices[corner]].uv = layer[
-                mesh.polygons[source].loop_indices[source_corner]
-            ].uv
+            coords[starts[target] + corner] = coords[starts[source] + source_corner]
+        set_loop_uvs(mesh, coords)
 
     def finish(self, output):
         mirror = output.modifiers.new("Mirror", "MIRROR")

@@ -150,19 +150,24 @@ def draw_queue(box):
     _draw_unwrap_groups(box, groups, active_groups)
 
     # objects still preseeding, their pieces don't exist yet
-    for name in manager.preparing:
-        row = box.box().row()
-        row.label(text=name, icon="SORTTIME")
+    for entry in manager.preparing:
+        _draw_background_row(box, entry.name, entry.name)
 
     # proxy unwraps whose finish is still running
     for transfer in manager.pending_transfers:
-        row = box.box().row()
-        row.label(text=f"{transfer.name} (finishing)", icon="SORTTIME")
+        _draw_background_row(box, f"{transfer.name} (finishing)", transfer.name)
 
     if len(groups) > 1:
         row = box.row()
         row.operator("uvgami.cancel_all", icon="TRASH")
     box.separator()
+
+
+def _draw_background_row(box, label, name):
+    """A preseed or proxy finish, with the cancel that drops it."""
+    row = box.box().row()
+    row.label(text=label, icon="SORTTIME")
+    row.operator("uvgami.cancel_background", text="", icon="X").name = name
 
 
 def _build_unwrap_groups(active_unwraps):

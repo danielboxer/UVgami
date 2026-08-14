@@ -87,6 +87,11 @@ def reroute_boundaries(verts, faces, areas, edges, label, relief, forced=None):
     """
     label = dict(label)
 
+    # so a reroute reads its two regions instead of every face in the mesh
+    region_faces = collections.defaultdict(set)
+    for f, r in label.items():
+        region_faces[r].add(f)
+
     vert_faces = collections.defaultdict(list)
     for fi, face in enumerate(faces):
         for v in face:
@@ -252,7 +257,7 @@ def reroute_boundaries(verts, faces, areas, edges, label, relief, forced=None):
 
         # split the union along the new path: other seams still divide, the
         # old run no longer does
-        union = {f for f in label if label[f] in p}
+        union = region_faces[ra] | region_faces[rb]
         parent = {f: f for f in union}
 
         for f in union:
@@ -294,6 +299,8 @@ def reroute_boundaries(verts, faces, areas, edges, label, relief, forced=None):
             label[f] = ra
         for f in two:
             label[f] = rb
+        region_faces[ra] = set(one)
+        region_faces[rb] = set(two)
         blocked.update(path)
 
     for p, keys in pair_keys.items():

@@ -20,7 +20,8 @@ def cross(u, v):
 
 
 def norm(v):
-    return math.sqrt(sum(x * x for x in v))
+    x, y, z = v
+    return math.sqrt(x * x + y * y + z * z)
 
 
 def diagonal(verts):
@@ -69,11 +70,16 @@ def face_edges(faces):
 
 def turn_angle(weighted, owners):
     """Degrees the surface turns across an edge, from its two face normals."""
-    na, nb = weighted[owners[0]], weighted[owners[1]]
-    scale = norm(na) * norm(nb)
+    ax, ay, az = weighted[owners[0]]
+    bx, by, bz = weighted[owners[1]]
+    # two roots, not one over the product: folding them shifts the last ulp
+    # and flips the odd seam
+    scale = math.sqrt(ax * ax + ay * ay + az * az) * math.sqrt(
+        bx * bx + by * by + bz * bz
+    )
     if not scale:
         return 0.0
-    dot = sum(x * y for x, y in zip(na, nb)) / scale
+    dot = (ax * bx + ay * by + az * bz) / scale
     return math.degrees(math.acos(max(-1.0, min(1.0, dot))))
 
 

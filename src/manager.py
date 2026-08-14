@@ -29,6 +29,8 @@ from .utils.ui import popup, set_status, switch_shading, tag_redraw
 STATUS_SECONDS = 5
 
 PendingTransfer = namedtuple("PendingTransfer", ["job", "output", "pack_index", "name"])
+# an object being preseeded, before its pieces exist
+Preparing = namedtuple("Preparing", ["name", "cancel"])
 # how long to wait for the engine to stop before killing it
 STOP_SECONDS = 180
 
@@ -326,7 +328,7 @@ class UnwrapManager:
         return (
             len(self.results),
             self.is_viewer_active,
-            tuple(self.preparing),
+            tuple(p.name for p in self.preparing),
             tuple(t.name for t in self.pending_transfers),
             tuple(
                 (
@@ -796,10 +798,10 @@ class UnwrapManager:
         for path in get_io_dir_paths():
             clear_io_dir(path)
 
-    def drop_preparing(self, name):
+    def drop_preparing(self, entry):
         """Tolerant: stop_all clears the list before the builder gets here."""
-        if name in self.preparing:
-            self.preparing.remove(name)
+        if entry in self.preparing:
+            self.preparing.remove(entry)
 
     def finished_adding(self):
         """Clamped: stop_all zeroes the count, so a timer that outlives it

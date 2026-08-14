@@ -18,7 +18,17 @@ from ..seams import (
 )
 from ..unwrap import Unwrap
 from ..utils.io import export_obj
-from ..utils.mesh import face_uvs, new_bmesh, set_bmesh, triangulate
+from ..utils.mesh import (
+    face_uvs,
+    face_vertices,
+    loop_starts,
+    loop_uvs,
+    new_bmesh,
+    set_bmesh,
+    set_loop_uvs,
+    triangulate,
+    vertex_positions,
+)
 from ..utils.paths import (
     clear_io_dir,
     engine_file_stem,
@@ -99,7 +109,7 @@ def target_islands(obj):
     if not selected:
         return None, "Select the faces of the islands to fix"
 
-    faces = [tuple(p.vertices) for p in mesh.polygons]
+    faces = face_vertices(mesh)
     uvs = face_uvs(mesh)
     targets = []
     for group in uv_island_groups(faces, uvs, face_edges(faces)):
@@ -207,13 +217,19 @@ def finish_preseed(obj, ranges=None):
     into plain lists, run the split_moves scan, write the moved uvs back.
     The scan itself is documented on split_moves."""
     mesh = obj.data
-    verts = [tuple(v.co) for v in mesh.vertices]
-    faces = [tuple(p.vertices) for p in mesh.polygons]
-    starts = [p.loop_start for p in mesh.polygons]
-    moves = split_moves(verts, faces, face_uvs(mesh), starts, ranges)
-    layer = mesh.uv_layers.active
+    moves = split_moves(
+        vertex_positions(mesh),
+        face_vertices(mesh),
+        face_uvs(mesh),
+        loop_starts(mesh).tolist(),
+        ranges,
+    )
+    if not moves:
+        return
+    coords = loop_uvs(mesh)
     for loop_index, u, v in moves:
-        layer.data[loop_index].uv = (u, v)
+        coords[loop_index] = (u, v)
+    set_loop_uvs(mesh, coords)
 
 
 def _fan_triangle_has_area(coords, face, i):
@@ -241,13 +257,13 @@ def rectify_islands(obj):
     mesh = obj.data
     if mesh.uv_layers.active is None:
         return
-    faces = [tuple(p.vertices) for p in mesh.polygons]
+    faces = face_vertices(mesh)
     uvs = face_uvs(mesh)
     groups = uv_island_groups(faces, uvs, face_edges(faces))
     plans = rectify_targets(uvs, groups)
     if not plans:
         return
-    coords = [tuple(v.co) for v in mesh.vertices]
+    coords = vertex_positions(mesh)
     before_distortion = [
         flatten_distortion(coords, faces, uvs, group) for group, _, _ in plans
     ]
@@ -420,7 +436,7 @@ def target_areas(obj, rings):
     if not selected:
         return None, 0, 0, "Select the faces of the area to fix"
 
-    faces = [tuple(p.vertices) for p in mesh.polygons]
+    faces = face_vertices(mesh)
     uvs = face_uvs(mesh)
     edges = face_edges(faces)
     targets = []

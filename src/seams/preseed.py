@@ -10,8 +10,10 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 
+from .cancel import Cancelled, check_cancelled
 from .mesh import face_edges
 from .pipeline import seam_edges
 from .regions import CREASE_ANGLE
@@ -20,6 +22,10 @@ from .symmetry import mirror_seams
 
 class FlattenError(RuntimeError):
     pass
+
+
+# how often a cancellable flatten checks on the engine
+POLL_INTERVAL = 0.05
 
 
 def check_manifold(faces):
@@ -101,9 +107,22 @@ class FlattenEngine:
         self.engine_path = str(engine_path)
         self.workdir = Path(workdir)
 
-    def flatten(self, verts, faces, seams):
-        """Per-face corner uvs for faces cut along seams, packed."""
-        return self.start(verts, faces, seams).wait()
+    def flatten(self, verts, faces, seams, cancelled=None, progress=None):
+        """Per-face corner uvs for faces cut along seams, packed.
+
+        With cancelled or progress the engine is polled instead of waited on,
+        so a cancel kills the subprocess instead of sitting out the solve."""
+        run = self.start(verts, faces, seams)
+        if cancelled is None and progress is None:
+            return run.wait()
+        while run.poll() is None:
+            if cancelled is not None and cancelled():
+                run.stop()
+                raise Cancelled
+            if progress is not None:
+                progress(run.progress)
+            time.sleep(POLL_INTERVAL)
+        return run.result()
 
     def start(self, verts, faces, seams):
         """Spawn the flatten and return its FlattenRun without waiting."""
@@ -191,6 +210,7 @@ def preseed_uvs(
     only=None,
     marked_seams=frozenset(),
     mirrors=None,
+    cancelled=None,
 ):
     """Seam the strip-merged feature boundaries and flatten.
 
@@ -214,7 +234,9 @@ def preseed_uvs(
     else:
         forced = set(marked_seams) if marked == "ADD" else None
         detect = faces if only is None else [faces[i] for i in subset]
-        seams = seam_edges(verts, detect, angle, weights=weights, forced=forced)
+        seams = seam_edges(
+            verts, detect, angle, weights=weights, forced=forced, cancelled=cancelled
+        )
     if mirrors:
         allowed = edges if only is None else face_edges([faces[i] for i in subset])
         seams = mirror_seams(seams, mirrors, allowed)
@@ -223,8 +245,10 @@ def preseed_uvs(
     ):
         return None
 
+    check_cancelled(cancelled)
     all_uvs = [None] * len(faces)
     sub_verts, sub_faces, sub_seams = submesh(verts, faces, subset, seams)
-    for f, face_uv in zip(subset, engine.flatten(sub_verts, sub_faces, sub_seams)):
+    flattened = engine.flatten(sub_verts, sub_faces, sub_seams, cancelled)
+    for f, face_uv in zip(subset, flattened):
         all_uvs[f] = face_uv
     return seams, all_uvs

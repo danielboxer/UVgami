@@ -623,16 +623,24 @@ def point_in_polygon(point, segments):
     return hits % 2 == 1
 
 
+def _boxes_meet(a, b):
+    return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
+
+
+def _span(boxes):
+    """The one box covering all of them."""
+    return (
+        min(b[0] for b in boxes),
+        min(b[1] for b in boxes),
+        max(b[2] for b in boxes),
+        max(b[3] for b in boxes),
+    )
+
+
 def panels_overlap(placed_a, placed_b):
-    _, segs_a, box_a, inner_a = placed_a
-    _, segs_b, box_b, inner_b = placed_b
-    if (
-        box_a[2] <= box_b[0]
-        or box_b[2] <= box_a[0]
-        or box_a[3] <= box_b[1]
-        or box_b[3] <= box_a[1]
-    ):
-        return False
+    """Whether two placed panels share area. The caller box-rejects first."""
+    _, segs_a, _, inner_a = placed_a
+    _, segs_b, _, inner_b = placed_b
     for sa in segs_a:
         for sb in segs_b:
             if segments_cross(sa[0], sa[1], sb[0], sb[1]):
@@ -675,8 +683,7 @@ def unfold_hinges(verts, faces, weighted, edges, label, forced=None):
         members[root(i)].append(i)
     flat = {
         p: panel_share(weighted, [members[p]]) >= PANEL_SHARE
-        for panel_pair in contacts
-        for p in panel_pair
+        for p in dict.fromkeys(p for panel_pair in contacts for p in panel_pair)
     }
     ec, _, _ = region_topology(edges, label)
     region = {p: label[members[p][0]] for p in flat}
@@ -817,10 +824,14 @@ def unfold_hinges(verts, faces, weighted, edges, label, forced=None):
                         q: placed_panel(compose_transforms(move, placed[0]), q)
                         for q, placed in layouts[gb].items()
                     }
+                    # one box for the arrivals drops a panel clear of them all
+                    span = _span([placed[2] for placed in arriving.values()])
                     if any(
                         panels_overlap(placed, arrival)
                         for placed in layouts[ga].values()
+                        if _boxes_meet(placed[2], span)
                         for arrival in arriving.values()
+                        if _boxes_meet(placed[2], arrival[2])
                     ):
                         continue
                     layouts[ga].update(arriving)
