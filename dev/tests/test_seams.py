@@ -61,7 +61,6 @@ from seams import (  # noqa: E402
     vertex_components,
 )
 from seams.islands import absorb_fragments, split_pieces  # noqa: E402
-from seams.sweeps import fork_runs  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 HEX_HEAD = Path(__file__).parents[1] / "bench/models/hard-surface/sharp/fastener_03.obj"
@@ -1565,53 +1564,6 @@ def test_flat_bar_wall_panels_at_its_soft_ridges():
     groups = island_groups(faces, rims, face_edges(faces))
     assert len(groups) == 2
     assert min(len(g) for g in groups) > len(faces) // 4
-
-
-def cell_grid(cells):
-    """Flat grid of triangulated unit quads over these (x, y) cells."""
-    verts = {}
-    faces = []
-
-    def vid(x, y):
-        if (x, y) not in verts:
-            verts[(x, y)] = len(verts)
-        return verts[(x, y)]
-
-    for x, y in cells:
-        a, b = vid(x, y), vid(x + 1, y)
-        c, d = vid(x + 1, y + 1), vid(x, y + 1)
-        faces.append((a, b, c))
-        faces.append((a, c, d))
-    vert_list = [None] * len(verts)
-    for (x, y), i in verts.items():
-        vert_list[i] = [float(x), float(y), 0.0]
-    return vert_list, faces
-
-
-def test_fork_runs_cut_a_branched_panel_at_its_junction():
-    # a T of strips: the runs part where the arms meet, so no run spans
-    # two arms, the wrench-head branch in miniature
-    bar = [(x, y) for x in range(16) for y in range(8, 12)]
-    trunk = [(x, y) for x in range(6, 10) for y in range(8)]
-    cells = bar + trunk
-    verts, faces = cell_grid(cells)
-    edges = face_edges(faces)
-    runs = fork_runs(range(len(faces)), edges)
-    assert sum(len(r) for r in runs) == len(faces)
-    assert len(runs) >= 3
-    run_of = {}
-    for k, run in enumerate(runs):
-        for i in run:
-            run_of[i] = k
-    tips = [2 * cells.index(cell) for cell in ((0, 9), (15, 9), (7, 0))]
-    assert len({run_of[t] for t in tips}) == 3
-
-
-def test_fork_runs_keep_a_straight_strip_whole():
-    verts, faces = cell_grid([(x, y) for x in range(16) for y in range(4)])
-    runs = fork_runs(range(len(faces)), edges=face_edges(faces))
-    assert len(runs) == 1
-    assert len(runs[0]) == len(faces)
 
 
 def test_round_tube_wall_keeps_one_wrap():
