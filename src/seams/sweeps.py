@@ -50,9 +50,6 @@ PROFILE_CORNER = 0.02
 # shell whose flats sit a few degrees apart is one panel, only a real
 # quarter-turn corner is worth a seam
 PROFILE_TURN = 45
-# a panel run's growth front splits into one piece per branch at a junction,
-# and a front piece this small is a straggler of the ring walk, not a branch
-FORK_FRONT_NOISE = 3
 # how finely a wall with a handle through it is trimmed back along its axis
 # while searching for the cut that leaves a flattenable surface
 GENUS_TRIM_LEVELS = 24
@@ -634,71 +631,12 @@ def spread_rings(adjacency, seed, allowed):
         layers.append(grown)
 
 
-def fork_runs(piece, edges):
-    """Panel piece faces grouped into runs that part where the ring walk's
-    growth front splits: rings grow from an extremity, the run closes on
-    the last ring whose front is one polyline, and the walk reseeds in what
-    is left. At a junction the front splits into one piece per branch, so
-    the cut lands where the arms meet, the seam an artist ends a strip at.
-    The front rejoins once a branch is consumed, so this walks ring by ring
-    instead of riding straight_runs, whose probe doubling jumps the
-    junction window. A hole wide enough to split the front cuts too, which
-    only helps: a chart with a hole is not a disk and the engine recuts
-    it anyway."""
-    in_piece = set(piece)
-    adjacency = collections.defaultdict(list)
-    links = []
-    for key, owners in edges.items():
-        if len(owners) == 2:
-            a, b = owners
-            if a in in_piece and b in in_piece:
-                adjacency[a].append(b)
-                adjacency[b].append(a)
-                links.append((key, a, b))
-
-    def front_splits(prefix, allowed):
-        front = []
-        for key, a, b in links:
-            if a not in allowed or b not in allowed:
-                continue
-            if (a in prefix) != (b in prefix):
-                front.append(key)
-        parent = {}
-        for v0, v1 in front:
-            parent.setdefault(v0, v0)
-            parent.setdefault(v1, v1)
-            ra, rb = find(parent, v0), find(parent, v1)
-            if ra != rb:
-                parent[ra] = rb
-        count = collections.Counter(find(parent, v0) for v0, _ in front)
-        branches = sum(1 for c in count.values() if c > FORK_FRONT_NOISE)
-        return branches > 1
-
-    remaining = set(piece)
-    runs = []
-    while remaining:
-        start = next(iter(remaining))
-        seed = spread_rings(adjacency, start, remaining)[-1][0]
-        layers = spread_rings(adjacency, seed, remaining)
-        run = set(layers[0])
-        for layer in layers[1:]:
-            candidate = run | set(layer)
-            if front_splits(candidate, remaining):
-                break
-            run = candidate
-        runs.append(sorted(run))
-        remaining -= run
-    return runs
-
-
 def profile_panels(wall, axis, entries, edges, areas):
     """Face -> lengthwise panel of a wall whose profile has flat sides, None
     when it reads round or faceted. One cut lands in each corner arc between
     flat sides, at its emptiest bin: the soft ridge an artist cuts along.
     Narrow panels are what let rectify straighten a bowed shell, one wide
-    strip flattens into a banana it reverts on. A panel that branches (one
-    flat side running through a wrench head into three arms) parts at its
-    junctions, since no rectangle fit can straighten a Y."""
+    strip flattens into a banana it reverts on."""
     u = None
     for candidate in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)):
         c = cross(axis, candidate)
@@ -760,19 +698,6 @@ def profile_panels(wall, axis, entries, edges, areas):
     panel = {i: -1 for i in wall}
     for i, angle in theta.items():
         panel[i] = bisect.bisect_left(cuts, angle) % len(cuts)
-    parent, _, _ = class_components(wall, panel, edges, areas)
-    pieces = collections.defaultdict(list)
-    for i in wall:
-        pieces[find(parent, i)].append(i)
-    fresh = PROFILE_BINS
-    for piece in pieces.values():
-        runs = fork_runs(piece, edges)
-        if len(runs) == 1:
-            continue
-        for run in runs:
-            for i in run:
-                panel[i] = fresh
-            fresh += 1
     wall_area = sum(areas[i] for i in wall)
     parent, contact, comp_area = class_components(wall, panel, edges, areas)
     merge_specks(parent, contact, comp_area, SWEEP_CAP_MIN * wall_area)
