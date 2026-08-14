@@ -64,7 +64,13 @@ from .regions import (
     unfold_hinges,
 )
 from .sweeps import component_faces, split_sweeps, surface_genus, sweep_rims
-from .symmetry import mirror_seams, stack_mirrored
+from .symmetry import (
+    half_faces,
+    interface_edges,
+    mirror_seams,
+    open_merged,
+    stack_mirrored,
+)
 
 __all__ = [
     "CREASE_ANGLE",
@@ -93,6 +99,8 @@ __all__ = [
     "face_keys",
     "find",
     "flatten_teeth",
+    "half_faces",
+    "interface_edges",
     "is_hard_surface",
     "island_groups",
     "island_layout",
@@ -103,6 +111,7 @@ __all__ = [
     "merge_smooth",
     "mirror_seams",
     "norm",
+    "open_merged",
     "pair",
     "partition",
     "path_cost",

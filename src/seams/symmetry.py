@@ -3,8 +3,146 @@ under the mesh's own mirror maps, then stack the mirrored uv islands after
 the unwrap."""
 
 import collections
+import math
 
-from .mesh import face_edges, pair, uv_island_groups
+from .cuts import connect_loops
+from .islands import uv_topology
+from .mesh import face_edges, find, island_groups, pair, uv_island_groups
+
+
+def half_faces(verts, faces, axes, mirrors):
+    """Face indices to delete so each mirrored face pair keeps one side.
+
+    axes are the axis indices the maps in mirrors reflect across. Per map,
+    a face whose image is another face drops when its center sits below
+    the image's on that axis, so exactly one of the pair stays.
+    A face with no whole image keeps both sides, so an asymmetric region
+    stays intact. A dropped face that cannot reach a kept face through the
+    maps is put back: its seams could never come back mirrored."""
+    by_verts = {tuple(sorted(face)): fi for fi, face in enumerate(faces)}
+
+    def image(face, m):
+        if any(v not in m for v in face):
+            return None
+        return by_verts.get(tuple(sorted(m[v] for v in face)))
+
+    images = [[image(face, m) for m in mirrors] for face in faces]
+    dropped = set()
+    for mi, axis in enumerate(axes):
+        for fi, face in enumerate(faces):
+            gi = images[fi][mi]
+            if gi is None or gi == fi:
+                continue
+            mine = sum(verts[v][axis] for v in face) / len(face)
+            theirs = sum(verts[v][axis] for v in faces[gi]) / len(faces[gi])
+            if (mine, fi) < (theirs, gi):
+                dropped.add(fi)
+
+    reached = set(range(len(faces))) - dropped
+    queue = collections.deque(reached)
+    while queue:
+        fi = queue.popleft()
+        for gi in images[fi]:
+            if gi is not None and gi not in reached:
+                reached.add(gi)
+                queue.append(gi)
+    return dropped & reached
+
+
+def interface_edges(faces, dropped, edges):
+    """Edges between a kept face and a dropped one: where the halves glue
+    back together on the whole mesh."""
+    return {
+        key
+        for key, owners in edges.items()
+        if len(owners) == 2 and (owners[0] in dropped) != (owners[1] in dropped)
+    }
+
+
+def _interface_arcs(group, faces, edges, seams, interface):
+    """Connected runs of unseamed interface edges inside this island."""
+    inside = set(group)
+    keys = []
+    for key, owners in edges.items():
+        if key in interface and key not in seams and set(owners) <= inside:
+            keys.append(key)
+    parent = {}
+    for a, b in keys:
+        parent.setdefault(a, a)
+        parent.setdefault(b, b)
+        ra, rb = find(parent, a), find(parent, b)
+        if ra != rb:
+            parent[ra] = rb
+    arcs = collections.defaultdict(set)
+    for key in keys:
+        arcs[find(parent, key[0])].add(key)
+    return list(arcs.values())
+
+
+def _arc_length(verts, arc):
+    total = 0.0
+    for a, b in arc:
+        total += math.dist(verts[a], verts[b])
+    return total
+
+
+def open_merged(verts, faces, edges, seams, interface):
+    """Seam set with every non-disk island opened into a disk.
+
+    A half chart glued to its mirror along one interface arc merges into a
+    disk and needs nothing. Glued along more, the merge is a ring, so its
+    arcs are cut back shortest first until the island is a disk, keeping
+    the longest glued. An interface arc is its own mirror image, so the
+    opening cut is symmetric. connect_loops is the fallback when no arc is
+    left, and an island neither can open ships as it is."""
+    result = set(seams)
+    queue = collections.deque(island_groups(faces, result, edges))
+    while queue:
+        group = queue.popleft()
+        if len(group) < 2:
+            continue
+        ec, loops = uv_topology(group, faces, edges, result)
+        if ec == 1:
+            continue
+        arcs = _interface_arcs(group, faces, edges, result, interface)
+        if arcs:
+            result |= min(arcs, key=lambda arc: _arc_length(verts, arc))
+        elif len(loops) > 1:
+            adjacent = collections.defaultdict(set)
+            for f in group:
+                face = faces[f]
+                n = len(face)
+                for i in range(n):
+                    key = pair(face[i], face[(i + 1) % n])
+                    if len(edges[key]) == 2 and key not in result:
+                        adjacent[key[0]].add(key[1])
+                        adjacent[key[1]].add(key[0])
+            cuts = connect_loops(verts, adjacent, loops)
+            if not cuts:
+                continue
+            result |= cuts
+        else:
+            continue
+        parent = list(range(len(group)))
+        index_of = {f: i for i, f in enumerate(group)}
+        for f in group:
+            face = faces[f]
+            n = len(face)
+            for i in range(n):
+                key = pair(face[i], face[(i + 1) % n])
+                if key in result:
+                    continue
+                owners = edges[key]
+                if len(owners) == 2 and owners[0] in index_of and owners[1] in index_of:
+                    ra = find(parent, index_of[owners[0]])
+                    rb = find(parent, index_of[owners[1]])
+                    if ra != rb:
+                        parent[ra] = rb
+        pieces = collections.defaultdict(list)
+        for i, f in enumerate(group):
+            pieces[find(parent, i)].append(f)
+        queue.extend(pieces.values())
+    return result
 
 
 def mirror_seams(seams, mirrors, edges):

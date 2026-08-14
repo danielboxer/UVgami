@@ -423,8 +423,13 @@ class UnwrapManager:
             unwrap.hide_job.finish(self.input[unwrap.hide_job])
 
         symmetrize_job = unwrap.symmetrize_job
-        if symmetrize_job is not None and not symmetrize_job.kept_whole:
-            symmetrize_job.finish(output)
+        half_rebuilt = False
+        if symmetrize_job is not None:
+            if not symmetrize_job.kept_whole:
+                symmetrize_job.finish(output)
+            elif symmetrize_job.whole is not None:
+                output = symmetrize_job.rebuild(output, unwrap.origin)
+                half_rebuilt = True
 
         pieces = unwrap.join_job.finished if unwrap.join_job is not None else [unwrap]
         if any(u.preseeded for u in pieces):
@@ -443,7 +448,10 @@ class UnwrapManager:
                     start = stop
                 if start != len(output.data.polygons):
                     ranges = None
-            finish_preseed(output, ranges)
+            # rebuild sliced the strips already, mirrored, and a second
+            # pass in uv space would land differently on each side
+            if not half_rebuilt:
+                finish_preseed(output, ranges)
             rectify_islands(output)
 
         # after rectify, whose per-island solves would drift a stack apart
@@ -456,7 +464,10 @@ class UnwrapManager:
 
         edit_restore([output], show_seams)
 
-        self._restore_vertex_groups(unwrap, output)
+        # the whole copy kept its own groups, and the piece's indices point
+        # at the half's vertices
+        if not half_rebuilt:
+            self._restore_vertex_groups(unwrap, output)
 
         logger.add_data("objects", unwrap.input_name)
 
