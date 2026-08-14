@@ -24,7 +24,7 @@ PARTUV_RELEASE_API = f"https://api.github.com/repos/DanielBoxer/UVgami/releases/
 # mirrored onto the fixed `checkpoint` release so installs don't depend on the HF
 # repo staying up or its main branch not moving (see mirror-checkpoint.yml)
 CHECKPOINT_URL = "https://github.com/DanielBoxer/UVgami/releases/download/checkpoint/model_objaverse.ckpt"
-# the ai extra pins torch 2.3.0 (cu121); torch-scatter has no matching pypi
+# the ai extra pins torch 2.3.0 (cu121). torch-scatter has no matching pypi
 # wheel, so pip must be pointed at the pyg wheel index to avoid a source build
 TORCH_SCATTER_FIND_LINKS = "https://data.pyg.org/whl/torch-2.3.0+cu121.html"
 # partuv is a cuda wheel (nvidia-only), so no macos build exists
@@ -34,7 +34,7 @@ AI_DOWNLOAD_SIZE = "5 GB"
 # partuv runs in a managed 3.11 venv, decoupled from blender's python version
 VENV_PYTHON = "3.11"
 PARTUV_PY_TAG = "cp311"
-# pinned so the venv is reproducible; the archive names are stable across releases
+# pinned so the venv is reproducible, the archive names are stable across releases
 UV_VERSION = "0.11.25"
 UV_ARCHIVES = {
     "Windows": "uv-x86_64-pc-windows-msvc.zip",
@@ -69,7 +69,7 @@ def find_wheel_url():
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         release = json.load(response)
-    # the venv is 3.11 regardless of blender's python; linux wheels ship as
+    # the venv is 3.11 regardless of blender's python, and linux wheels ship as
     # manylinux after auditwheel repair, so match the arch tail
     plat = "win_amd64" if platform.system() == "Windows" else "x86_64"
     for asset in release.get("assets", []):

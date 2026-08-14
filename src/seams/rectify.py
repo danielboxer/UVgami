@@ -203,10 +203,9 @@ def _turning_corners(points, area):
     if len(candidates) < 4:
         return None
 
-    # sharpest four is not the right rule: a jagged seam edge outscores a
-    # strip's real end corners. the right four are whichever candidates
-    # partition the loop into a rectangle that fits the island, matching
-    # area and opposite sides
+    # take the four candidates that partition the loop into a rectangle
+    # fitting the island, matching area and opposite sides. picking the
+    # sharpest four instead lets a jagged seam edge outscore a real corner
     best, best_fit = None, math.inf
     for combo in itertools.combinations(sorted(candidates), 4):
         arcs = [
@@ -376,8 +375,8 @@ def _rectangle_targets(loop, area, interior=None):
         sides = sides_for(picks)
         if sides is None:
             return None
-    # side lengths come from the boundary itself, not the box: a strip that
-    # still curls unrolls to its real length, which the box undershoots
+    # side lengths come from the boundary, not the box. a strip that still
+    # curls unrolls to its real length, which the box undershoots
     width = (sides[0][-1] + sides[2][-1]) / 2
     height = (sides[1][-1] + sides[3][-1]) / 2
     rectangle = [

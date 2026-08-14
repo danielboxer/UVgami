@@ -221,7 +221,7 @@ class InputExporter:
             for unwrap in self.piece_unwrap.values():
                 if unwrap.result is None and not unwrap.is_exported:
                     manager.record_result(unwrap, Result.INVALID)
-            # if no session owns the bar (nothing added yet), tear it down
+            # nothing was added, so no session is using the bar
             if not manager.is_active:
                 progress_bar.remove()
             return None
@@ -246,7 +246,8 @@ class InputExporter:
         has_uvs = self.piece_has_uvs[obj]
         if has_uvs:
             normalize_uvs(obj.data)
-        # only the plain path owns the winding, a transfer writes onto the original
+        # the winding only matters on the plain path, a transfer writes onto
+        # the original
         keeps_output = input_job(props) is None
         vt_verts = export_obj(
             obj, path, has_uvs, flip_mirrored=keeps_output, matrix=matrix
@@ -319,7 +320,7 @@ class InputExporter:
             manager.record_result(unwrap, Result.FINISHED)
 
     def _finish(self):
-        # a session with no valid pieces never started in _separate; start it
+        # a session with no valid pieces never started in _separate, start it
         # anyway so the empty run still finishes and reports
         if not manager.is_active:
             manager.engine = self.engine
@@ -343,7 +344,6 @@ class InputExporter:
                 #     break
 
             if len(face.edges) > 4:
-                # found n-gon
                 for vert in face.verts:
                     if vert.index not in ngon_dict:
                         ngon_dict[vert.index] = set()
@@ -362,21 +362,19 @@ class InputExporter:
             triangulate(bm)
 
             if untriangulate:
-                # write added edges to file
                 edge_path = path.parent / f"{path.stem}_edges"
                 with edge_path.open("w") as f:
                     for bm_e in set(bm.edges).difference(old_edges):
                         edge = (bm_e.verts[0].index, bm_e.verts[1].index)
                         if (
-                            # if both vertices are ngon vertices
                             edge[0] in ngon_dict
                             and edge[1] in ngon_dict
-                            # and they are from the same ngon
                             and len(ngon_dict[edge[0]].intersection(ngon_dict[edge[1]]))
                             > 0
                         ):
-                            # edge is inside ngon, don't dissolve
-                            # because ngons aren't rerouted
+                            # both ends sit on the same ngon, so the edge is
+                            # inside it and must not dissolve, ngons aren't
+                            # rerouted
                             continue
                         new_edges.append(edge)
                         f.write(f"{edge[0]} {edge[1]}\n")
@@ -668,7 +666,6 @@ class SessionBuilder:
             unwrap_name = self.names[obj.name][0]
             valid = []
             for o in s:
-                # check for 0 polygons again
                 if len(o.data.polygons) == 0:
                     collection = check_collection(
                         "UVgami Not Unwrapped", bpy.context.scene.collection
@@ -817,8 +814,8 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         except Exception as e:
             handle_error(e, "START", objects=start_objects)
-            # tick() owns the collection once registered; only remove it here
-            # if the builder never started ticking
+            # once the builder is registered tick() removes the collection,
+            # so only remove it here if it never started ticking
             if not builder_registered and self.temp_collection is not None:
                 bpy.data.collections.remove(self.temp_collection)
 
@@ -836,7 +833,6 @@ class UVGAMI_OT_start(bpy.types.Operator):
         self.input_objs = context.selected_objects
         self.objects, self.names, self.reports = self.prepare_meshes(context)
         if len(self.objects) == 0:
-            # there are no valid meshes
             reason = self.reports[0][1] if self.reports else "No object selected"
             self.report({"ERROR"}, reason)
             return {"CANCELLED"}
@@ -934,7 +930,6 @@ class UVGAMI_OT_start(bpy.types.Operator):
         applied = False
         for modifier in obj.modifiers:
             if "Smooth by Angle" in modifier.name:
-                # don't apply auto smooth modifier
                 continue
 
             # a disabled modifier can't be applied

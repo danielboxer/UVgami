@@ -27,7 +27,7 @@ def _color_enabled():
     if os.environ.get("NO_COLOR") is not None or not sys.stderr.isatty():
         return False
     if platform.system() == "Windows":
-        # best-effort vt enable; on failure fall back to plain text
+        # on failure fall back to plain text
         import ctypes
 
         kernel32 = ctypes.windll.kernel32

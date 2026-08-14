@@ -213,9 +213,8 @@ def repair_flipped_island(obj, temp):
 
 
 def finish_preseed(obj, ranges=None):
-    """Slice the long strips out of a preseeded engine output: read the mesh
-    into plain lists, run the split_moves scan, write the moved uvs back.
-    The scan itself is documented on split_moves."""
+    """Slice the long strips out of a preseeded engine output. The scan itself
+    is documented on split_moves."""
     mesh = obj.data
     moves = split_moves(
         vertex_positions(mesh),
@@ -272,7 +271,8 @@ def rectify_islands(obj):
     uvl = bm.loops.layers.uv.active
     bm.faces.ensure_lookup_table()
     # the unwrap splits charts by seam marks, not by the uv map, so without
-    # this neighboring islands weld at their shared edges and fight the pins
+    # this neighboring islands weld at their shared edges and pull against
+    # the pins
     for edge in bm.edges:
         uv_at = {}
         seam = False
@@ -388,7 +388,7 @@ def queue_relax(obj, group, bbox, area, k, input_path, props):
     while path.is_file():
         path = path.parent / f"{path.stem}1.obj"
     export_obj(temp, path, True)
-    # empty pin line, nothing is held: the whole island reshapes freely
+    # empty pin line, nothing is held
     with (path.parent / f"{path.stem}_fixed").open("w") as f:
         f.write("\nnocut")
     vertex_count = len(temp.data.vertices)
@@ -446,8 +446,7 @@ def target_areas(obj, rings):
         island_selected = selected & group_set
         if not island_selected:
             continue
-        # each uv-connected piece of the selection grows into its own area,
-        # so pieces on opposite sides of a seam stay separate patches
+        # each uv-connected piece of the selection grows into its own area
         taken = set(island_selected)
         emitted = set()
         absorbed = set()
@@ -457,10 +456,7 @@ def target_areas(obj, rings):
             patch = set(seed) - absorbed
             if not patch:
                 continue
-            # grow so the fix blends out instead of stopping at the selection
-            # edge. a face joins only when a corner uv matches and no corner
-            # puts a second uv on a patch vert, so growth can't cross the
-            # island's own seam or straddle a seam tip
+            # grow so the fix blends out instead of stopping at the selection edge
             uv_of = {
                 faces[fi][i]: uvs[fi][i] for fi in patch for i in range(len(faces[fi]))
             }
@@ -479,8 +475,7 @@ def target_areas(obj, rings):
                     grew = True
                 if not grew:
                     break
-            # a pocket can hold another piece's faces, those join this patch
-            # instead of becoming their own
+            # a pocket can hold another piece's faces
             enclosed = enclosed_faces(faces, edges, group_set, patch) - emitted
             patch |= enclosed
             taken |= enclosed
@@ -498,8 +493,7 @@ def target_areas(obj, rings):
                     for i in range(len(faces[fi]))
                 }
                 if len(comp_verts) - len(comp_edges) + len(comp) != 1:
-                    # the area rings a real hole, no selection can make it a
-                    # disk, only breaking the ring can
+                    # the area rings a real hole, no selection can make it a disk
                     ring_skipped += 1
                     continue
                 outside = group_set - comp
@@ -683,8 +677,7 @@ def queue_area(obj, patch, border, k, input_path, props, nocut):
         [[local[v] for v in mesh.polygons[fi].vertices] for fi in patch],
     )
 
-    # a flipped area would make the engine reject the map, repair the copy
-    # with a pinned unwrap so the border still holds
+    # a flipped area would make the engine reject the map
     if has_flipped(mesh, patch, uv_of):
         repair_flipped(obj, area_mesh, used, uv_of, border)
 
@@ -741,8 +734,6 @@ def validate_engine(op):
 
 
 def queue_targets(engine, engine_ctx, count, queue_one):
-    """Prepare the io folders, queue each target, and start or extend the
-    manager session."""
     input_path, output_path = get_io_dir_paths()
     if not manager.is_active:
         clear_io_dir(input_path)

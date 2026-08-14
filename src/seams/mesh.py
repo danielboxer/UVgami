@@ -35,7 +35,7 @@ def pair(a, b):
 
 
 def split_per_face(values, totals):
-    """Slice one entry per loop into one list per face. Polygons own a
+    """Slice one entry per loop into one list per face. Each polygon covers a
     contiguous run of loops, so the totals alone place every face."""
     faces = []
     start = 0

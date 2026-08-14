@@ -134,8 +134,8 @@ class PartuvEngine(Engine):
         return platform.system() in PARTUV_PLATFORMS
 
     def batches_queue(self, props):
-        # one process loads the model once for every queued mesh; running more
-        # than one instead oversubscribes vram and thrashes
+        # one process loads the model once for every queued mesh, running more
+        # than one runs out of vram
         return props.partuv.segmentation == "AI"
 
     def validate(self, prefs):
@@ -261,9 +261,9 @@ class PartuvEngine(Engine):
         else:
             base = [str(get_partuv_venv_python()), "-m", "partuv"]
         # windows caps a command line near 32k chars, so a large batch of mesh
-        # paths as argv overflows CreateProcess. pass them in a file instead.
-        # named per invocation since solo mode spawns several over one session;
-        # lives in the input dir so manager.finish cleans it up with the meshes.
+        # paths as argv overflows CreateProcess. pass them in a file instead,
+        # named per invocation since solo mode spawns several over one session.
+        # it goes in the input dir so manager.finish cleans it up too
         input_list = (
             get_extension_dir_path() / "input" / f"{input_paths[0].stem}_inputs.txt"
         )

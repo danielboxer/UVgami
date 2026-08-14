@@ -249,7 +249,7 @@ class OptcutsEngine(BinaryEngine):
 
     def piece_uses_uvs(self, obj, props, has_uvs):
         # auto mode routes per loose part: a piece the preseed skipped has no
-        # seams and goes to the engine bare, to be cut from scratch. With
+        # seams and goes to the engine bare, to be cut from scratch. with
         # import uvs on, organic pieces keep the user's map instead
         if props.optcuts.is_auto and not props.import_uvs:
             has_uvs = has_uvs and bool(seam_flags(obj.data).any())

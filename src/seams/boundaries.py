@@ -189,8 +189,8 @@ def reroute_boundaries(verts, faces, areas, edges, label, relief, forced=None):
         vs = {v for key in ks for v in key}
         return len(vs) - len(ks) + len(group)
 
-    # relief squared: a moving boundary chases a crease harder than a free
-    # cut, or a mild discount loses to a dull shortcut across the surface
+    # relief squared, so a moving boundary prefers a crease more strongly than
+    # a free cut does. a mild discount loses to a dull shortcut
     pull = {k: r * r for k, r in relief.items()}
 
     def run_seq(run, j0):

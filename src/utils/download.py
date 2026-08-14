@@ -38,7 +38,7 @@ def download_file(
             return
         except (OSError, http.client.IncompleteRead, DownloadError) as e:
             error = e
-            # a full-size .part yields an unsatisfiable range; drop it to refetch
+            # a full-size .part yields an unsatisfiable range, drop it to refetch
             if isinstance(e, urllib.error.HTTPError) and e.code == 416:
                 part.unlink(missing_ok=True)
     raise DownloadError(f"failed to download {url} after {attempts} attempts: {error}")

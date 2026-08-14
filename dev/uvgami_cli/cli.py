@@ -164,7 +164,7 @@ def run_partuv(args, pairs):
             f"the PartUV engine is not installed ({error});"
             " install it with: uv sync --extra partuv",
         ) from error
-    # partuv raises its own UnwrapError class; re-raise as ours so main's
+    # partuv raises its own UnwrapError class, re-raise as ours so main's
     # handler and the --json error path keep working (exit codes match)
     try:
         checkpoint = None

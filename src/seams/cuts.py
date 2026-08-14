@@ -20,8 +20,8 @@ from .mesh import LOW_ANGLE, find, norm, pair, turn_angle
 RESTRICT_COST = 9.0
 # free cuts prefer sharp edges: a crease edge counts shorter, sliding from
 # full length at LOW_ANGLE to a floor at RELIEF_FULL_ANGLE. concave gets the
-# deeper discount, a groove hides a seam best, and the floors are mild so a
-# cut never wanders far hunting for a crease
+# deeper discount, a groove hides a seam best, and the floors are mild so
+# only a short detour to reach a crease is worth its cost
 CONCAVE_RELIEF = 0.5
 CONVEX_RELIEF = 0.3
 RELIEF_FULL_ANGLE = 45
@@ -29,9 +29,9 @@ RELIEF_FULL_ANGLE = 45
 CREASED_RELIEF = 0.9
 # each step turning between two dull edges costs up to this fraction of its
 # length extra, so among near-equal paths the straight one wins. a turn with
-# both edges creased is exempt, a seam follows a crease around any corner.
-# one alone is not enough: bevel rows read as creases, and a path would
-# zigzag between parallel rows for free
+# both edges creased is exempt, since a seam follows a crease around any
+# corner. one creased edge is not enough, bevel rows read as creases and a
+# path would zigzag between parallel rows for free
 TURN_COST = 1.0
 
 

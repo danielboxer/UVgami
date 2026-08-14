@@ -89,11 +89,10 @@ class Preserve:
             for loop in face.loops:
                 uv = loop[uv_layer].uv
                 uvs.append((uv.x, uv.y, 0))
-                # all face points are added, duplicates are removed later
-                # that means the index is new each time
+                # every face point is added, so the index is new each time.
+                # remove_doubles merges them below
                 uv_i.append(uv_count)
                 uv_count += 1
-                # store the original mesh vertex so it can be accessed using the uvs
                 mesh_verts.append(loop.vert)
             uv_idcs.append(uv_i)
 
@@ -121,14 +120,12 @@ class Preserve:
         return seams
 
     def finish(self, unwrap, output, added_edges):
-        # return mesh to original state
         bm = new_bmesh(output)
 
         e_dict = {}
         for edge in bm.edges:
             e_dict[(edge.verts[0].index, edge.verts[1].index)] = edge
 
-        # check if the edges are set already
         if not added_edges:
             added_edges = unwrap.added_edges
 
@@ -144,16 +141,13 @@ class Preserve:
             elif (e[1], e[0]) in e_dict:
                 bm_edge = e_dict[(e[1], e[0])]
             else:
-                # this shouldn't happen, edge not found
                 if (
                     logger.get_latest().errors
                     and logger.get_latest().errors[-1]
                     == "    Error removing added edge"
                 ):
-                    # don't add duplicate errors
                     continue
                 logger.add_data("errors", "Error removing added edge")
-                # skip removing edge
                 continue
 
             if bm_edge not in seams:
@@ -188,19 +182,17 @@ class Join:
         unwraps = self.finished
         edge_path = unwraps[-1].edge_path
 
-        # the merged first obj is the file that will be imported
+        # the merge writes into the first obj, and that is what gets imported
         path = merge_obj_files([u.output_path for u in unwraps])
 
         added_edges = []
         if unwraps[-1].preserve_job is not None:
-            # combine all added edges in the group
             v_count = 0
             for e_idx, edges in enumerate([u.added_edges for u in unwraps]):
                 for v1, v2 in edges:
                     added_edges.append((v1 + v_count, v2 + v_count))
                 v_count += unwraps[e_idx].vertex_count
 
-            # combine all edge files
             edge_path = unwraps[0].edge_path
             v_count = unwraps[0].vertex_count
             e_paths = [u.edge_path for u in unwraps]
@@ -258,7 +250,7 @@ class TransferUVs:
                 bpy.ops.object.mode_set(mode="EDIT")
             bpy.context.view_layer.objects.active = old_active
 
-        # only tear down the output once the whole plan applied
+        # delete the output only once the whole plan applied
         bpy.data.objects.remove(output, do_unlink=True)
         input_mesh.hide_set(False)
         return TransferReport(True, len(plan.split_faces), "")
@@ -514,7 +506,7 @@ class AreaUVs(IslandUVs):
             plan.split_faces[fi] = [
                 (verts, [move(uv) for uv in part_uvs]) for verts, part_uvs in parts
             ]
-        # pinned loops held to float noise, snap them so the border welds
+        # pinned loops drift by float noise, restore them so the border welds
         for fi, corner, old in self.pins:
             k = self.loop_base[fi] + corner
             if k in plan.loop_uvs:
@@ -570,7 +562,8 @@ class ProxyUVs:
 
         target = input_mesh
         if not self.repack_input:
-            # data only until the uvs land, linked would sit on the original
+            # never linked to a collection, or the copy shows up beside
+            # the original
             target = input_mesh.copy()
             target.data = input_mesh.data.copy()
             bm = new_bmesh(target)
@@ -615,7 +608,7 @@ class ProxyUVs:
             # no HideInput job exists when a transfer job holds the slot, so
             # hide the untouched original here like transfer off does elsewhere
             input_mesh.hide_set(True)
-            # named only now: the deleted output held this name until here
+            # renamed only now, the deleted output held this name
             target.name = f"{input_mesh.name}_unwrapped"
             self.replacement = target
         return TransferReport(True, 0, "")
@@ -736,8 +729,8 @@ class Symmetrise:
         self.z = "Z" in axes
         self.center = center
         self.overlap = overlap
-        # set when the preseed mirrored the seams instead: the mesh ships
-        # whole, so finish has no half to rebuild and only snap_overlap runs
+        # set when the preseed mirrored the seams instead, so the mesh goes
+        # out whole and finish has no half to rebuild
         self.kept_whole = False
 
     def axis_names(self):
@@ -779,7 +772,7 @@ class Symmetrise:
             mirror.mirror_object = empty
 
         if not self.overlap:
-            # separate islands
+            # mirror the uvs too, so the halves get separate islands
             mirror.use_mirror_u = True
             mirror.use_mirror_v = True
 
