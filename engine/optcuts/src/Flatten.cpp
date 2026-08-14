@@ -457,6 +457,18 @@ void slimSolve(Island &island, int iterations) {
         island.UV = data.V_o;
 }
 
+// absolute, not signed: a closed island projected to a plane cancels to zero
+double absUvArea(const Island &island) {
+    double area = 0.0;
+    for (Eigen::Index t = 0; t < island.T.rows(); ++t) {
+        Eigen::RowVector2d a = island.UV.row(island.T(t, 0));
+        Eigen::RowVector2d b = island.UV.row(island.T(t, 1));
+        Eigen::RowVector2d c = island.UV.row(island.T(t, 2));
+        area += std::abs((b - a).x() * (c - a).y() - (b - a).y() * (c - a).x()) / 2.0;
+    }
+    return area;
+}
+
 // signed by face winding: a mostly negative sum means the island came out
 // mirrored
 double signedUvArea(const Island &island) {
@@ -598,6 +610,7 @@ int runFlatten(const std::string &inputPath, const std::string &outputDir,
     std::vector<int> localOf(mesh.uvs.size(), -1);
     std::vector<Island> islands;
     islands.reserve(static_cast<size_t>(islandCount));
+    double solvedUvArea = 0.0, restArea = 0.0;
     double lastProgress = -1.0;
     for (int islandId = 0; islandId < islandCount; ++islandId) {
         Island island = buildIsland(mesh, faceIsland, islandId, localOf);
@@ -615,6 +628,10 @@ int runFlatten(const std::string &inputPath, const std::string &outputDir,
             slimSolve(island, iterations);
         }
         for (int c : island.globalUv) localOf[static_cast<size_t>(c)] = -1;
+        // before the normalize, which rescales even a noise-area island to
+        // its full 3d area
+        solvedUvArea += absUvArea(island);
+        restArea += island.area3d;
         normalizeIsland(island);
         islands.push_back(std::move(island));
 
@@ -625,6 +642,14 @@ int runFlatten(const std::string &inputPath, const std::string &outputDir,
             std::printf("progress: %.2f 0 %.2f\n", progress, 1.0 - progress);
             std::fflush(stdout);
         }
+    }
+
+    // the solve can crush every island to a point and still reach here.
+    // pack-only skips the floor, its uvs are unit-square scale not mesh scale
+    if (!packOnly && restArea > 0.0 && solvedUvArea <= restArea * 1e-9) {
+        std::fprintf(stderr, "flatten came back collapsed\n");
+        emitFailed(stem, UVGAMI_RC_FLATTEN_FAILED);
+        return UVGAMI_RC_FLATTEN_FAILED;
     }
 
     packIslands(islands);

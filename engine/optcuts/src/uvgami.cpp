@@ -21,7 +21,6 @@
 #include <igl/harmonic.h>
 #include <igl/arap.h>
 #include <igl/avg_edge_length.h>
-#include <igl/euler_characteristic.h>
 #include <igl/edge_lengths.h>
 #include <igl/is_vertex_manifold.h>
 #include <igl/is_edge_manifold.h>
@@ -869,6 +868,53 @@ static double importedMapMeasure(const uvgami::TriMesh &mesh) {
     return 2 * std::sqrt(grow * shrink) / total;
 }
 
+// cut_to_disk can return only boundary edges, which cutPath skips, so an
+// annulus makes no cut. this joins two of its boundary loops instead
+static std::vector<int> boundaryLoopConnector(const uvgami::TriMesh &mesh,
+                                              const Eigen::MatrixXi &F_component) {
+    std::vector<std::vector<int>> loops;
+    igl::boundary_loop(F_component, loops);
+    if (loops.size() < 2)
+        return {};
+
+    std::map<int, std::vector<int>> adjacency;
+    for (int triI = 0; triI < F_component.rows(); ++triI) {
+        for (int i = 0; i < 3; ++i) {
+            int a = F_component(triI, i), b = F_component(triI, (i + 1) % 3);
+            if (mesh.edge2Tri.count({a, b}) && mesh.edge2Tri.count({b, a})) {
+                adjacency[a].emplace_back(b);
+                adjacency[b].emplace_back(a);
+            }
+        }
+    }
+
+    std::set<int> firstLoop(loops[0].begin(), loops[0].end());
+    std::map<int, int> parent;
+    std::vector<int> queue;
+    for (int vI : loops[0]) {
+        parent[vI] = vI;
+        queue.emplace_back(vI);
+    }
+    for (size_t head = 0; head < queue.size(); ++head) {
+        for (int next : adjacency[queue[head]]) {
+            if (parent.emplace(next, queue[head]).second)
+                queue.emplace_back(next);
+        }
+    }
+
+    for (size_t loopI = 1; loopI < loops.size(); ++loopI) {
+        for (int vI : loops[loopI]) {
+            if (firstLoop.count(vI) || !parent.count(vI))
+                continue;
+            std::vector<int> path{vI};
+            while (parent[path.back()] != path.back())
+                path.emplace_back(parent[path.back()]);
+            return path;
+        }
+    }
+    return {};
+}
+
 // an escaped exception fast-fails with no message otherwise, name it on
 // stderr so a field crash is diagnosable from the addon's log
 static void reportTerminate() {
@@ -1341,24 +1387,45 @@ int main(int argc, char *argv[]) {
         keptInputMesh = new uvgami::TriMesh(temp);
         triSoup.emplace_back(keptInputMesh);
     } else {
-        // in each pass, make one cut on each component if needed, until all
-        // becoming disk-topology
-        std::vector<Eigen::MatrixXi> F_component(n_components);
-        std::vector<std::set<int>> V_ind_component(n_components);
-        for (int triI = 0; triI < temp.F.rows(); ++triI) {
-            F_component[C[triI]].conservativeResize(
-                F_component[C[triI]].rows() + 1, 3);
-            F_component[C[triI]].bottomRows(1) = temp.F.row(triI);
-            for (int i = 0; i < 3; ++i) {
-                V_ind_component[C[triI]].insert(temp.F(triI, i));
-            }
-        }
+        // in each pass, make one cut on each piece if needed, until all
+        // becoming disk-topology. pieces are recomputed every pass instead
+        // of taken from the chart ids: one chart of a broken map can be
+        // several pieces, and an euler characteristic summed over them
+        // reads an annulus beside a disk as done
+        Eigen::VectorXi pieceOf;
+        int n_pieces = 0;
+        std::vector<Eigen::MatrixXi> F_component;
+        std::vector<std::set<int>> V_ind_component;
+        // every pass cuts at least one edge open and an edge only cuts once
+        int passLimit = 3 * static_cast<int>(temp.F.rows());
         while (true) {
+            igl::facet_components(temp.F, pieceOf);
+            n_pieces = pieceOf.maxCoeff() + 1;
+            F_component.assign(n_pieces, Eigen::MatrixXi());
+            V_ind_component.assign(n_pieces, std::set<int>());
+            for (int triI = 0; triI < temp.F.rows(); ++triI) {
+                F_component[pieceOf[triI]].conservativeResize(
+                    F_component[pieceOf[triI]].rows() + 1, 3);
+                F_component[pieceOf[triI]].bottomRows(1) = temp.F.row(triI);
+                for (int i = 0; i < 3; ++i) {
+                    V_ind_component[pieceOf[triI]].insert(temp.F(triI, i));
+                }
+            }
+
             std::vector<int> components_to_cut;
-            for (int componentI = 0; componentI < n_components; ++componentI) {
-                int EC = igl::euler_characteristic(temp.V,
-                                                   F_component[componentI]) -
-                         temp.V.rows() + V_ind_component[componentI].size();
+            for (int componentI = 0; componentI < n_pieces; ++componentI) {
+                std::set<std::pair<int, int>> edges;
+                for (int triI = 0; triI < F_component[componentI].rows();
+                     ++triI) {
+                    for (int i = 0; i < 3; ++i) {
+                        int a = F_component[componentI](triI, i);
+                        int b = F_component[componentI](triI, (i + 1) % 3);
+                        edges.emplace((std::min)(a, b), (std::max)(a, b));
+                    }
+                }
+                int EC = static_cast<int>(V_ind_component[componentI].size()) -
+                         static_cast<int>(edges.size()) +
+                         static_cast<int>(F_component[componentI].rows());
                 if (EC < 1) {
                     // treat as higher-genus surfaces using cut_to_disk()
                     components_to_cut.emplace_back(-componentI - 1);
@@ -1374,6 +1441,12 @@ int main(int argc, char *argv[]) {
 
             if (components_to_cut.empty()) {
                 break;
+            }
+            if (--passLimit < 0) {
+                std::cerr << "cutting input geometry to disk-topology did "
+                             "not converge"
+                          << std::endl;
+                return UVGAMI_RC_CUT_FAILED;
             }
 
             try {
@@ -1410,6 +1483,15 @@ int main(int argc, char *argv[]) {
                         }
 
                         if (!cuts_made) {
+                            std::vector<int> connector = boundaryLoopConnector(
+                                temp, F_component[componentI]);
+                            if (connector.size() >= 2) {
+                                cuts_made += temp.cutPath(connector, true);
+                                temp.initSeams = temp.cohE;
+                            }
+                        }
+
+                        if (!cuts_made) {
                             std::cerr << "no cuts made when cutting input "
                                          "geometry to disk-topology"
                                       << std::endl;
@@ -1423,7 +1505,7 @@ int main(int argc, char *argv[]) {
                         switch (initCutOption) {
                         case 0:
                             temp.onePointCut(seedVI);
-                            rand1PInitCut = (n_components == 1);
+                            rand1PInitCut = (n_pieces == 1);
                             break;
                         case 1:
                             temp.farthestPointCut(seedVI);
@@ -1439,18 +1521,51 @@ int main(int argc, char *argv[]) {
                           << std::endl;
                 return UVGAMI_RC_CUT_FAILED;
             }
+        }
 
-            // data update on each component for identifying a new cut
-            F_component.resize(0);
-            F_component.resize(n_components);
-            V_ind_component.resize(0);
-            V_ind_component.resize(n_components);
+        // the layout and pinning below work per piece, so hand them pieces
+        std::vector<bool> keepPiece(n_pieces, false);
+        for (int triI = 0; triI < temp.F.rows(); ++triI) {
+            if (keepChart[C[triI]]) {
+                keepPiece[pieceOf[triI]] = true;
+            }
+        }
+        keepChart = keepPiece;
+        keptCharts = 0;
+        for (int pieceI = 0; pieceI < n_pieces; ++pieceI) {
+            keptCharts += keepPiece[pieceI];
+        }
+        C = pieceOf;
+        n_components = n_pieces;
+
+        // a vertex shared by two pieces (a bowtie) pinned for one piece drags
+        // the other's triangles across the layout grid, so every piece past
+        // the first gets its own copy. temp's adjacency goes stale here, like
+        // the orphan drop below, and the mesh that continues is rebuilt from
+        // the arrays
+        {
+            std::vector<int> owner(temp.V.rows(), -1);
+            std::map<std::pair<int, int>, int> copyOf;
             for (int triI = 0; triI < temp.F.rows(); ++triI) {
-                F_component[C[triI]].conservativeResize(
-                    F_component[C[triI]].rows() + 1, 3);
-                F_component[C[triI]].bottomRows(1) = temp.F.row(triI);
                 for (int i = 0; i < 3; ++i) {
-                    V_ind_component[C[triI]].insert(temp.F(triI, i));
+                    int vI = temp.F(triI, i);
+                    if (owner[vI] == -1) {
+                        owner[vI] = C[triI];
+                    } else if (owner[vI] != C[triI]) {
+                        auto [it, inserted] = copyOf.emplace(
+                            std::make_pair(vI, C[triI]),
+                            static_cast<int>(temp.V.rows()));
+                        if (inserted) {
+                            int nV = static_cast<int>(temp.V.rows());
+                            temp.V_rest.conservativeResize(nV + 1, 3);
+                            temp.V_rest.row(nV) = temp.V_rest.row(vI);
+                            temp.V.conservativeResize(nV + 1, 2);
+                            temp.V.row(nV) = temp.V.row(vI);
+                            temp.vertWeight.conservativeResize(nV + 1);
+                            temp.vertWeight[nV] = temp.vertWeight[vI];
+                        }
+                        temp.F(triI, i) = it->second;
+                    }
                 }
             }
         }
@@ -1489,16 +1604,17 @@ int main(int argc, char *argv[]) {
                         temp.F(triI, i) = vMap[temp.F(triI, i)];
                     }
                 }
-                F_component.assign(n_components, Eigen::MatrixXi());
-                V_ind_component.assign(n_components, std::set<int>());
-                for (int triI = 0; triI < temp.F.rows(); ++triI) {
-                    F_component[C[triI]].conservativeResize(
-                        F_component[C[triI]].rows() + 1, 3);
-                    F_component[C[triI]].bottomRows(1) = temp.F.row(triI);
-                    for (int i = 0; i < 3; ++i) {
-                        V_ind_component[C[triI]].insert(temp.F(triI, i));
-                    }
-                }
+            }
+        }
+
+        F_component.assign(n_components, Eigen::MatrixXi());
+        V_ind_component.assign(n_components, std::set<int>());
+        for (int triI = 0; triI < temp.F.rows(); ++triI) {
+            F_component[C[triI]].conservativeResize(
+                F_component[C[triI]].rows() + 1, 3);
+            F_component[C[triI]].bottomRows(1) = temp.F.row(triI);
+            for (int i = 0; i < 3; ++i) {
+                V_ind_component[C[triI]].insert(temp.F(triI, i));
             }
         }
 
