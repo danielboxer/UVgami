@@ -9,11 +9,11 @@ from ..manager import manager
 from ..utils.ui import (
     draw_active,
     header_icon_limit,
+    is_non_default,
     newline_label,
     only_active,
     toggle,
 )
-from .props import UNWRAP_TIMEOUT_DEFAULT_MINUTES
 
 
 def unwrap_settings(props):
@@ -27,25 +27,40 @@ def unwrap_settings(props):
                 "IMPORT",
                 "Import UVs",
                 "import_uvs",
-                engine.supports_import_uvs and props.import_uvs,
+                engine.supports_import_uvs and is_non_default(props, "import_uvs"),
             ),
             (
                 "MOD_VERTEX_WEIGHT",
                 "Weights",
                 "use_weights",
-                engine.supports_guided and props.use_weights,
+                engine.supports_guided and is_non_default(props, "use_weights"),
             ),
-            ("MOD_DECIM", "Proxy", "use_proxy", props.use_proxy),
-            ("MOD_ARRAY", "Stack Similar", "stack_similar", props.stack_similar),
-            ("MOD_MIRROR", "Symmetry", "use_symmetry", props.use_symmetry),
+            ("MOD_DECIM", "Proxy", "use_proxy", is_non_default(props, "use_proxy")),
+            (
+                "MOD_ARRAY",
+                "Stack Similar",
+                "stack_similar",
+                is_non_default(props, "stack_similar"),
+            ),
+            (
+                "MOD_MIRROR",
+                "Symmetry",
+                "use_symmetry",
+                is_non_default(props, "use_symmetry"),
+            ),
             (
                 "TIME",
                 "Timeout",
                 "unwrap_timeout",
-                props.unwrap_timeout != UNWRAP_TIMEOUT_DEFAULT_MINUTES,
+                is_non_default(props, "unwrap_timeout"),
             ),
             # ("MOD_TRIANGULATE", "Preserve Mesh", "untriangulate", props.preserve_mesh),
-            ("UV_DATA", "No Transfer UVs", "transfer_uvs", not props.transfer_uvs),
+            (
+                "UV_DATA",
+                "Transfer UVs",
+                "transfer_uvs",
+                is_non_default(props, "transfer_uvs"),
+            ),
         )
     )
 
@@ -59,14 +74,14 @@ def fix_settings(props):
                 "SOLO_OFF",
                 QUALITY_LABELS[props.optcuts.quality],
                 "optcuts.quality",
-                props.optcuts.quality != "BALANCED",
+                is_non_default(props, "optcuts.quality"),
             ),
-            ("MOD_DECIM", "Proxy", "use_proxy", props.use_proxy),
+            ("MOD_DECIM", "Proxy", "use_proxy", is_non_default(props, "use_proxy")),
             (
                 "TIME",
                 "Timeout",
                 "unwrap_timeout",
-                props.unwrap_timeout != UNWRAP_TIMEOUT_DEFAULT_MINUTES,
+                is_non_default(props, "unwrap_timeout"),
             ),
         )
     )

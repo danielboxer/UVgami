@@ -1,7 +1,7 @@
 import bpy
 
 from ..utils.paths import get_extension_dir_path
-from ..utils.ui import only_active
+from ..utils.ui import is_non_default, only_active
 from .binary_engine import BinaryEngine, EngineRelease, InstallEngineTask
 
 # must match engine/xatlas/VERSION (check-engine-versions.yml fails on drift)
@@ -53,7 +53,7 @@ class XatlasEngine(BinaryEngine):
                     "UV_ISLANDSEL",
                     f"Chart Cost {max_cost:.2f}",
                     "xatlas.max_cost",
-                    max_cost != 2.0,
+                    is_non_default(props, "xatlas.max_cost"),
                 ),
             )
         )

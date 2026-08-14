@@ -244,7 +244,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
             " With Proxy, unchecking unwraps a duplicate and leaves the"
             " original untouched"
         ),
-        default=True,
+        default=False,
     )
 
     @property
