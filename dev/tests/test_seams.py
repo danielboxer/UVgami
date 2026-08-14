@@ -57,6 +57,7 @@ from seams import (  # noqa: E402
     uv_fit,
     uv_island_groups,
     uv_topology,
+    uvs_collapsed,
     vertex_components,
 )
 from seams.islands import absorb_fragments, split_pieces  # noqa: E402
@@ -1820,3 +1821,13 @@ def test_flatten_distortion_reads_a_mirrored_island_like_its_source():
     mirrored = [[(0.0, 0.0), (-1.0, 0.0), (-1.0, 1.0), (0.0, 1.0)]]
     value = flatten_distortion(FLAT_QUAD_VERTS, [(0, 1, 2, 3)], mirrored, [0])
     assert abs(value - 4.0) < 1e-9
+
+
+def test_collapsed_uvs_are_detected():
+    point = (0.1, 0.9987)
+    assert uvs_collapsed([[point, point, point]] * 100)
+
+
+def test_real_uvs_are_not_collapsed():
+    quad = [(0.0, 0.0), (0.01, 0.0), (0.01, 0.01), (0.0, 0.01)]
+    assert not uvs_collapsed([quad])
