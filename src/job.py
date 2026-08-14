@@ -3,6 +3,7 @@ from enum import Enum
 
 import bmesh
 import bpy
+import mathutils
 import numpy
 
 from .logger import logger
@@ -15,10 +16,21 @@ from .hard_surface import (
     marked_seams,
 )
 from .proxy import finish_transfer, transfer_cuts, transfer_inputs
-from .seams import FlattenError, stack_mirrored, uv_area_fit
+from .seams import (
+    FlattenError,
+    face_edges,
+    half_faces,
+    interface_edges,
+    mirror_seams,
+    open_merged,
+    split_islands,
+    stack_mirrored,
+    uv_area_fit,
+)
+from .seams.proxy_transfer import cut_edges
 from .similar import mirror_permutations
 from .uv_transfer import plan_transfer
-from .utils.geometry import cut_on_axes
+from .utils.geometry import cut_on_axes, set_origin
 from .utils.mesh import (
     check_exists,
     corner_uvs,
@@ -32,6 +44,7 @@ from .utils.mesh import (
     set_bmesh,
     split_per_face,
     triangulate,
+    vertex_positions,
 )
 from .utils.task import BackgroundTask
 
@@ -722,6 +735,15 @@ class ProxyIslandUVs:
         data.update()
 
 
+# the engine round trips positions through 9 decimal obj text, so an output
+# vertex sits within float noise of its whole copy twin, far under this
+OUTPUT_MATCH_CELL = 1e-5
+
+# each pass costs a flatten, and what survives a few is what splitting
+# cannot fix
+REBUILD_SPLIT_PASSES = 3
+
+
 class Symmetrise:
     def __init__(self, axes, center, overlap):
         self.x = "X" in axes
@@ -732,12 +754,176 @@ class Symmetrise:
         # set when the preseed mirrored the seams instead, so the mesh goes
         # out whole and finish has no half to rebuild
         self.kept_whole = False
+        # per-axis vertex maps from mirror_matches, set by the caller
+        self.mirrors = None
+        # the untouched whole mesh and the faces deleted from the engine
+        # copy, set by prepare_half
+        self.whole = None
+        self.dropped = None
 
     def axis_names(self):
         return [axis for axis, used in zip("XYZ", (self.x, self.y, self.z)) if used]
 
     def cut(self, obj):
         cut_on_axes(obj, self.center, self.axis_names())
+
+    def prepare_half(self, obj):
+        """Keep a whole copy aside and delete each mirrored face pair's
+        negative side from obj, so the engine unwraps one half and rebuild
+        maps its cuts back onto the whole mesh.
+
+        Triangulates first, because the whole copy's edges must match the
+        output's for every transferred seam to land on a real edge. The
+        kept side triangulates freely and each dropped quad splits along
+        its twin's diagonal mirrored: an engine cut down a diagonal needs
+        that diagonal's mirror image to be a mesh edge."""
+        if self.mirrors is None:
+            return
+        mesh = obj.data
+        axes = ["XYZ".index(name) for name in self.axis_names()]
+        faces = face_vertices(mesh)
+        dropped = half_faces(vertex_positions(mesh), faces, axes, self.mirrors)
+        # only quads get a mirrored split, an ngon pair keeps both sides
+        dropped = {fi for fi in dropped if len(faces[fi]) <= 4}
+        if not dropped:
+            return
+
+        bm = new_bmesh(obj)
+        bm.verts.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+        pending = [(faces[fi], bm.faces[fi]) for fi in dropped if len(faces[fi]) == 4]
+        bmesh.ops.triangulate(
+            bm,
+            faces=[f for f in bm.faces if f.index not in dropped],
+            quad_method="BEAUTY",
+        )
+        # a quad's twin may not be split yet, so unresolved ones go again
+        while pending:
+            unresolved = []
+            for quad, face in pending:
+                diagonal = self._twin_diagonal(bm, quad)
+                if diagonal is None:
+                    unresolved.append((quad, face))
+                    continue
+                a, b = diagonal
+                bmesh.utils.face_split(face, bm.verts[a], bm.verts[b])
+            if len(unresolved) == len(pending):
+                bmesh.ops.triangulate(
+                    bm, faces=[face for _, face in unresolved], quad_method="BEAUTY"
+                )
+                break
+            pending = unresolved
+        set_bmesh(bm, obj)
+
+        whole = obj.copy()
+        whole.data = mesh.copy()
+        # apply_transforms baked the transform into the data, but the stored
+        # matrix_world only clears on a depsgraph update, which an unlinked
+        # copy never gets
+        whole.parent = None
+        whole.matrix_world = mathutils.Matrix()
+        verts = vertex_positions(mesh)
+        faces = face_vertices(mesh)
+        dropped = half_faces(verts, faces, axes, self.mirrors)
+        if not dropped:
+            bpy.data.meshes.remove(whole.data)
+            bpy.data.objects.remove(whole, do_unlink=True)
+            return
+        self.whole = whole
+        self.dropped = dropped
+        bm = new_bmesh(obj)
+        bm.faces.ensure_lookup_table()
+        bmesh.ops.delete(
+            bm, geom=[bm.faces[fi] for fi in sorted(dropped)], context="FACES"
+        )
+        set_bmesh(bm, obj)
+
+    def _twin_diagonal(self, bm, quad):
+        """Which of the quad's two diagonals mirrors the split its twin
+        already has, as a vertex index pair, or None while the twin is
+        still unsplit."""
+        for m in self.mirrors:
+            if any(v not in m for v in quad):
+                continue
+            for a, b in ((quad[0], quad[2]), (quad[1], quad[3])):
+                if bm.edges.get((bm.verts[m[a]], bm.verts[m[b]])) is not None:
+                    return a, b
+        return None
+
+    def rebuild(self, output, origin):
+        """The whole mesh flattened with the half output's seams mirrored
+        onto it, replacing the half output object. On a failed flatten the
+        whole copy ships with its preseed uvs instead, so the mesh is never
+        missing its deleted half."""
+        whole, self.whole = self.whole, None
+        if whole is None or not check_exists(whole):
+            return output
+        mesh = whole.data
+        verts = vertex_positions(mesh)
+        faces = face_vertices(mesh)
+        edges = face_edges(faces)
+        # the preseed marks are already mirrored and the engine only adds
+        # cuts, so they union in safely and cover a piece that failed
+        seams = marked_seams(mesh)
+        seams |= self._transferred_seams(output, verts, edges)
+        seams = mirror_seams(seams, self.mirrors, edges)
+        seams = open_merged(
+            verts, faces, edges, seams, interface_edges(faces, self.dropped, edges)
+        )
+        try:
+            engine = flatten_engine()
+            uvs = engine.flatten(verts, faces, seams)
+            # the cuts finish_preseed would make, run here so the closure
+            # keeps them mirrored. repeated, a reflatten can ruin a new one
+            for _ in range(REBUILD_SPLIT_PASSES):
+                extra = split_islands(verts, faces, seams, uvs, edges=edges)
+                if not extra:
+                    break
+                seams = mirror_seams(seams | extra, self.mirrors, edges)
+                uvs = engine.flatten(verts, faces, seams)
+            apply_seams(mesh, seams)
+            apply_face_uvs(mesh, uvs)
+        except FlattenError as error:
+            logger.add_data("errors", f"symmetry rebuild kept the preseed uvs: {error}")
+
+        name = output.name
+        for collection in output.users_collection:
+            collection.objects.link(whole)
+        output_mesh = output.data
+        bpy.data.objects.remove(output, do_unlink=True)
+        bpy.data.meshes.remove(output_mesh)
+        whole.name = name
+        mesh.name = name
+        set_origin(whole, origin)
+        return whole
+
+    def _transferred_seams(self, output, verts, edges):
+        """The half output's uv cuts as whole mesh edges, its vertices
+        matched to the whole copy's by position."""
+        out_faces = face_vertices(output.data)
+        torn = cut_edges(out_faces, face_uvs(output.data))
+        if not torn:
+            return set()
+        tree = mathutils.kdtree.KDTree(len(verts))
+        for i, co in enumerate(verts):
+            tree.insert(co, i)
+        tree.balance()
+        positions = numpy.array(verts)
+        diagonal = numpy.linalg.norm(positions.max(axis=0) - positions.min(axis=0))
+        limit = OUTPUT_MATCH_CELL * diagonal
+        mapped = []
+        for co in world_positions(output):
+            _, index, distance = tree.find(co)
+            mapped.append(index if distance <= limit else None)
+        result = set()
+        for a, b in torn:
+            ma, mb = mapped[a], mapped[b]
+            if ma is None or mb is None:
+                continue
+            key = (ma, mb) if ma < mb else (mb, ma)
+            if key in edges:
+                result.add(key)
+        return result
 
     def snap_overlap(self, output):
         """Stack each mirrored island pair exactly, so the pack keeps the

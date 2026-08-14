@@ -13,6 +13,7 @@ import math
 
 from .cuts import connect_loops, crease_relief, cut_path, edge_cost, path_cost
 from .mesh import build, face_edges, find, island_groups, pair, signed_area
+from .rectify import flatten_distortion
 
 
 # strip test: length squared over uv area, about length/width. a folded
@@ -25,6 +26,9 @@ SPLIT_ASPECT = 6.0
 SPLIT_TARGET = 0.5
 # a clean island is scanned for cuts once it passes this fraction of the cap
 SPLIT_NECK = 0.5
+# a crushed island: symmetric Dirichlet past this with no flipped face.
+# above the engine's loosest bound of 5.0, so its outputs never trip it
+SPLIT_DISTORTION = 8.0
 # width ratio across a slab boundary that reads as a neck: a wide feature
 # turning into a strip, where an artist would put the seam
 SPLIT_STEP = 2.5
@@ -501,6 +505,39 @@ def strip_cuts(group, ts, lo, length, cap, areas):
     return []
 
 
+def _spatial_parameter(verts, faces, group):
+    """Face positions along the island's area-weighted 3d principal axis,
+    as (ts, lo, length), or None on zero area. The uv-space measure is
+    useless once a flatten has collapsed the map, this is what a crushed
+    island bins by instead."""
+    centroids = {}
+    area_of = {}
+    for f in group:
+        face = faces[f]
+        centroids[f] = tuple(
+            sum(verts[v][i] for v in face) / len(face) for i in range(3)
+        )
+        area_of[f] = polygon_area(verts, face)
+    total = sum(area_of.values())
+    if total <= 0:
+        return None
+    mean = [sum(area_of[f] * centroids[f][i] for f in group) / total for i in range(3)]
+    covariance = [[0.0] * 3 for _ in range(3)]
+    for f in group:
+        d = [centroids[f][i] - mean[i] for i in range(3)]
+        for i in range(3):
+            for j in range(3):
+                covariance[i][j] += area_of[f] * d[i] * d[j]
+    axis = [1.0, 1.0, 1.0]
+    for _ in range(30):
+        axis = [sum(covariance[i][j] * axis[j] for j in range(3)) for i in range(3)]
+        size = math.sqrt(sum(c * c for c in axis)) or 1.0
+        axis = [c / size for c in axis]
+    ts = {f: sum(centroids[f][i] * axis[i] for i in range(3)) for f in group}
+    lo, hi = min(ts.values()), max(ts.values())
+    return ts, lo, hi - lo
+
+
 def split_islands(
     verts, faces, seams, uvs, weights=None, groups=None, edges=None, relief_cache=None
 ):
@@ -591,7 +628,14 @@ def split_islands(
         ts, lo, length, size, areas, density = m
         # the cap in this island's own uv units
         local_cap = cap / density
-        clean = not island_ruined(group, faces, uvs, edges, seams)
+        ruined = island_ruined(group, faces, uvs, edges, seams)
+        # a ruined island's uv bins still place a good cut, a crushed one's
+        # do not, so a flipped face takes the ruined path
+        crushed = (
+            not ruined
+            and flatten_distortion(verts, faces, uvs, group) > SPLIT_DISTORTION
+        )
+        clean = not ruined and not crushed
         if clean:
             if length <= 0 or length <= local_cap * SPLIT_NECK:
                 continue
@@ -612,6 +656,14 @@ def split_islands(
                         adjacent[key[1]].add(key[0])
             extra |= connect_loops(verts, adjacent, loops, weights, cut_relief())
             continue
+        elif crushed:
+            spatial = _spatial_parameter(verts, faces, group)
+            if spatial is None:
+                continue
+            ts, lo, length = spatial
+            if length <= 0:
+                continue
+            cuts_at = [lo + length / 2]
         else:
             if length <= 0:
                 # every centroid projects to one point (doubled faces), no cut

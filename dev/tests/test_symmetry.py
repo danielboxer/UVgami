@@ -9,7 +9,16 @@ spec = importlib.util.spec_from_file_location(
 )
 sys.modules["seams"] = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sys.modules["seams"])
-from seams import mirror_seams, stack_mirrored  # noqa: E402
+from seams import (  # noqa: E402
+    face_edges,
+    half_faces,
+    interface_edges,
+    island_groups,
+    mirror_seams,
+    open_merged,
+    stack_mirrored,
+    uv_topology,
+)
 
 
 def test_mirror_seams_closes_under_the_map():
@@ -99,6 +108,68 @@ def test_stack_mirrored_stacks_all_four_quadrant_copies():
     mirror_y = dict(enumerate([8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7]))
     moves = apply_moves(uvs, stack_mirrored(faces, uvs, [mirror_x, mirror_y]))
     assert all(face == base for face in moves)
+
+
+def test_half_faces_drops_the_negative_side():
+    verts = [(-1, 0, 0), (-1, 1, 0), (-2, 0, 0), (1, 0, 0), (1, 1, 0), (2, 0, 0)]
+    faces = [(0, 1, 2), (3, 4, 5)]
+    mirror = {0: 3, 1: 4, 2: 5, 3: 0, 4: 1, 5: 2}
+    assert half_faces(verts, faces, [0], [mirror]) == {0}
+
+
+def test_half_faces_keeps_faces_without_an_image():
+    verts = [(-1, 0, 0), (-1, 1, 0), (-2, 0, 0)]
+    faces = [(0, 1, 2)]
+    assert half_faces(verts, faces, [0], [{}]) == set()
+
+
+def test_half_faces_keeps_one_quadrant_under_two_maps():
+    verts = []
+    for sx, sy in ((1, 1), (-1, 1), (1, -1), (-1, -1)):
+        verts += [(sx, sy, 0), (2 * sx, sy, 0), (sx, 2 * sy, 0)]
+    faces = [(0, 1, 2), (3, 4, 5), (6, 7, 8), (9, 10, 11)]
+    mirror_x = dict(enumerate([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8]))
+    mirror_y = dict(enumerate([6, 7, 8, 9, 10, 11, 0, 1, 2, 3, 4, 5]))
+    dropped = half_faces(verts, faces, [0, 1], [mirror_x, mirror_y])
+    assert dropped == {1, 2, 3}
+
+
+def grid_plate(hole):
+    """A 3x3 quad plate as triangles, verts on a 4x4 grid, optionally with
+    the center quad missing. Returns (verts, faces, dropped) with the right
+    quad column kept and everything else dropped."""
+    verts = [(c, r, 0) for r in range(4) for c in range(4)]
+    faces = []
+    dropped = set()
+    for r in range(3):
+        for c in range(3):
+            if hole and (r, c) == (1, 1):
+                continue
+            a, b = r * 4 + c, r * 4 + c + 1
+            d, e = (r + 1) * 4 + c + 1, (r + 1) * 4 + c
+            if c != 2:
+                dropped.update((len(faces), len(faces) + 1))
+            faces += [(a, b, d), (a, d, e)]
+    return verts, faces, dropped
+
+
+def test_open_merged_cuts_one_arc_of_a_ring():
+    verts, faces, dropped = grid_plate(hole=True)
+    edges = face_edges(faces)
+    interface = interface_edges(faces, dropped, edges)
+    # the halves glue above and below the hole, one arc each
+    assert interface == {(2, 6), (10, 14)}
+    seams = open_merged(verts, faces, edges, set(), interface)
+    assert len(seams) == 1 and seams < interface
+    for group in island_groups(faces, seams, edges):
+        assert uv_topology(group, faces, edges, seams)[0] == 1
+
+
+def test_open_merged_leaves_a_merged_disk_alone():
+    verts, faces, dropped = grid_plate(hole=False)
+    edges = face_edges(faces)
+    interface = interface_edges(faces, dropped, edges)
+    assert open_merged(verts, faces, edges, set(), interface) == set()
 
 
 def test_stack_mirrored_ignores_islands_outside_the_map():

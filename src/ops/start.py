@@ -568,9 +568,10 @@ class SessionBuilder:
             preseeded = apply(result)
             if symmetrize_job is not None:
                 if preseeded:
-                    # the seams are mirrored, so the mesh ships whole with no
-                    # cut at the plane and nothing to rebuild at the end
+                    # the seams are mirrored, so the mesh ships whole with
+                    # no cut at the plane
                     symmetrize_job.kept_whole = True
+                    symmetrize_job.prepare_half(obj)
                 else:
                     logger.add_data(
                         "errors",
@@ -595,6 +596,7 @@ class SessionBuilder:
             center = calc_center(obj)
             symmetrize_job = Symmetrise(props.sym_axes, center, props.sym_merge)
             mirrors = mirror_matches(obj.data, center, sorted(props.sym_axes))
+            symmetrize_job.mirrors = mirrors
 
         # seams and uvs are built on the whole mesh, before the symmetry cut
         # and separation: the seams package reads region widths off the full
