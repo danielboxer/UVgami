@@ -281,6 +281,42 @@ def _canonical_cycle(cycle):
     )
 
 
+def _mesh_positions(mesh):
+    positions = numpy.empty(len(mesh.vertices) * 3)
+    mesh.vertices.foreach_get("co", positions)
+    return positions.reshape(-1, 3)
+
+
+# looser than MATCH_CELL: seam mirroring wants the nearest counterpart under
+# small modeling drift, and mirror_seams drops any pair that is not a mesh edge
+SEAM_MATCH_CELL = 1e-3
+
+
+def mirror_matches(mesh, center, axes):
+    """Per-axis partial vertex maps sending each vertex to the nearest vertex
+    across the axis plane through center, within tolerance. No topology
+    requirement: a vertex with no counterpart is absent from its map, so an
+    asymmetric region simply drops out. None when nothing matches."""
+    if len(mesh.vertices) == 0:
+        return None
+    positions = _mesh_positions(mesh)
+    diagonal = numpy.linalg.norm(positions.max(axis=0) - positions.min(axis=0))
+    if diagonal <= 0:
+        return None
+    cell = SEAM_MATCH_CELL * diagonal
+    grid = _grid(positions, cell)
+    maps = []
+    for axis in axes:
+        index = "XYZ".index(axis)
+        reflected = positions.copy()
+        reflected[:, index] = 2.0 * float(center[index]) - reflected[:, index]
+        matched = _partial_match(positions, grid, reflected, cell)
+        maps.append({v: int(m) for v, m in enumerate(matched.tolist()) if m >= 0})
+    if not any(maps):
+        return None
+    return maps
+
+
 def mirror_permutations(mesh, center, axes):
     """Per-axis vertex maps, as dicts, sending each mirror-symmetric loose
     part onto itself or its twin across the axis plane through center.
@@ -291,9 +327,7 @@ def mirror_permutations(mesh, center, axes):
     out. A part must qualify on every chosen axis. None when no part does."""
     if len(mesh.vertices) == 0:
         return None
-    positions = numpy.empty(len(mesh.vertices) * 3)
-    mesh.vertices.foreach_get("co", positions)
-    positions = positions.reshape(-1, 3)
+    positions = _mesh_positions(mesh)
     diagonal = numpy.linalg.norm(positions.max(axis=0) - positions.min(axis=0))
     if diagonal <= 0:
         return None
