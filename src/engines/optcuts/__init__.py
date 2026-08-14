@@ -12,7 +12,7 @@ from ...hard_surface import (
 from ...seams import FlattenError, uvs_collapsed
 from ...utils.io import print_stdin
 from ...utils.mesh import corner_uvs, deselect_all, validate_obj
-from ...utils.ui import only_active
+from ...utils.ui import is_non_default, only_active
 from ..binary_engine import BinaryEngine
 from .install import OPTCUTS, UVGAMI_OT_install_optcuts
 
@@ -199,7 +199,7 @@ class OptcutsEngine(BinaryEngine):
                     "MOD_BEVEL",
                     "Hard Surface",
                     "optcuts.use_hard_surface",
-                    optcuts.use_hard_surface,
+                    is_non_default(props, "optcuts.use_hard_surface"),
                 ),
                 (
                     "AUTO",
@@ -211,7 +211,7 @@ class OptcutsEngine(BinaryEngine):
                     "SOLO_OFF",
                     QUALITY_LABELS[optcuts.quality],
                     "optcuts.quality",
-                    optcuts.quality != "BALANCED",
+                    is_non_default(props, "optcuts.quality"),
                 ),
             )
         )

@@ -10,7 +10,7 @@ import bpy
 
 from .. import Engine
 from ...utils.paths import get_dir_path, get_extension_dir_path
-from ...utils.ui import only_active
+from ...utils.ui import is_non_default, only_active
 from ..install_task import draw_progress, draw_update_row, task_state
 from .install import (
     PARTUV_PLATFORMS,
@@ -166,13 +166,13 @@ class PartuvEngine(Engine):
                     "MOD_EXPLODE",
                     "Geometric Segmentation",
                     "partuv.segmentation",
-                    partuv.segmentation != "AI",
+                    is_non_default(props, "partuv.segmentation"),
                 ),
                 (
                     "MOD_LENGTH",
                     f"Threshold {partuv.threshold:.2f}",
                     "partuv.threshold",
-                    partuv.threshold != 1.25,
+                    is_non_default(props, "partuv.threshold"),
                 ),
             )
         )

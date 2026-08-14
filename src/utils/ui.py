@@ -25,6 +25,18 @@ def only_active(entries):
     return [entry[:3] for entry in entries if entry[3]]
 
 
+def is_non_default(props, path):
+    """Whether a setting differs from the default it was registered with, so
+    changing that default can't leave a comparison behind. path may name a
+    nested group, like "optcuts.quality". An ENUM_FLAG property keeps its
+    default in default_flag instead, so this would always call it changed."""
+    group, name = props, path
+    if "." in path:
+        head, name = path.split(".", 1)
+        group = getattr(props, head)
+    return getattr(group, name) != group.bl_rna.properties[name].default
+
+
 # at ui scale 1. the fixed part is the disclosure triangle, the panel name and
 # the drag grip
 ICON_WIDTH = 20
