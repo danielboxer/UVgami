@@ -29,11 +29,10 @@ from .hard_surface import (
 )
 from .seams import proxy_transfer
 from .utils.mesh import (
+    corner_uvs,
     face_vertices,
-    loop_totals,
     new_bmesh,
     set_bmesh,
-    split_per_face,
 )
 
 
@@ -42,7 +41,8 @@ def make_proxy(obj, target_faces):
 
     Collapsing leaves vertices with no face behind, which the engine reads as
     non-manifold vertices and refuses, so they go before the mesh is used."""
-    triangles = sum(len(poly.vertices) - 2 for poly in obj.data.polygons)
+    # every face fans into loop_total - 2 triangles
+    triangles = len(obj.data.loops) - 2 * len(obj.data.polygons)
     if triangles <= target_faces:
         return False
     bpy.context.view_layer.objects.active = obj
@@ -77,14 +77,6 @@ def _edge_array(data):
     pairs = numpy.empty(len(data.edges) * 2, dtype=numpy.int64)
     data.edges.foreach_get("vertices", pairs)
     return pairs.reshape(-1, 2)
-
-
-def _corner_uvs(data):
-    layer = data.uv_layers.active.data
-    flat = numpy.empty(len(layer) * 2)
-    layer.foreach_get("uv", flat)
-    corners = [tuple(uv) for uv in flat.reshape(-1, 2).tolist()]
-    return split_per_face(corners, loop_totals(data))
 
 
 # candidates to pick a facing match from when snapping a cut vertex
@@ -187,7 +179,7 @@ def transfer_inputs(input_mesh, output):
         "normals": _vertex_array(out_data, "normal"),
         "matrix": numpy.array(output.matrix_world, dtype=numpy.float64),
         "faces": face_vertices(out_data),
-        "corner_uvs": _corner_uvs(out_data),
+        "corner_uvs": corner_uvs(out_data),
     }
     return dense, proxy, restriction_weights(input_mesh)
 

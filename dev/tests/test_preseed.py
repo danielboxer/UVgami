@@ -50,7 +50,7 @@ class GridEngine:
     def __init__(self):
         self.flatten_calls = []
 
-    def flatten(self, verts, faces, seams):
+    def flatten(self, verts, faces, seams, cancelled=None):
         self.flatten_calls.append((len(faces), frozenset(seams)))
         out = []
         for i, face in enumerate(faces):

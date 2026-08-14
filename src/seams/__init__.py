@@ -4,6 +4,7 @@ Modules in pipeline order: mesh, regions, sweeps, cuts, boundaries,
 islands, pipeline."""
 
 from .boundaries import boundary_edges, flatten_teeth, reroute_boundaries
+from .cancel import Cancelled, check_cancelled
 from .cuts import (
     TURN_COST,
     connect_loops,
@@ -71,6 +72,8 @@ __all__ = [
     "LOW_ANGLE",
     "TURN_COST",
     "FlattenEngine",
+    "Cancelled",
+    "check_cancelled",
     "FlattenError",
     "absorb",
     "boundary_edges",

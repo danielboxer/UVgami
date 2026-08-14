@@ -6,6 +6,7 @@ from ...hard_surface import (
     auto_hard_faces,
     build_seam_uvs,
     preseed_work,
+    seam_flags,
     seam_restrictions,
 )
 from ...seams import FlattenError
@@ -105,7 +106,7 @@ class UVGAMI_OT_quick_unwrap(bpy.types.Operator):
             if not applied:
                 counts.append("no seams")
                 continue
-            counts.append(str(sum(1 for edge in obj.data.edges if edge.use_seam)))
+            counts.append(str(int(seam_flags(obj.data).sum())))
 
         deselect_all()
         for obj in selected:
@@ -252,7 +253,7 @@ class OptcutsEngine(BinaryEngine):
         # import uvs on, organic pieces keep the user's map instead
         if not props.optcuts.is_auto or props.import_uvs:
             return has_uvs
-        return has_uvs and any(e.use_seam for e in obj.data.edges)
+        return has_uvs and bool(seam_flags(obj.data).any())
 
     def build_args(self, ctx, input_path, props):
         bounds = {"LESS_STRETCH": "4.05", "BALANCED": "4.2", "FEWER_SEAMS": "5.0"}

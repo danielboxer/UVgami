@@ -5,9 +5,17 @@ from .seams import (
     CREASE_ANGLE,
     FlattenEngine,
     FlattenError,
+    check_cancelled,
     is_hard_surface,
     preseed_uvs,
     vertex_components,
+)
+from .utils.mesh import (
+    face_vertices,
+    loop_starts,
+    loop_uvs,
+    set_loop_uvs,
+    vertex_positions,
 )
 
 
@@ -38,16 +46,17 @@ def seam_restrictions(obj):
     return weights or None
 
 
-def hard_faces(verts, faces, marks, marked="NONE"):
+def hard_faces(verts, faces, marks, marked="NONE", cancelled=None):
     """Face indices of the loose parts worth preseeding, for auto mode.
 
     Each part classifies on its own geometry. A part carrying marked seams
     counts as hard whenever marks are in use: the user placed seams there
     deliberately. With marked ONLY detection never runs, so the marked parts
-    are the whole hard set."""
+    are the whole hard set. cancelled is checked per part."""
     marked_verts = {v for edge in marks for v in edge} if marked != "NONE" else set()
     hard = set()
     for comp in vertex_components(faces):
+        check_cancelled(cancelled)
         if (marked_verts and marked_verts & {v for fi in comp for v in faces[fi]}) or (
             marked != "ONLY" and is_hard_surface(verts, [faces[fi] for fi in comp])
         ):
@@ -57,30 +66,52 @@ def hard_faces(verts, faces, marks, marked="NONE"):
 
 def auto_hard_faces(obj, marked="NONE"):
     mesh = obj.data
-    verts = [tuple(v.co) for v in mesh.vertices]
-    faces = [tuple(p.vertices) for p in mesh.polygons]
+    verts = vertex_positions(mesh)
+    faces = face_vertices(mesh)
     return hard_faces(verts, faces, marked_seams(mesh), marked)
+
+
+def _packed(pairs):
+    """(low, high) index pairs as one integer each, so numpy can match them."""
+    return numpy.fromiter(
+        ((a << 32) | b for a, b in pairs), dtype=numpy.int64, count=len(pairs)
+    )
+
+
+def _edge_keys(mesh):
+    pairs = numpy.empty(len(mesh.edges) * 2, dtype=numpy.int64)
+    mesh.edges.foreach_get("vertices", pairs)
+    pairs = pairs.reshape(-1, 2)
+    return (pairs.min(axis=1) << 32) | pairs.max(axis=1)
 
 
 def apply_seams(mesh, seams):
     """Mark exactly these edges as seams, given as (low, high) index pairs."""
-    pairs = numpy.empty(len(mesh.edges) * 2, dtype=numpy.int64)
-    mesh.edges.foreach_get("vertices", pairs)
-    pairs = pairs.reshape(-1, 2)
-    keys = (pairs.min(axis=1) << 32) | pairs.max(axis=1)
-    wanted = numpy.fromiter(
-        ((a << 32) | b for a, b in seams), dtype=numpy.int64, count=len(seams)
-    )
-    mesh.edges.foreach_set("use_seam", numpy.isin(keys, wanted))
+    mesh.edges.foreach_set("use_seam", numpy.isin(_edge_keys(mesh), _packed(seams)))
+
+
+def apply_interior_seams(mesh, interior, seams):
+    """Mark the seams on the interior edges only, leaving every other edge's
+    mark as it was."""
+    keys = _edge_keys(mesh)
+    flags = seam_flags(mesh)
+    inside = numpy.isin(keys, _packed(interior))
+    flags[inside] = numpy.isin(keys[inside], _packed(seams))
+    mesh.edges.foreach_set("use_seam", flags)
+
+
+def seam_flags(mesh):
+    """Per edge, whether it carries a seam mark."""
+    flags = numpy.empty(len(mesh.edges), dtype=bool)
+    mesh.edges.foreach_get("use_seam", flags)
+    return flags
 
 
 def marked_seams(mesh):
-    seams = set()
-    for edge in mesh.edges:
-        if edge.use_seam:
-            a, b = edge.vertices
-            seams.add((a, b) if a < b else (b, a))
-    return seams
+    pairs = numpy.empty(len(mesh.edges) * 2, dtype=numpy.int64)
+    mesh.edges.foreach_get("vertices", pairs)
+    pairs = numpy.sort(pairs.reshape(-1, 2)[seam_flags(mesh)], axis=1)
+    return {(a, b) for a, b in pairs.tolist()}
 
 
 def apply_face_uvs(mesh, uvs, only=None):
@@ -89,34 +120,47 @@ def apply_face_uvs(mesh, uvs, only=None):
     if only is None:
         flat = [c for face in uvs for uv in face for c in uv]
         layer.foreach_set("uv", flat)
-    else:
-        for f in only:
-            for li, uv in zip(mesh.polygons[f].loop_indices, uvs[f]):
-                layer[li].uv = uv
+        return
+
+    coords = loop_uvs(mesh)
+    starts = loop_starts(mesh)
+    for f in only:
+        start = int(starts[f])
+        coords[start : start + len(uvs[f])] = uvs[f]
+    set_loop_uvs(mesh, coords)
 
 
 def preseed_work(obj, angle, marked="NONE", weights=None, auto=False, mirrors=None):
     """build_seam_uvs split for a worker thread: compute is bpy-free and safe
-    off the main thread, apply(compute()) writes the result back. compute
-    returns None when there is nothing to preseed (no hard parts in auto, or
-    an empty seam set on a closed mesh), which apply passes through as
-    False."""
+    off the main thread, apply(compute(cancelled)) writes the result back.
+    compute returns None when there is nothing to preseed (no hard parts in
+    auto, or an empty seam set on a closed mesh), which apply passes through
+    as False, and raises seams.Cancelled when the caller gave up on it."""
     mesh = obj.data
-    verts = [tuple(v.co) for v in mesh.vertices]
-    faces = [tuple(p.vertices) for p in mesh.polygons]
+    verts = vertex_positions(mesh)
+    faces = face_vertices(mesh)
     marks = marked_seams(mesh) if (marked != "NONE" or auto) else frozenset()
     engine = flatten_engine()
 
-    def compute():
+    def compute(cancelled=None):
         only = None
         if auto:
-            only = hard_faces(verts, faces, marks, marked)
+            only = hard_faces(verts, faces, marks, marked, cancelled)
             if not only:
                 return None
             if len(only) == len(faces):
                 only = None
         result = preseed_uvs(
-            engine, verts, faces, angle, marked, weights, only, marks, mirrors
+            engine,
+            verts,
+            faces,
+            angle,
+            marked,
+            weights,
+            only,
+            marks,
+            mirrors,
+            cancelled,
         )
         if result is None:
             return None
@@ -160,8 +204,8 @@ def build_seam_uvs(obj, angle=CREASE_ANGLE, marked="NONE", weights=None, only=No
     the result back. Returns False when the seam set came out empty on a
     closed mesh, leaving the mesh untouched."""
     mesh = obj.data
-    verts = [tuple(v.co) for v in mesh.vertices]
-    faces = [tuple(p.vertices) for p in mesh.polygons]
+    verts = vertex_positions(mesh)
+    faces = face_vertices(mesh)
     result = preseed_uvs(
         flatten_engine(),
         verts,

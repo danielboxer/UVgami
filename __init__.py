@@ -21,6 +21,7 @@ from .src.ops.stop import (
     UVGAMI_OT_stop,
     UVGAMI_OT_cancel,
     UVGAMI_OT_cancel_all,
+    UVGAMI_OT_cancel_background,
 )
 from .src.ops.guides import (
     UVGAMI_OT_draw_guides,
@@ -81,6 +82,7 @@ classes = (
     UVGAMI_OT_start,
     UVGAMI_OT_stop,
     UVGAMI_OT_cancel_all,
+    UVGAMI_OT_cancel_background,
     UVGAMI_OT_expand,
     UVGAMI_OT_open_preferences,
     UVGAMI_OT_add_grid,

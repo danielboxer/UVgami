@@ -173,6 +173,32 @@ class UVGAMI_OT_cancel(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class UVGAMI_OT_cancel_background(bpy.types.Operator):
+    bl_idname = "uvgami.cancel_background"
+    bl_label = "Cancel"
+    bl_description = "Cancel this preseed or proxy finish"
+
+    name: bpy.props.StringProperty()
+
+    def execute(self, context):
+        # resolved at execute time, so a stale click is a no-op
+        entry = next((p for p in manager.preparing if p.name == self.name), None)
+        if entry is not None:
+            entry.cancel()
+        else:
+            transfer = next(
+                (t for t in manager.pending_transfers if t.name == self.name), None
+            )
+            if transfer is None:
+                return {"CANCELLED"}
+            # dropped like stop_all, or the dispatch timer reports it failed
+            transfer.job.cancel()
+            manager.pending_transfers.remove(transfer)
+        tag_redraw()
+        self.report({"INFO"}, "Cancelled")
+        return {"FINISHED"}
+
+
 class UVGAMI_OT_cancel_all(bpy.types.Operator):
     bl_idname = "uvgami.cancel_all"
     bl_label = "Cancel All"

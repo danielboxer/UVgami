@@ -1,7 +1,7 @@
 import contextlib
-import threading
+import functools
 import time
-from collections import deque
+from collections import deque, namedtuple
 
 import bmesh
 import bpy
@@ -19,7 +19,7 @@ from ..job import (
     TransferUVs,
 )
 from ..logger import logger
-from ..manager import manager
+from ..manager import Preparing, manager
 from ..progress_bar import progress_bar
 from ..proxy import make_proxy
 from ..seams import (
@@ -47,8 +47,13 @@ from ..utils.paths import (
     get_io_dir_paths,
     get_preferences,
 )
+from ..utils.task import BackgroundTask
 from ..utils.ui import tag_redraw
 from .guides import SEAM_RESTRICTIONS_GROUP
+
+Preseeding = namedtuple(
+    "Preseeding", ["task", "apply", "obj", "index", "symmetrize_job", "mirrors"]
+)
 
 # process objects for at most this long per tick before yielding to the event loop
 TICK_BUDGET = 0.033
@@ -429,10 +434,10 @@ class InputExporter:
         ]
 
         # per-face indices, so they can be restored after import
-        material_indices = [0] * len(obj.data.polygons)
+        material_indices = numpy.empty(len(obj.data.polygons), dtype=numpy.int32)
         obj.data.polygons.foreach_get("material_index", material_indices)
 
-        face_smooth = [False] * len(obj.data.polygons)
+        face_smooth = numpy.empty(len(obj.data.polygons), dtype=bool)
         obj.data.polygons.foreach_get("use_smooth", face_smooth)
 
         vertex_groups = {}
@@ -445,7 +450,7 @@ class InputExporter:
                         break
             vertex_groups[group.name] = weights
 
-        return materials, material_indices, vertex_groups, face_smooth
+        return materials, material_indices.tolist(), vertex_groups, face_smooth.tolist()
 
 
 def input_job(props):
@@ -486,9 +491,16 @@ class SessionBuilder:
         self.piece_has_uvs = {}
         self.piece_matrix = {}
         self.pending = None
+        # cancelled mid preseed, dropped when the thread unwinds
+        self.cancelled = set()
         # queue ui placeholders until each object's pieces exist
-        self.preparing = [names[obj.name][0] for _, obj in self.remaining]
-        manager.preparing.extend(self.preparing)
+        self.preparing = {
+            obj: Preparing(
+                names[obj.name][0], functools.partial(self.cancel_object, obj)
+            )
+            for _, obj in self.remaining
+        }
+        manager.preparing.extend(self.preparing.values())
 
     def tick(self):
         # separation and uv writes need object mode
@@ -506,8 +518,8 @@ class SessionBuilder:
                     bpy.data.objects.remove(piece, do_unlink=True)
                 bpy.data.collections.remove(self.temp_collection)
             manager.finished_adding()
-            for name in self.preparing:
-                manager.drop_preparing(name)
+            for entry in self.preparing.values():
+                manager.drop_preparing(entry)
             self.preparing.clear()
             # settle the pieces already added, none of them exported yet
             for unwrap in self.piece_unwrap.values():
@@ -517,18 +529,45 @@ class SessionBuilder:
                 progress_bar.remove()
             return None
 
+    def _drop_preparing(self, obj):
+        entry = self.preparing.pop(obj, None)
+        if entry is not None:
+            manager.drop_preparing(entry)
+
+    def cancel_object(self, obj):
+        """Drop one object from the session. A running preseed only stops at
+        its next check, so it is left to unwind."""
+        if self.pending is not None and self.pending.obj is obj:
+            self.pending.task.cancel()
+            self.cancelled.add(obj)
+        else:
+            self.remaining = deque(
+                entry for entry in self.remaining if entry[1] is not obj
+            )
+            self._drop_object(obj)
+
+    def _drop_object(self, obj):
+        self._drop_preparing(obj)
+        if check_exists(obj):
+            bpy.data.objects.remove(obj, do_unlink=True)
+
     def _advance(self):
         if self.pending is not None:
-            thread, box, apply, obj, index, symmetrize_job, mirrors = self.pending
-            if thread.is_alive():
+            task, apply, obj, index, symmetrize_job, mirrors = self.pending
+            if not task.done():
                 return 0.1
             self.pending = None
-            if "error" in box:
-                raise box["error"]
+            if obj in self.cancelled:
+                # it may have finished before it saw the flag, so the result
+                # is thrown away rather than trusted to be Cancelled
+                self.cancelled.discard(obj)
+                self._drop_object(obj)
+                return 0.0
+            result = task.result()
             if not check_exists(obj):
                 raise RuntimeError("Undo removed the working copy mid unwrap")
             props = bpy.context.scene.uvgami
-            preseeded = apply(box.get("result"))
+            preseeded = apply(result)
             if symmetrize_job is not None:
                 if preseeded and mirrors:
                     # the seams are mirrored, so the mesh ships whole with no
@@ -566,17 +605,9 @@ class SessionBuilder:
             self._separate(obj, index, has_uvs, symmetrize_job)
             return 0.0
         compute, apply = work
-        box = {}
-
-        def run():
-            try:
-                box["result"] = compute()
-            except BaseException as error:  # rethrown on the main thread
-                box["error"] = error
-
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-        self.pending = (thread, box, apply, obj, index, symmetrize_job, mirrors)
+        self.pending = Preseeding(
+            BackgroundTask(compute), apply, obj, index, symmetrize_job, mirrors
+        )
         return 0.1
 
     def _input_jobs(self, props, index):
@@ -678,9 +709,7 @@ class SessionBuilder:
             )
             added.append(obj)
 
-        if unwrap_name in self.preparing:
-            self.preparing.remove(unwrap_name)
-            manager.drop_preparing(unwrap_name)
+        self._drop_preparing(obj)
 
         deselect_all()
         for piece in added:

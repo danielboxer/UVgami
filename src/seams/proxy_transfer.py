@@ -5,20 +5,19 @@ disks, snapped onto the dense mesh's own edges, and the dense mesh is
 flattened once. proxy.py adapts a Blender mesh onto these calls."""
 
 import collections
-import time
 
 import numpy
 
+from .cancel import check_cancelled
 from .cuts import connect_loops, snap_paths
 from .islands import uv_topology
 from .mesh import face_edges, island_groups, pair
-from .preseed import FlattenError, check_manifold
+from .preseed import check_manifold
 
 # the flatten is nearly all the work, so it gets the rest of the bar
 CUT_PROGRESS = 0.01
 REPAIR_PROGRESS = 0.06
 SNAP_PROGRESS = 0.1
-FLATTEN_POLL_SECONDS = 0.05
 
 
 def cut_edges(faces, corner_uvs):
@@ -94,9 +93,6 @@ def finish_proxy(dense, proxy, weights, engine, mapped, progress=None, cancelled
         if progress is not None:
             progress(fraction)
 
-    def is_cancelled():
-        return cancelled is not None and cancelled()
-
     dense_verts = numpy.asarray(dense["positions"], dtype=numpy.float64).tolist()
     dense_faces = dense["faces"]
 
@@ -111,15 +107,13 @@ def finish_proxy(dense, proxy, weights, engine, mapped, progress=None, cancelled
     report(SNAP_PROGRESS)
 
     check_manifold(dense_faces)
-    if is_cancelled():
-        raise FlattenError("cancelled")
-    run = engine.start(dense_verts, dense_faces, seams)
-    while run.poll() is None:
-        if is_cancelled():
-            run.stop()
-            raise FlattenError("cancelled")
-        report(SNAP_PROGRESS + (1 - SNAP_PROGRESS) * run.progress)
-        time.sleep(FLATTEN_POLL_SECONDS)
-    uvs = run.result()
+    check_cancelled(cancelled)
+    uvs = engine.flatten(
+        dense_verts,
+        dense_faces,
+        seams,
+        cancelled,
+        lambda fraction: report(SNAP_PROGRESS + (1 - SNAP_PROGRESS) * fraction),
+    )
     report(1.0)
     return seams, uvs

@@ -7,6 +7,7 @@ worth preseeding."""
 import collections
 
 from .boundaries import boundary_edges, flatten_teeth, reroute_boundaries
+from .cancel import check_cancelled
 from .cuts import crease_relief, disk_cuts
 from .mesh import LOW_ANGLE, build, diagonal, norm, pair, turn_angle
 from .regions import (
@@ -25,7 +26,14 @@ from .sweeps import split_sweeps, sweep_rims
 
 
 def feature_labels(
-    verts, faces, angle=CREASE_ANGLE, rims=True, forced=None, scale=None, walls=None
+    verts,
+    faces,
+    angle=CREASE_ANGLE,
+    rims=True,
+    forced=None,
+    scale=None,
+    walls=None,
+    cancelled=None,
 ):
     """Region labels from the merge passes: partition at auto width, the three
     merges, sweep rims. What survives is the feature structure the seams will
@@ -53,10 +61,12 @@ def feature_labels(
     label, bounds = absorb(
         verts, faces, weighted, areas, edges, root, min_width, forced
     )
+    check_cancelled(cancelled)
     label = merge_smooth(edges, label, bounds, min_width, angle, forced)
     label = merge_flat(weighted, areas, edges, label, angle, forced)
     label = close_rings(verts, weighted, areas, edges, label, angle, forced)
     presplit = label
+    check_cancelled(cancelled)
     if rims:
         label = split_sweeps(verts, faces, weighted, areas, edges, label, min_width)
     locked = set()
@@ -167,7 +177,15 @@ def is_hard_surface(verts, faces):
     ) and boundary_creased / boundary >= BOUNDARY_CREASED
 
 
-def seam_edges(verts, faces, angle=CREASE_ANGLE, rims=True, weights=None, forced=None):
+def seam_edges(
+    verts,
+    faces,
+    angle=CREASE_ANGLE,
+    rims=True,
+    weights=None,
+    forced=None,
+    cancelled=None,
+):
     """The full pipeline at auto width: partition, merges, cleanup, seams.
 
     angle is what counts as a feature: boundaries turning less than it
@@ -182,6 +200,8 @@ def seam_edges(verts, faces, angle=CREASE_ANGLE, rims=True, weights=None, forced
     passes' forced set: a rim traces a per-face wall/cap or panel split, so
     it staircases, and only flatten_teeth and reroute_boundaries can settle
     it. A moved rim stays a seam through boundary_edges, no re-adding.
+
+    cancelled is checked between passes, so a cancel lands at the next one.
     """
     walls = None
     cut_from_start = forced
@@ -189,11 +209,13 @@ def seam_edges(verts, faces, angle=CREASE_ANGLE, rims=True, weights=None, forced
         rim_edges, walls = sweep_rims(verts, faces)
         if rim_edges:
             cut_from_start = rim_edges | (forced or set())
+    check_cancelled(cancelled)
     weighted, areas, edges, label, min_width, locked = feature_labels(
-        verts, faces, angle, rims, cut_from_start, walls=walls
+        verts, faces, angle, rims, cut_from_start, walls=walls, cancelled=cancelled
     )
     label = flatten_teeth(weighted, faces, edges, label, angle, forced)
     relief = crease_relief(verts, faces, weighted, edges)
+    check_cancelled(cancelled)
     label = reroute_boundaries(verts, faces, areas, edges, label, relief, forced)
     # everything since absorb can leave a region under its width floor, so
     # absorb again, with the deliberate boundaries locked
@@ -208,11 +230,13 @@ def seam_edges(verts, faces, angle=CREASE_ANGLE, rims=True, weights=None, forced
         forced,
         locked,
     )
+    check_cancelled(cancelled)
     hinges = (
         unfold_hinges(verts, faces, weighted, edges, label, cut_from_start)
         if rims
         else set()
     )
+    check_cancelled(cancelled)
     # disk_cuts counts in-region forced edges as slits, so it gets only the
     # user marks: a rim the cleanup moved would otherwise linger as one
     seams = (boundary_edges(edges, label) - hinges) | disk_cuts(
@@ -227,5 +251,5 @@ def seam_edges(verts, faces, angle=CREASE_ANGLE, rims=True, weights=None, forced
     ):
         # a closed mesh that merged seamless cannot flatten, every feature
         # sat under the angle, so retry at the floor
-        return seam_edges(verts, faces, CREASE_ANGLE, rims, weights, forced)
+        return seam_edges(verts, faces, CREASE_ANGLE, rims, weights, forced, cancelled)
     return seams
