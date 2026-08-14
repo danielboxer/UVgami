@@ -72,6 +72,7 @@ class UnwrapManager:
         self.pending_transfers = []
         self.transfer_uv_failed = False
         self.transfer_uv_fail_detail = ""
+        self.transfer_uv_missing_pieces = False
         self.transfer_uv_split_count = 0
         self.error_code = 0
         self.error_stderr = ""
@@ -486,6 +487,16 @@ class UnwrapManager:
                     if obj == output:
                         pack_index = i
                         break
+            # a group missing pieces can never cover every input face
+            group = unwrap.join_job
+            if group is not None and len(group.finished) < group.expected:
+                failed = group.expected - len(group.finished)
+                self.transfer_uv_missing_pieces = True
+                report = TransferReport(
+                    False, 0, f"{failed} of {group.expected} parts failed to unwrap"
+                )
+                self._settle_transfer(job, output, pack_index, report)
+                return
             if isinstance(job, ProxyUVs):
                 report = job.start(self.input[job], output)
                 if report is None:
@@ -722,10 +733,10 @@ class UnwrapManager:
 
             if self.transfer_uv_failed:
                 detail = self.transfer_uv_fail_detail or "unknown reason"
-                msg.append(
-                    f"UV transfer failed: {detail}."
-                    " This can happen with cuts or symmetry enabled."
-                )
+                line = f"UV transfer failed: {detail}."
+                if not self.transfer_uv_missing_pieces:
+                    line += " This can happen with cuts or symmetry enabled."
+                msg.append(line)
 
             if self.transfer_uv_split_count > 0:
                 count = self.transfer_uv_split_count

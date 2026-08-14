@@ -179,6 +179,10 @@ Scaffold::Scaffold(const TriMesh &mesh, Eigen::MatrixXd UV_bnds,
     // "q" for high quality mesh generation
     // "Q" for quiet mode (no output)
 
+    // degenerate boundaries can leave no triangles, crashing computeFeatures
+    if (airMesh.F.rows() == 0)
+        throw std::runtime_error("air mesh triangulation came back empty");
+
     airMesh.V_rest.resize(airMesh.V.rows(), 3);
     airMesh.V_rest << airMesh.V, Eigen::VectorXd::Zero(airMesh.V.rows());
     airMesh.areaThres_AM =

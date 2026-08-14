@@ -1209,10 +1209,23 @@ int main(int argc, char *argv[]) {
         for (int c = 0; c < n_components; ++c) {
             inverted[c] = !temp.checkInversion(true, chartTris[c]);
         }
-        bool anyInversion = false, allDisks = true;
+
+        // zero area passes the inversion test and a point boundary evades
+        // the crossing test, but a collapsed chart cannot seed the solve
+        std::vector<bool> degenerate(n_components, false);
+        for (int triI = 0; triI < temp.F.rows(); ++triI) {
+            const Eigen::RowVector3i &tri = temp.F.row(triI);
+            const Eigen::RowVector2d e1 = temp.V.row(tri[1]) - temp.V.row(tri[0]);
+            const Eigen::RowVector2d e2 = temp.V.row(tri[2]) - temp.V.row(tri[0]);
+            if (e1[0] * e2[1] - e1[1] * e2[0] <= 0.0)
+                degenerate[C[triI]] = true;
+        }
+
+        bool anyInversion = false, allDisks = true, anyDegenerate = false;
         for (int c = 0; c < n_components; ++c) {
             anyInversion = anyInversion || inverted[c];
             allDisks = allDisks && isDisk[c];
+            anyDegenerate = anyDegenerate || degenerate[c];
         }
         // a stitch run can keep charts with holes: an interior split the
         // engine never merged back leaves a slit, and the machinery is
@@ -1249,19 +1262,22 @@ int main(int argc, char *argv[]) {
         // whole-map decision first, so a map that was kept before is still
         // kept byte for byte
         keepInputUV = (allDisks || stitchKeepable) && !anyInversion &&
-                      crossingVerts.empty();
+                      !anyDegenerate && crossingVerts.empty();
 
-        int badInverted = 0, badOverlapping = 0, badNonDisk = 0;
+        int badInverted = 0, badOverlapping = 0, badNonDisk = 0,
+            badDegenerate = 0;
         if (keepInputUV) {
             keepChart.assign(n_components, true);
             keptCharts = n_components;
         } else {
             for (int c = 0; c < n_components; ++c) {
-                keepChart[c] =
-                    isDisk[c] && !overlaps[c] && !inverted[c] && !pinched[c];
+                keepChart[c] = isDisk[c] && !overlaps[c] && !inverted[c] &&
+                               !pinched[c] && !degenerate[c];
                 keptCharts += keepChart[c];
                 if (inverted[c]) {
                     ++badInverted;
+                } else if (degenerate[c]) {
+                    ++badDegenerate;
                 } else if (overlaps[c]) {
                     ++badOverlapping;
                 } else if (!isDisk[c]) {
@@ -1280,8 +1296,8 @@ int main(int argc, char *argv[]) {
         } else if (!keepInputUV) {
             std::cout << "kept " << keptCharts << " of " << n_components
                       << " input UV charts, re-cutting " << badInverted
-                      << " inverted, " << badOverlapping
-                      << " self-intersecting, " << badNonDisk
+                      << " inverted, " << badDegenerate << " degenerate, "
+                      << badOverlapping << " self-intersecting, " << badNonDisk
                       << " not disk-topology" << std::endl;
         }
     }

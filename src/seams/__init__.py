@@ -39,6 +39,7 @@ from .mesh import (
     uv_area_fit,
     uv_fit,
     uv_island_groups,
+    uvs_collapsed,
     vertex_components,
 )
 from .pipeline import is_hard_surface, seam_edges
@@ -126,5 +127,6 @@ __all__ = [
     "uv_fit",
     "uv_island_groups",
     "uv_topology",
+    "uvs_collapsed",
     "vertex_components",
 ]

@@ -102,6 +102,15 @@ def signed_area(pts):
     return total / 2
 
 
+# between a collapsed map's float noise and any real packed map's area
+COLLAPSED_UV_AREA = 1e-8
+
+
+def uvs_collapsed(polygons):
+    """Whether a uv map is crushed to points, a failed flatten's signature."""
+    return sum(abs(signed_area(pts)) for pts in polygons) < COLLAPSED_UV_AREA
+
+
 def island_groups(faces, seams, edges):
     """Faces grouped into uv islands: joined by interior edges not on a seam."""
     parent = list(range(len(faces)))

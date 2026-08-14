@@ -9,9 +9,9 @@ from ...hard_surface import (
     seam_flags,
     seam_restrictions,
 )
-from ...seams import FlattenError
+from ...seams import FlattenError, uvs_collapsed
 from ...utils.io import print_stdin
-from ...utils.mesh import deselect_all, validate_obj
+from ...utils.mesh import corner_uvs, deselect_all, validate_obj
 from ...utils.ui import only_active
 from ..binary_engine import BinaryEngine
 from .install import OPTCUTS, UVGAMI_OT_install_optcuts
@@ -251,9 +251,12 @@ class OptcutsEngine(BinaryEngine):
         # auto mode routes per loose part: a piece the preseed skipped has no
         # seams and goes to the engine bare, to be cut from scratch. With
         # import uvs on, organic pieces keep the user's map instead
-        if not props.optcuts.is_auto or props.import_uvs:
+        if props.optcuts.is_auto and not props.import_uvs:
+            has_uvs = has_uvs and bool(seam_flags(obj.data).any())
+        if not has_uvs or obj.data.uv_layers.active is None:
             return has_uvs
-        return has_uvs and bool(seam_flags(obj.data).any())
+        # a collapsed flatten goes bare too, the engine can fail re-cutting it
+        return not uvs_collapsed(corner_uvs(obj.data))
 
     def build_args(self, ctx, input_path, props):
         bounds = {"LESS_STRETCH": "4.05", "BALANCED": "4.2", "FEWER_SEAMS": "5.0"}
