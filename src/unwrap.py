@@ -39,7 +39,6 @@ class Unwrap:
         self.path = path
         self.output_path = get_extension_dir_path() / "output" / f"{self.path.stem}.obj"
 
-        # jobs
         self.preserve_job = jobs[0]
         self.join_job = jobs[1]
         if self.join_job is not None:
@@ -48,10 +47,9 @@ class Unwrap:
         self.symmetrize_job = jobs[3]
         self.transfer_uvs_job = jobs[4]
 
-        # a detected duplicate piece skips the engine and takes copy_of's
-        # output moved by copy_matrix, settling when copy_of does. a
-        # reordered copy's own indices don't line up with that output, so it
-        # exports copy_of's metadata instead of its own
+        # a duplicate piece skips the engine and takes copy_of's output moved
+        # by copy_matrix. a reordered copy's indices don't line up with that
+        # output, so it exports copy_of's metadata instead
         self.copy_of = None
         self.copy_matrix = None
         self.copy_reordered = False
@@ -66,9 +64,7 @@ class Unwrap:
 
         # export data, filled by set_export_data
         self.is_exported = False
-        # seam restrictions
         self.guide_path = None
-        # for untriangulation (added edges)
         self.edge_path = None
         self.origin = None
         self.materials = []
@@ -78,10 +74,9 @@ class Unwrap:
         self.vertex_groups = {}
         self.face_smooth = []
 
-        # unwrap state
         self.is_active = False
         self.progress = (0, 0, 1)
-        # unwrap process, shared with other unwraps when part of a batch process
+        # shared with the other unwraps when part of a batch process
         self.process = None
         self.batch_process = None
         self.viewing = False
@@ -167,8 +162,8 @@ class Unwrap:
         """None while running, 0 on success, or a failure code."""
         if self.batch_process is None:
             return self.process.poll()
-        # the engine reports when it reaches each mesh, the timeout clock
-        # starts then
+        # the engine reports when it reaches each mesh, which starts the
+        # timeout clock
         if self.started_at is None and self.path.stem in self.batch_process.started:
             self.started_at = time.monotonic()
         return self.batch_process.poll_result(self.path.stem)
@@ -180,7 +175,7 @@ class Unwrap:
 
     def release_engine(self):
         """This unwrap no longer needs the engine. A batch process is left
-        running for the other meshes; deleting our input file in cleanup()
+        running for the other meshes, and deleting the input file in cleanup()
         is what makes the cli skip this mesh."""
         if self.batch_process is not None:
             return
@@ -222,7 +217,6 @@ class Unwrap:
             try:
                 parsed = tuple(float(num) for num in progress.split())
             except ValueError:
-                # invalid progress string
                 return
             if parsed != self.progress:
                 self.progress = parsed

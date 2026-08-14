@@ -52,7 +52,7 @@ class UVGAMI_OT_stop(bpy.types.Operator):
         for unwrap in unwraps:
             if unwrap.batch_process is not None:
                 # pending batch members are cancelled by deleting their input
-                # so the cli skips them; in-flight or done ones finish normally
+                # so the cli skips them, in-flight ones finish normally
                 if unwrap.path.stem not in unwrap.batch_process.started:
                     to_cancel.append(unwrap)
                     stopped_pending = True
@@ -83,8 +83,8 @@ class UVGAMI_OT_stop(bpy.types.Operator):
         return {"FINISHED"}
 
     def _cancel_collected(self, context, to_cancel):
-        # pieces of one separated mesh share a join_job; merge them into a
-        # single import instead of littering the collection with N objects
+        # pieces of one separated mesh share a join_job, so merge them into
+        # one import instead of adding an object per piece
         groups = {}
         singles = []
         for unwrap in to_cancel:

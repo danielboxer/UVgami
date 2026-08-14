@@ -124,15 +124,13 @@ def is_hard_surface(verts, faces):
     region = collections.defaultdict(float)
     for i, r in label.items():
         region[r] += areas[i]
-    # rims are locked, so a wall region is exactly its sweep cluster and a
-    # dominant one is real structure, not a structureless blob
+    # a smooth cylinder's wall is one big region, so the organic guard skips it
     wall_regions = {label[i] for i in walls}
     top = max(region, key=region.get)
     if region[top] / total >= ORGANIC_SHARE and top not in wall_regions:
         return False
     if len(faces) / len(region) < FRAGMENT_FACES:
-        # a low poly box is a few big facets, not noise: the specks this
-        # guard hunts are curved
+        # a low poly box trips FRAGMENT_FACES too, only curled regions are noise
         root = partition(faces, weighted, edges, LOW_ANGLE)
         panels = collections.defaultdict(list)
         for i in range(len(faces)):
@@ -217,8 +215,7 @@ def seam_edges(
     relief = crease_relief(verts, faces, weighted, edges)
     check_cancelled(cancelled)
     label = reroute_boundaries(verts, faces, areas, edges, label, relief, forced)
-    # everything since absorb can leave a region under its width floor, so
-    # absorb again, with the deliberate boundaries locked
+    # everything since absorb can leave a region under its width floor
     label, _ = absorb(
         verts,
         faces,
@@ -249,7 +246,6 @@ def seam_edges(
         and angle > CREASE_ANGLE
         and all(len(owners) != 1 for owners in edges.values())
     ):
-        # a closed mesh that merged seamless cannot flatten, every feature
-        # sat under the angle, so retry at the floor
+        # every feature sat under the angle, so the closed mesh can't flatten
         return seam_edges(verts, faces, CREASE_ANGLE, rims, weights, forced, cancelled)
     return seams

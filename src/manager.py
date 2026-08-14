@@ -50,7 +50,7 @@ class UnwrapManager:
         self._dispatch_handle = None
         # one per Unwrap still feeding pieces in, blocks the session finishing
         self.pieces_still_arriving = 0
-        # _reset_session must not clear this, builders own their own entries
+        # _reset_session must not clear this, the builders add and remove entries
         self.preparing = []
         # session progress as (done, running, remaining) fractions
         self.progress = numpy.zeros(3)
@@ -64,11 +64,8 @@ class UnwrapManager:
         finish() before a session ever starts."""
         # (unwrap, result) per settled piece, the source for all counts
         self.results = []
-        # settled groups and solo unwraps waiting for the dispatch timer to
-        # import them
         self._to_import = []
-        # one per proxy finish still running in its worker thread, applied by
-        # the dispatch timer when it is done
+        # one per proxy finish still running in its worker thread
         self.pending_transfers = []
         self.transfer_uv_failed = False
         self.transfer_uv_fail_detail = ""
@@ -115,11 +112,9 @@ class UnwrapManager:
         engine = self.engine
         if engine.batches_queue(props):
             if self.pieces_still_arriving > 0:
-                # batch needs the whole queue at once; wait for every exporter to
-                # finish exporting (the dispatch timer retries each tick)
+                # a batch needs the whole queue at once, so wait for every exporter
                 return
             if any(u.batch_process is not None for u in self._running):
-                # wait for the running batch process to finish
                 return
             if len(self._queue) > 1:
                 self._start_batch_process(engine, props)
@@ -130,8 +125,8 @@ class UnwrapManager:
         else:
             max_concurrent = 1
         # pieces export in queue order, so an unexported piece means everything
-        # behind it is unexported too. copy twins never run, they stay queued
-        # until their representative settles them
+        # behind it is unexported too. copy twins never run, their representative
+        # settles them
         for unwrap in list(self._queue):
             if len(self._running) >= max_concurrent:
                 break
@@ -145,8 +140,6 @@ class UnwrapManager:
 
     def _start_batch_process(self, engine, props):
         """Unwrap every queued mesh in one engine process."""
-        # copy twins never run, they stay queued until their representative
-        # settles them
         unwraps = [u for u in self._queue if u.copy_of is None]
         self._queue = deque(u for u in self._queue if u.copy_of is not None)
         args = engine.build_batch_args(
@@ -162,7 +155,6 @@ class UnwrapManager:
             self._running.append(unwrap)
 
     def _dispatch(self):
-        # guard against running after finish
         if not self.is_active:
             return None
 
@@ -184,8 +176,7 @@ class UnwrapManager:
                     elif time.monotonic() - unwrap.stop_requested_at > STOP_SECONDS:
                         unwrap.stop_process()
                         failed.append((unwrap, -3))
-                        # already failed this tick, don't let the poll below re-add
-                        # it once the killed process reports an exit code
+                        # already failed this tick, the poll below must not re-add it
                         continue
 
                 timeout_minutes = bpy.context.scene.uvgami.unwrap_timeout
@@ -208,8 +199,7 @@ class UnwrapManager:
                     else:
                         unwrap.stop_process()
                         failed.append((unwrap, -2))
-                        # already failed this tick, don't let the poll below
-                        # re-add it once the killed process reports an exit code
+                        # already failed this tick, the poll below must not re-add it
                         continue
 
                 ret_code = unwrap.poll_engine()
@@ -221,9 +211,8 @@ class UnwrapManager:
                         # otherwise stay running forever
                         failed.append((unwrap, -4))
                     else:
-                        # a batched mesh that never started and still has its
-                        # input goes back to the queue for a fresh batch instead
-                        # of inheriting the dead process's exit code
+                        # a batched mesh that never started goes back to the queue
+                        # rather than take the dead process's exit code
                         stem = unwrap.path.stem
                         if (
                             unwrap.batch_process is not None
@@ -237,7 +226,6 @@ class UnwrapManager:
             logger.update_time()
             self._update_progress_bar()
 
-            # process completions (each isolated so one failure doesn't block others)
             for unwrap in completed:
                 try:
                     self._process_completion(unwrap)
@@ -253,7 +241,6 @@ class UnwrapManager:
                     # settle the piece even on error so its group can't hang
                     self.record_result(unwrap, Result.INVALID)
 
-            # process failures (each isolated)
             for unwrap, ret_code in failed:
                 try:
                     self._handle_failure(unwrap, ret_code)
@@ -271,7 +258,6 @@ class UnwrapManager:
             self._drain_imports()
             self._finish_transfers()
 
-            # requeue detached batch members so _fill_slots re-batches them
             for unwrap in requeued:
                 if unwrap in self._running:
                     self._running.remove(unwrap)
@@ -282,8 +268,8 @@ class UnwrapManager:
 
             self._fill_slots()
 
-            # an empty queue is not the end, an exporter may still be writing
-            # and a proxy finish may still be running
+            # an empty queue is not the end, an exporter or a proxy finish
+            # may still be running
             if (
                 not self._running
                 and not self._queue
@@ -294,7 +280,6 @@ class UnwrapManager:
                 return None
 
         except Exception as e:
-            # catastrophic dispatch error
             from .handler import handle_error
 
             handle_error(e, "MIDDLE")
@@ -317,8 +302,8 @@ class UnwrapManager:
         if get_preferences().show_progress_bar:
             progress_bar.update(self.progress)
             tag_redraw(("WINDOW",))
-        # the sidebar only redraws when what it draws changed, a 10 per second
-        # rebuild makes its buttons drop most clicks
+        # redraw the sidebar only on a change, a 10 per second rebuild makes
+        # its buttons drop most clicks
         state = self._panel_state()
         if state != self._drawn_panel_state:
             self._drawn_panel_state = state
@@ -391,9 +376,8 @@ class UnwrapManager:
                     path = unwrap.output_path
                     edge_path, added_edges = unwrap.edge_path, []
                 self._import_and_finalize(unwrap, path, edge_path, added_edges)
-                # checkpoint each applied result while the session keeps
-                # running, so a mid-session ctrl z can't discard it. the last
-                # one is finish()'s push
+                # checkpoint each result, so a mid-session ctrl z can't
+                # discard it. the last push is in finish()
                 if self._running or self._queue or self.pieces_still_arriving:
                     bpy.ops.ed.undo_push(message="UVgami Unwrap")
             except Exception:
@@ -416,7 +400,6 @@ class UnwrapManager:
     def _import_and_finalize(self, unwrap, path, edge_path, added_edges):
         props = bpy.context.scene.uvgami
 
-        # reroute seams before importing
         if unwrap.preserve_job is not None and unwrap.maintain_mode == "FULL":
             reroute_seams(path, edge_path)
 
@@ -477,7 +460,6 @@ class UnwrapManager:
 
         logger.add_data("objects", unwrap.input_name)
 
-        # transfer UVs to original input mesh if enabled
         if unwrap.transfer_uvs_job is not None:
             job = unwrap.transfer_uvs_job
             # locate output in the pack list before the transfer deletes output
@@ -504,8 +486,8 @@ class UnwrapManager:
                     self.pending_transfers.append(
                         PendingTransfer(job, output, pack_index, unwrap.input_name)
                     )
-                    # data only while it waits, linked it would sit in the
-                    # scene beside the original
+                    # unlinked while it waits, or it sits in the scene
+                    # beside the original
                     for collection in output.users_collection:
                         collection.objects.unlink(output)
                     return
@@ -521,8 +503,7 @@ class UnwrapManager:
 
     def _settle_transfer(self, job, output, pack_index, report):
         """Everything after a transfer's report: pack list, hide state, grid,
-        collection. Shared between the in-tick transfers and the proxy
-        finishes that land later."""
+        collection. Shared with the proxy finishes, which report later."""
         props = bpy.context.scene.uvgami
         input_mesh = self.input[job]
         if report.applied:
@@ -533,8 +514,8 @@ class UnwrapManager:
             if replacement is None:
                 self._add_auto_grid(props, input_mesh)
                 return
-            # proxy with transfer off: a duplicate of the original takes
-            # the deleted output's place in packing and collecting
+            # proxy with transfer off: a duplicate of the original replaces
+            # the deleted output
             if pack_index is not None:
                 self._pack_output_objects[pack_index] = replacement
             output = replacement
@@ -600,7 +581,6 @@ class UnwrapManager:
 
     def _restore_vertex_groups(self, unwrap, output):
         if unwrap.join_job is not None and len(unwrap.join_job.finished) > 1:
-            # combine vertex groups from all joined unwraps with offset indices
             combined_groups = {}
             v_offset = 0
             for u in unwrap.join_job.finished:
@@ -653,7 +633,7 @@ class UnwrapManager:
                 if last:
                     self.error_stderr = last
                 if tail:
-                    # full tail to the console so the whole traceback is findable
+                    # the whole traceback goes to the console
                     print(f"UVgami engine stderr (exit {ret_code}):")
                     for line in tail:
                         print(line)
@@ -763,8 +743,7 @@ class UnwrapManager:
             logger.change_status("Cancelled")
             self.clear_summary()
 
-        # the dispatch timer is gone, so the queue ui and banner need one
-        # last repaint
+        # the dispatch timer is gone, so repaint the queue ui and banner here
         tag_redraw()
 
     def _show_status(self):

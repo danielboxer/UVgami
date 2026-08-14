@@ -22,7 +22,8 @@ from .mesh import LOW_ANGLE, cross, find, norm, pair, turn_angle
 # auto width: at the low partition angle region widths are dominated by
 # narrow bands, real surfaces are the top few percent, and no clean gap
 # separates them, so take a high quantile with clearance on top. the cap, a
-# fraction of the diagonal, keeps sparse cases like a beveled cube honest
+# fraction of the diagonal, stops sparse cases like a beveled cube from
+# getting an oversized width
 WIDTH_CAP = 0.05
 WIDTH_QUANTILE = 0.9
 WIDTH_FACTOR = 2.0
@@ -227,7 +228,7 @@ def absorb(
             ),
             None,
         )
-        # nothing can take this strip without opening a hole, leave it be
+        # nothing can take this strip without opening a hole
         if best is None:
             continue
 
@@ -781,9 +782,8 @@ def unfold_hinges(verts, faces, weighted, edges, label, forced=None):
                 placement[neighbor] = move
                 stack.append(neighbor)
 
-    # rigid groups: clusters merged so far, each with its panels laid out in
-    # one shared frame. only panels inside a group can be overlap-tested,
-    # anything joined through a curved or unplaceable contact cannot
+    # clusters merged so far, each with its panels laid out in one shared
+    # frame. only panels inside a group can be overlap-tested
     group_parent = {}
     layouts = {}
 

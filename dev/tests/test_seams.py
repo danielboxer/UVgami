@@ -198,9 +198,7 @@ def test_smeared_closed_mesh_still_flattens_at_a_high_angle():
 
 
 def test_lower_feature_angle_keeps_shallow_seams():
-    # 22.5 degree panel boundaries merge away at the default 30 but survive
-    # 15: the knob's point, more seams toward artist style. The tube's sweep
-    # rims are forced at both angles, so only the panel seams differ
+    # 22.5 degree panel boundaries merge away at the default 30 but survive 15
     verts, faces = elbow(sides=16)
     assert len(seam_edges(verts, faces, angle=15)) > len(seam_edges(verts, faces))
 
@@ -288,7 +286,7 @@ def test_absorbed_bevel_still_reads_as_a_crease():
     _, bounds = absorb(verts, faces, weighted, areas, edges, find, width)
     live = [key for key in bounds.length if bounds.length[key] > 0]
     # every boundary left is a cube corner with its bevel absorbed into one
-    # side, so all of them must still turn the full 90 degrees. A corner patch
+    # side, so all of them must still turn the full 90 degrees. a corner patch
     # carries two bevels at once, which reads a little over
     angles = [bounds.turn[key] / bounds.length[key] for key in live]
     assert angles
@@ -355,7 +353,7 @@ def test_sweep_split_lifts_the_cap_off_a_sock():
 
 def test_sweep_split_cuts_a_bent_tube_into_straight_runs():
     # mid-bend normals sit between wall and cap against any axis, so an
-    # elbow is no sock: it relabels into straight runs instead, and every
+    # elbow is not a sock, it relabels into straight runs instead, and every
     # run must be one connected piece
     verts, faces = elbow()
     label, _ = sweep_regions(verts, faces)
@@ -540,7 +538,7 @@ def turn_count(verts, path):
 
 def test_dull_cut_is_a_line():
     # every corner-to-corner path is 4 long, so without the turn penalty the
-    # staircase can win on heap order; with it the single-corner L must
+    # staircase can win on heap order. with it the single-corner L must win
     verts, adjacent = rook_grid()
     path = cut_path(verts, adjacent, {0}, {8}, relief={})
     assert len(path) == 5
@@ -733,9 +731,7 @@ def capped_prism(sides=12):
 
 def test_reroute_snaps_a_closed_loop_to_its_rim():
     verts, faces = capped_prism()
-    # one cap triangle labeled into the wall, so the rim loop detours over
-    # the cap through its center. No junction anchors the loop, only the
-    # loop handling can pull it back
+    # a rim loop with no junction to anchor it, so only loop_arcs pulls it back
     label = {f: 0 if f < 12 else 1 for f in range(36)}
     label[0] = 1
     weighted, areas, edges = build(verts, faces)
@@ -764,7 +760,7 @@ def test_forced_seam_splits_a_flat_face():
 
 
 def test_forced_seam_takes_a_detected_one_over():
-    # the swept wall needs one cut and detection picks where. Marking a panel
+    # the swept wall needs one cut and detection picks where. marking a panel
     # boundary has to become that cut, not add a second slit beside it
     verts, faces = tube(16)
     edges = face_edges(faces)
@@ -781,7 +777,7 @@ def test_forced_seam_takes_a_detected_one_over():
 def test_forced_seam_moves_the_band_it_blocks():
     # a mark on one side of a bevel band: absorb has to dissolve the band into
     # the far side, so the boundary lands on the mark instead of a two edge
-    # ribbon surviving between the two. Read at the region level, the unfold
+    # ribbon surviving between the two. read at the region level, the unfold
     # hides ribbons from island counts
     verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
     weighted, areas, edges = build(verts, faces)
@@ -954,8 +950,7 @@ def test_split_moves_part_the_sliced_strips():
 
 
 def test_folded_compact_island_is_halved():
-    # not a strip, but ruined is ruined: the engine would re-cut it anyway,
-    # so it gets one cut and each half a fresh chance to unwrap clean
+    # not a strip, but island_ruined all the same, so it still gets one cut
     verts, faces, uvs = strip_island(4)
     fold_face(uvs, 2)
     extra = split_islands(verts, faces, set(), uvs)

@@ -8,7 +8,7 @@ from partuv import cli
 from partuv.common import UnwrapError
 
 
-# windows runs native; only non-windows non-linux errors here
+# windows runs native, so only non-windows non-linux errors here
 def test_requires_linux(triangle, tmp_path, monkeypatch):
     monkeypatch.setattr(cli.platform, "system", lambda: "Darwin")
     checkpoint = tmp_path / "model.ckpt"
@@ -114,8 +114,7 @@ def test_input_list_missing_file_exits_2(tmp_path):
 
 
 def test_input_list_scales_past_command_line_limit(tmp_path):
-    # the bug: ~491 mesh paths as argv blew past windows' 32k command-line cap.
-    # through the list file the argv carries one path, so any count resolves.
+    # ~491 mesh paths as argv exceed windows' 32k command-line cap
     out = tmp_path / "out"
     paths = [tmp_path / f"{'x' * 200}_{i}.obj" for i in range(500)]
     list_file = tmp_path / "inputs.txt"
@@ -144,7 +143,7 @@ class FakeMesh:
 def fake_partuv_runtime(monkeypatch, tmp_path):
     """Install fake torch and partuv submodules so run() orchestration is exercised."""
     monkeypatch.setattr(cli.platform, "system", lambda: "Linux")
-    # default to a machine with a gpu so geometric tests keep the config as-is;
+    # default to a machine with a gpu so geometric tests keep the config as-is,
     # cpu-fallback tests override this
     monkeypatch.setattr(cli, "_cuda_available", lambda: True)
 
@@ -272,7 +271,7 @@ def test_ai_never_probes_cuda(triangle, tmp_path, fake_partuv_runtime, monkeypat
     cli.run([(triangle, tmp_path / "out.obj")], checkpoint, config, 1.5)
 
     calls = fake_partuv_runtime
-    # torch.cuda already gates the ai path, so the driver probe stays untouched
+    # torch.cuda already decides the ai path, so the driver probe is not used
     assert probed == []
     assert calls["pipeline"][1] == str(config)
     assert "pamo: true" in calls["config_text"]
@@ -308,7 +307,7 @@ def test_windows_runs_native_when_partuv_installed(
     triangle, tmp_path, fake_partuv_runtime, monkeypatch
 ):
     monkeypatch.setattr(cli.platform, "system", lambda: "Windows")
-    # a loadable core is the native routing knob
+    # no import error means the compiled core loaded
     monkeypatch.setattr("partuv._CORE_ERROR", None)
     config = tmp_path / "config.yaml"
     config.write_text("pipeline: {}")

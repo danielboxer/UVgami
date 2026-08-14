@@ -60,7 +60,6 @@ def cut_on_axes(obj, obj_center, axes):
             plane_no=direction,
             clear_inner=True,
         )
-    # if the object already had vertices down its center plane
-    # there will be duplicates
+    # vertices already on the center plane are duplicated by the bisect
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
     set_bmesh(bm, obj)

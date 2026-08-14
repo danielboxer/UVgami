@@ -187,11 +187,9 @@ def _build_unwrap_groups(active_unwraps):
 
 
 def _draw_unwrap_groups(box, groups, active_groups):
-    """Draw all unwrap groups with their buttons."""
     for group_id, group in groups.items():
         display_box = box.box()
         row = display_box.row()
-        # if the key isn't an int, it's a join job, so the group can be expanded
         expand_layout = not isinstance(group_id, int)
 
         if expand_layout:
@@ -214,7 +212,6 @@ def _draw_unwrap_groups(box, groups, active_groups):
             icon=f"RADIOBUT_{'ON' if is_active else 'OFF'}",
         )
 
-        # group stop and cancel button
         if expand_layout:
             # pieces the exporter hasn't written yet have no input file, so
             # stop couldn't put them in the not unwrapped collection
@@ -272,8 +269,7 @@ def _draw_piece_buttons(row, item):
     ):
         view_op = row.operator("uvgami.view_unwrap", text="", icon="HIDE_OFF")
         view_op.stem = item.path.stem
-    # stop button, only a running mesh on an engine that can finish early
-    # with a result
+    # stop button, only on an engine that can finish early with a result
     if manager.engine.supports_early_stop and item.is_active:
         stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
         stop_op.stem = item.path.stem
@@ -525,7 +521,6 @@ class UVGAMI_PT_island_uv(bpy.types.Panel):
 
     def draw(self, context):
         props = context.scene.uvgami
-        # the island and area operators always run optcuts
         if not optcuts_installed():
             draw_missing_engine(self.layout)
             return

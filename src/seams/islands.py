@@ -463,7 +463,7 @@ def strip_cuts(group, ts, lo, length, cap, areas):
     hard local step in width is a wide area turning into a strip, where an
     artist would cut. Only the strongest neck is returned: the caller
     re-scans each piece on its own axis, which is what finds the necks a
-    bent island smears along its whole-shape axis. With no neck, a strip
+    bent island's whole-shape profile misses. With no neck, a strip
     past the cap fills with even cuts, and a compact island is never
     filled, however long."""
     slabs = 24
@@ -528,9 +528,8 @@ def split_islands(
         relief_cache = []
 
     def cut_relief():
-        # the normals and relief only pay off once a cut is actually needed,
-        # and most calls find nothing to cut. a caller scanning many pieces
-        # of one mesh shares the cache so the whole-mesh build runs once
+        # most calls find nothing to cut, so build this only when one is
+        # needed. a caller scanning many pieces of one mesh shares the cache
         if not relief_cache:
             weighted, _, _ = build(verts, faces)
             relief_cache.append(crease_relief(verts, faces, weighted, edges))
@@ -538,10 +537,9 @@ def split_islands(
 
     extra = set()
 
-    # every length compares at even texel density, uv lengths scaled by
-    # sqrt(3d area over uv area): the engine packs each island at its own
-    # scale, and a long island exported small must not slip the gate it
-    # would fail once packing evens the densities out
+    # uv lengths scaled by sqrt(3d area over uv area), so every length
+    # compares at even texel density. the engine packs each island at its own
+    # scale, and a long island exported small must not slip the gate
     def measure(group):
         centroids = {}
         areas = {}

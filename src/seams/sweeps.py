@@ -50,11 +50,11 @@ PROFILE_CORNER = 0.02
 # shell whose flats sit a few degrees apart is one panel, only a real
 # quarter-turn corner is worth a seam
 PROFILE_TURN = 45
-# a panel run's growth front splits into one piece per branch at a junction;
-# a front piece this small is a straggler of the ring walk, not a branch
+# a panel run's growth front splits into one piece per branch at a junction,
+# and a front piece this small is a straggler of the ring walk, not a branch
 FORK_FRONT_NOISE = 3
 # how finely a wall with a handle through it is trimmed back along its axis
-# while hunting the cut that leaves a flattenable surface
+# while searching for the cut that leaves a flattenable surface
 GENUS_TRIM_LEVELS = 24
 # wall/cap boundary and the band edges, as squared sines of the tilt
 CAP_SPLIT = 0.5  # 45 degrees
@@ -62,10 +62,9 @@ BAND_LO = 0.25  # 30 degrees
 BAND_HI = 0.75  # 60 degrees
 # alternating fit rounds for the sweep axis
 SWEEP_FIT_ROUNDS = 10
-# faces a run seed probes before the patch around it is shed: a trumpet
-# flare never passes anywhere, so probing must stop and move on instead of
-# tasting the whole cluster from every bad seed. counted in faces, not
-# growth rings, because a spiral-strip triangulation grows one face a ring
+# faces a run seed probes before the patch around it is shed, since no part of
+# a trumpet flare fits a straight run. counted in faces, not growth rings,
+# because a spiral-strip triangulation grows one face a ring
 RUN_SEED_FACES = 512
 # position-based straightness: the run's centroid variance off its main
 # direction over the variance along it. 0.2 admits a straight tube about
@@ -469,10 +468,9 @@ def split_sweeps(verts, faces, weighted, areas, edges, label, min_width=0):
             if axial[i] >= CAP_SPLIT:
                 cap += w
         if band > SWEEP_BAND * total:
-            # either judge accepts a run: normals catch a fat smooth tube,
-            # positions catch a corrugated hose that reads bent at every
-            # rib to the normal test. no cap split, rib shoulders tilt
-            # like caps but are profile
+            # either test accepts a run: normals catch a fat smooth tube,
+            # positions catch a corrugated hose the normal test reads as bent
+            # at every rib. no cap split, rib shoulders tilt like caps
             entries = {i: (w, n) for i, w, n in normals}
             by_normals = normal_fit(entries)
             by_positions = slender_fit(verts, faces, areas, entries)
@@ -841,8 +839,8 @@ def straight_runs(group, entries, edges, fit_of=None, snap=None):
             if fit:
                 low, axis = span, fit
             else:
-                # nothing straight near this seed: shed just the probed
-                # patch and walk on, engine territory
+                # nothing straight near this seed, so shed the probed patch
+                # and move on
                 remaining.difference_update(flat[: ends[span - 1]])
                 seed = layers[span][0] if span < count else None
                 continue
@@ -942,10 +940,9 @@ def sweep_rims(verts, faces):
                 band += w
             for k in range(3):
                 resultant[k] += w * n[k]
-        # tilted mass means a bent tube, a cone too steep, or a sock with
-        # a large cap smoothly attached. real middle-band mass is the bent
-        # tube: its straight runs still get claimed. the rest, and a flat
-        # or gently bowed panel, stay with the merge passes
+        # tilted mass means a bent tube, a cone too steep, or a sock with a
+        # large cap smoothly attached. only the bent tube fills the middle
+        # band, and its straight runs are still worth claiming
         if off_wall > SWEEP_BAND * total or norm(resultant) / total > WALL_ROUND:
             if band > SWEEP_BAND * total:
                 entries = {i: (w, n) for i, w, n in normals}

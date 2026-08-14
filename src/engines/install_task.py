@@ -70,8 +70,8 @@ class InstallTask:
         if event.type != "TIMER":
             return {"PASS_THROUGH"}
         if task_state["running"]:
-            # preferences can live in its own window, redraw them all so the
-            # bar animates. the unwrap panels show progress too
+            # preferences can be open in more than one window, so redraw them
+            # all. the unwrap panels show progress too
             for window in context.window_manager.windows:
                 for area in window.screen.areas:
                     if area.type in {"PREFERENCES", "VIEW_3D", "IMAGE_EDITOR"}:

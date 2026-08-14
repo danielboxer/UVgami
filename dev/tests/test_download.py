@@ -17,7 +17,7 @@ def _load(relpath, name):
     return module
 
 
-# install.py imports bpy so it can't load under pytest; the download helper is
+# install.py imports bpy so it can't load under pytest, but the download helper is
 # bpy-free and loaded directly from its file
 download = _load("src/utils/download.py", "uvgami_download")
 

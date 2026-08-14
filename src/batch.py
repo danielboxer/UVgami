@@ -61,9 +61,9 @@ class BatchProcess:
     keyed by input file stem."""
 
     def __init__(self, args, env=None, sinks=None):
-        # unwrap-like sinks keyed by stem, engine output routes to the sink
-        # of the mesh currently being unwrapped; passed in here because the
-        # reader thread may see the first start marker right away
+        # unwrap-like sinks keyed by stem, engine output routes to the sink of
+        # the mesh being unwrapped. passed in here because the reader thread
+        # may see the first start marker right away
         self.sinks = sinks or {}
         self.process = subprocess.Popen(
             args,
@@ -77,8 +77,8 @@ class BatchProcess:
         self._results = {}
         self._reader = threading.Thread(target=self._read_output, daemon=True)
         self._reader.start()
-        # stderr is kept separate from the stdout protocol, drained by its own
-        # thread into a bounded tail shared by every mesh in the batch
+        # stderr stays out of the stdout protocol, read by its own thread into
+        # a tail shared by every mesh in the batch
         self.stderr_tail = collections.deque(maxlen=10)
         self._stderr_reader = threading.Thread(
             target=read_stderr_tail,
