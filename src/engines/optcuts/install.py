@@ -3,7 +3,7 @@ import bpy
 from ..binary_engine import EngineRelease, InstallEngineTask
 
 # must match engine/optcuts/VERSION (check-engine-versions.yml fails on drift)
-OPTCUTS_VERSION = "1.16.1"
+OPTCUTS_VERSION = "1.16.2"
 OPTCUTS = EngineRelease("optcuts", "Optcuts", OPTCUTS_VERSION, "2 MB")
 
 
