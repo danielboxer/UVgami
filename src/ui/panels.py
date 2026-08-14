@@ -471,6 +471,12 @@ class UVGAMI_PT_symmetry(EnginePanel, bpy.types.Panel):
         row.prop(props, "sym_preview", icon="EMPTY_AXIS")
         row.prop(props, "sym_merge")
 
+        # only the hard surface preseed can mirror seams on the whole mesh
+        engine = active_engine(props.engine)
+        if engine is not get_engine("OPTCUTS") or not props.optcuts.use_hard_surface:
+            row = box.row()
+            row.label(text="Mesh will be cut and mirrored", icon="ERROR")
+
 
 class UVGAMI_PT_grid(EnginePanel, bpy.types.Panel):
     bl_label = "Grid"

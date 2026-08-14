@@ -309,6 +309,44 @@ def test_mirror_permutations_rejects_asymmetric_triangulation():
     )
 
 
+def test_mirror_matches_snaps_drift_and_drops_the_asymmetric_vertex():
+    # one wing tip drifted within tolerance still matches, the lone
+    # vertex with no counterpart is absent
+    coords = [co for co in WING_COORDS] + [(0.5, 2.0, 0.0)]
+    coords[4] = (-2.002, 0, 0)
+    mesh = FakeMesh(coords, WING_FACES)
+
+    maps = similar.mirror_matches(mesh, (0, 0, 0), ["X"])
+
+    assert maps == [{0: 3, 1: 4, 2: 5, 3: 0, 4: 1, 5: 2}]
+
+
+def test_mirror_matches_ignores_topology():
+    # the asymmetric triangulation mirror_permutations rejects
+    coords = [
+        (1, 0, 0),
+        (2, 0, 0),
+        (2, 1, 0),
+        (1, 1, 0),
+        (-1, 0, 0),
+        (-2, 0, 0),
+        (-2, 1, 0),
+        (-1, 1, 0),
+    ]
+    faces = [(0, 1, 2), (0, 2, 3), (4, 5, 7), (5, 6, 7)]
+
+    maps = similar.mirror_matches(FakeMesh(coords, faces), (0, 0, 0), ["X"])
+
+    assert maps == [{0: 4, 1: 5, 2: 6, 3: 7, 4: 0, 5: 1, 6: 2, 7: 3}]
+
+
+def test_mirror_matches_returns_none_when_nothing_matches():
+    coords = [(1, 0, 0), (2, 0, 0), (1, 1, 0)]
+    mesh = FakeMesh(coords, [(0, 1, 2)])
+
+    assert similar.mirror_matches(mesh, (0, 0, 0), ["X"]) is None
+
+
 def test_mirror_permutations_covers_only_the_symmetric_parts():
     # the wing pair qualifies, the lone off-center triangle drops out
     coords = WING_COORDS + [(0.5, 2.0, 0.0), (1.5, 2.0, 0.0), (0.5, 3.0, 0.0)]

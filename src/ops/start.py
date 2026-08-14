@@ -28,7 +28,7 @@ from ..seams import (
     islands_overlap,
     uv_island_groups,
 )
-from ..similar import find_twins, mirror_permutations, write_twin_output
+from ..similar import find_twins, mirror_matches, write_twin_output
 from ..unwrap import Unwrap
 from ..utils.geometry import apply_transforms, calc_center
 from ..utils.io import export_obj
@@ -52,7 +52,7 @@ from ..utils.ui import tag_redraw
 from .guides import SEAM_RESTRICTIONS_GROUP
 
 Preseeding = namedtuple(
-    "Preseeding", ["task", "apply", "obj", "index", "symmetrize_job", "mirrors"]
+    "Preseeding", ["task", "apply", "obj", "index", "symmetrize_job"]
 )
 
 # process objects for at most this long per tick before yielding to the event loop
@@ -551,7 +551,7 @@ class SessionBuilder:
 
     def _advance(self):
         if self.pending is not None:
-            task, apply, obj, index, symmetrize_job, mirrors = self.pending
+            task, apply, obj, index, symmetrize_job = self.pending
             if not task.done():
                 return 0.1
             self.pending = None
@@ -567,11 +567,16 @@ class SessionBuilder:
             props = bpy.context.scene.uvgami
             preseeded = apply(result)
             if symmetrize_job is not None:
-                if preseeded and mirrors:
+                if preseeded:
                     # the seams are mirrored, so the mesh ships whole with no
                     # cut at the plane and nothing to rebuild at the end
                     symmetrize_job.kept_whole = True
                 else:
+                    logger.add_data(
+                        "errors",
+                        f"{self.names[obj.name][0]}: no seams to mirror,"
+                        " the mesh was cut and mirrored",
+                    )
                     symmetrize_job.cut(obj)
             has_uvs = preseeded or (
                 props.import_uvs and self.engine.supports_import_uvs
@@ -589,7 +594,7 @@ class SessionBuilder:
             apply_transforms(obj)
             center = calc_center(obj)
             symmetrize_job = Symmetrise(props.sym_axes, center, props.sym_merge)
-            mirrors = mirror_permutations(obj.data, center, sorted(props.sym_axes))
+            mirrors = mirror_matches(obj.data, center, sorted(props.sym_axes))
 
         # seams and uvs are built on the whole mesh, before the symmetry cut
         # and separation: the seams package reads region widths off the full
@@ -604,7 +609,7 @@ class SessionBuilder:
             return 0.0
         compute, apply = work
         self.pending = Preseeding(
-            BackgroundTask(compute), apply, obj, index, symmetrize_job, mirrors
+            BackgroundTask(compute), apply, obj, index, symmetrize_job
         )
         return 0.1
 
