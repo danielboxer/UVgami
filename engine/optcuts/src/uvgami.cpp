@@ -1,4 +1,5 @@
 #include <cfloat>
+#include <cstdlib>
 #include <string>
 #include <filesystem>
 #include <fstream>
@@ -1862,5 +1863,8 @@ int main(int argc, char *argv[]) {
     delete optimizer;
     delete triSoup[0];
 
-    return 0;
+    // the detached listener is usually still inside std::cin >> line, and
+    // returning destroys the stream state under it, which crashes on exit
+    std::cout.flush();
+    std::_Exit(0);
 }
