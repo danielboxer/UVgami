@@ -1126,13 +1126,13 @@ def test_boxed_in_fragment_rejoins_one_side():
     cuts = {"d", "e", "x"}
     pieces = split_pieces(list(range(9)), links, cuts)
     assert sorted(len(p) for p in pieces) == [1, 4, 4]
-    pieces = absorb_fragments(pieces, links, cuts)
+    pieces = absorb_fragments(pieces, links, cuts, lambda f: 1.0, 2.0)
     assert cuts == {"d"}
     assert sorted(sorted(p) for p in pieces) == [[0, 1, 2, 3], [4, 5, 6, 7, 8]]
 
 
 def test_split_pieces_among_tiny_pieces_keep_their_cut():
-    # halving a 4-face island leaves two pieces under the minimum: that is
+    # halving a 4-face island leaves two pieces under the floor: that is
     # a cut made on purpose, so nothing rejoins
     links = {f: [] for f in range(4)}
     for f, name in zip(range(3), "abc"):
@@ -1140,9 +1140,30 @@ def test_split_pieces_among_tiny_pieces_keep_their_cut():
         links[f + 1].append((f, name))
     cuts = {"b"}
     pieces = split_pieces(list(range(4)), links, cuts)
-    pieces = absorb_fragments(pieces, links, cuts)
+    pieces = absorb_fragments(pieces, links, cuts, lambda f: 1.0, 3.0)
     assert cuts == {"b"}
     assert len(pieces) == 2
+
+
+def test_large_area_fragment_keeps_its_cut():
+    # a one-face piece whose face is big is a packable island, not a crumb,
+    # so the count of faces must not decide the rejoin
+    links = {f: [] for f in range(9)}
+    edge_names = iter("abcdefgh")
+    for f in range(8):
+        name = next(edge_names)
+        links[f].append((f + 1, name))
+        links[f + 1].append((f, name))
+    cuts = {"d", "e"}
+    pieces = split_pieces(list(range(9)), links, cuts)
+    assert sorted(len(p) for p in pieces) == [1, 4, 4]
+
+    def area(f):
+        return 10.0 if f == 4 else 1.0
+
+    pieces = absorb_fragments(pieces, links, cuts, area, 2.0)
+    assert cuts == {"d", "e"}
+    assert sorted(len(p) for p in pieces) == [1, 4, 4]
 
 
 def blob_strip_island(blob, strip):

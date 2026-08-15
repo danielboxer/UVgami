@@ -41,9 +41,10 @@ SPLIT_ARC_BAND = 0.65
 # an island thinner than this fraction of its outer distance is a disk,
 # not a band, and slicing a disk into sectors helps nothing
 SPLIT_ARC_ANNULUS = 0.3
-# a split piece below this many faces is a boxed-in fragment, not an
-# island, and rejoins a neighbor
-SPLIT_MIN_PIECE = 4
+# a split piece below this share of the whole mesh's 3d area is a boxed-in
+# fragment, not an island, and rejoins a neighbor. measured on pipe_wrench:
+# slice crumbs sit under 0.0004, the smallest kept pieces at 0.0037
+FRAGMENT_SHARE = 0.002
 # how much a split piece shrinks towards its own centre. blender decides
 # islands from uv coordinates, so pieces sharing the cut line exactly stay
 # one island however they are seamed, and this is what parts them
@@ -427,27 +428,31 @@ def split_pieces(group, links, cuts):
     return pieces
 
 
-def absorb_fragments(pieces, links, cuts):
+def absorb_fragments(pieces, links, cuts, area, floor):
     """Rejoin boxed-in fragments, removing their cuts from cuts.
 
     A replacement path and an existing seam can box in a mesh sliver,
-    leaving an island of a face or two that no packer can use. Such a
-    piece rejoins the full-sized neighbor it shares the most cut edges
-    with, and only those edges reopen, so the other pieces stay apart.
-    A tiny piece among only tiny pieces keeps its cut: that is a small
-    island split on purpose, not an accident."""
+    leaving a crumb of an island that no packer can use. A piece under
+    floor by area (summed per face) rejoins the full-sized neighbor it
+    shares the most cut edges with, and only those edges reopen, so the
+    other pieces stay apart. A tiny piece among only tiny pieces keeps
+    its cut: that is a small island split on purpose, not an accident."""
+
+    def piece_area(p):
+        return sum(area(f) for f in p)
+
     changed = True
     while changed and len(pieces) > 1:
         changed = False
         for i, piece in enumerate(pieces):
-            if len(piece) >= SPLIT_MIN_PIECE:
+            if piece_area(piece) >= floor:
                 continue
             owner = {f: j for j, p in enumerate(pieces) for f in p}
             shared = collections.defaultdict(set)
             for f in piece:
                 for other, key in links[f]:
                     j = owner[other]
-                    if key in cuts and j != i and len(pieces[j]) >= SPLIT_MIN_PIECE:
+                    if key in cuts and j != i and piece_area(pieces[j]) >= floor:
                         shared[j].add(key)
             if not shared:
                 continue
@@ -617,6 +622,10 @@ def split_islands(
     if total <= 0:
         return extra
     cap = math.sqrt(total / SPLIT_TARGET)
+    # the crumb floor reads the whole mesh, not the scan: split_moves scans
+    # one piece of a joined output per call, and a small piece must not
+    # shrink the floor under its own crumbs
+    floor = FRAGMENT_SHARE * sum(polygon_area(verts, face) for face in faces)
 
     # an island is what the unwrap made one: faces joined by unseamed edges
     queue = collections.deque(groups)
@@ -680,7 +689,9 @@ def split_islands(
         if not new:
             continue
         pieces = split_pieces(group, links, new)
-        pieces = absorb_fragments(pieces, links, new)
+        pieces = absorb_fragments(
+            pieces, links, new, lambda f: polygon_area(verts, faces[f]), floor
+        )
         if not new:
             continue
         extra |= new
