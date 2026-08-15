@@ -1,5 +1,3 @@
-import math
-
 import bpy
 
 from ...hard_surface import (
@@ -17,6 +15,9 @@ from ..binary_engine import BinaryEngine
 from .install import OPTCUTS, UVGAMI_OT_install_optcuts
 
 
+# what counts as a sharp feature
+HARD_SURFACE_ANGLE = 66
+
 QUALITY_LABELS = {
     "LESS_STRETCH": "Less Stretch",
     "BALANCED": "Balanced",
@@ -29,21 +30,21 @@ class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
         name="",
         description="Cut seams on sharp features. Good for mechanical shapes",
     )
-    hard_surface_auto: bpy.props.BoolProperty(
-        name="Auto",
-        description=(
-            "Automatically unwrap sharp objects in hard surface mode and"
-            " otherwise in normal mode"
-        ),
-    )
-    hard_surface_angle: bpy.props.FloatProperty(
-        name="Angle",
-        description="What counts as a sharp feature. Lower keeps more seams",
-        subtype="ANGLE",
-        default=math.radians(66),
-        min=math.radians(1),
-        max=math.radians(180),
-    )
+    # hard_surface_auto: bpy.props.BoolProperty(
+    #     name="Auto",
+    #     description=(
+    #         "Automatically unwrap sharp objects in hard surface mode and"
+    #         " otherwise in normal mode"
+    #     ),
+    # )
+    # hard_surface_angle: bpy.props.FloatProperty(
+    #     name="Angle",
+    #     description="What counts as a sharp feature. Lower keeps more seams",
+    #     subtype="ANGLE",
+    #     default=math.radians(66),
+    #     min=math.radians(1),
+    #     max=math.radians(180),
+    # )
     quality: bpy.props.EnumProperty(
         name="Priority",
         description="Whether the unwrap favors less stretching or fewer seams",
@@ -61,7 +62,8 @@ class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
 
     @property
     def is_auto(self):
-        return self.use_hard_surface and self.hard_surface_auto
+        # return self.use_hard_surface and self.hard_surface_auto
+        return False
 
 
 class UVGAMI_OT_quick_unwrap(bpy.types.Operator):
@@ -76,7 +78,7 @@ class UVGAMI_OT_quick_unwrap(bpy.types.Operator):
     def execute(self, context):
         props = context.scene.uvgami
         optcuts = props.optcuts
-        angle = math.degrees(optcuts.hard_surface_angle)
+        angle = HARD_SURFACE_ANGLE
         guided = props.avoid_seams
         selected = list(context.selected_objects)
         active = context.view_layer.objects.active
@@ -126,40 +128,40 @@ class UVGAMI_OT_quick_unwrap(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class UVGAMI_PT_hard_surface(bpy.types.Panel):
-    bl_label = "Hard Surface"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "UVgami"
-    bl_parent_id = "UVGAMI_PT_main"
-    bl_options = {"DEFAULT_CLOSED"}
-    bl_order = 0
-
-    @classmethod
-    def poll(cls, context):
-        # imported here: engines imports this module back
-        from .. import active_engine
-
-        return active_engine(context.scene.uvgami.engine) is ENGINE
-
-    def draw_header(self, context):
-        self.layout.prop(context.scene.uvgami.optcuts, "use_hard_surface")
-
-    def draw(self, context):
-        optcuts = context.scene.uvgami.optcuts
-        layout = self.layout
-        layout.active = optcuts.use_hard_surface
-        box = layout.box()
-
-        row = box.row()
-        row.alignment = "CENTER"
-        row.label(text="Hard Surface", icon="MOD_BEVEL")
-
-        box.prop(optcuts, "hard_surface_auto")
-
-        row = box.row()
-        row.label(icon="DRIVER_ROTATIONAL_DIFFERENCE", text="Angle")
-        row.prop(optcuts, "hard_surface_angle", text="")
+# class UVGAMI_PT_hard_surface(bpy.types.Panel):
+#     bl_label = "Hard Surface"
+#     bl_space_type = "VIEW_3D"
+#     bl_region_type = "UI"
+#     bl_category = "UVgami"
+#     bl_parent_id = "UVGAMI_PT_main"
+#     bl_options = {"DEFAULT_CLOSED"}
+#     bl_order = 0
+#
+#     @classmethod
+#     def poll(cls, context):
+#         # imported here: engines imports this module back
+#         from .. import active_engine
+#
+#         return active_engine(context.scene.uvgami.engine) is ENGINE
+#
+#     def draw_header(self, context):
+#         self.layout.prop(context.scene.uvgami.optcuts, "use_hard_surface")
+#
+#     def draw(self, context):
+#         optcuts = context.scene.uvgami.optcuts
+#         layout = self.layout
+#         layout.active = optcuts.use_hard_surface
+#         box = layout.box()
+#
+#         row = box.row()
+#         row.alignment = "CENTER"
+#         row.label(text="Hard Surface", icon="MOD_BEVEL")
+#
+#         box.prop(optcuts, "hard_surface_auto")
+#
+#         row = box.row()
+#         row.label(icon="DRIVER_ROTATIONAL_DIFFERENCE", text="Angle")
+#         row.prop(optcuts, "hard_surface_angle", text="")
 
 
 class OptcutsEngine(BinaryEngine):
@@ -176,7 +178,7 @@ class OptcutsEngine(BinaryEngine):
         UVGAMI_PG_optcuts,
         UVGAMI_OT_install_optcuts,
         UVGAMI_OT_quick_unwrap,
-        UVGAMI_PT_hard_surface,
+        # UVGAMI_PT_hard_surface,
     )
     supports_guided = True
     supports_viewer = True
@@ -190,6 +192,9 @@ class OptcutsEngine(BinaryEngine):
         row = layout.row()
         row.label(icon="SOLO_OFF", text="Priority")
         row.prop(props.optcuts, "quality", text="")
+        split = layout.split(factor=0.7)
+        split.label(icon="MOD_BEVEL", text="Hard Surface")
+        split.prop(props.optcuts, "use_hard_surface")
 
     def active_settings(self, props):
         optcuts = props.optcuts
@@ -201,12 +206,12 @@ class OptcutsEngine(BinaryEngine):
                     "optcuts.use_hard_surface",
                     is_non_default(props, "optcuts.use_hard_surface"),
                 ),
-                (
-                    "AUTO",
-                    "Hard Surface Auto",
-                    "optcuts.hard_surface_auto",
-                    optcuts.is_auto,
-                ),
+                # (
+                #     "AUTO",
+                #     "Hard Surface Auto",
+                #     "optcuts.hard_surface_auto",
+                #     optcuts.is_auto,
+                # ),
                 (
                     "SOLO_OFF",
                     QUALITY_LABELS[optcuts.quality],
@@ -229,7 +234,7 @@ class OptcutsEngine(BinaryEngine):
                 only = None
         applied = build_seam_uvs(
             obj,
-            math.degrees(optcuts.hard_surface_angle),
+            HARD_SURFACE_ANGLE,
             weights=seam_restrictions(obj) if props.avoid_seams else None,
             only=only,
         )
@@ -241,7 +246,7 @@ class OptcutsEngine(BinaryEngine):
             return None
         return preseed_work(
             obj,
-            math.degrees(optcuts.hard_surface_angle),
+            HARD_SURFACE_ANGLE,
             weights=seam_restrictions(obj) if props.avoid_seams else None,
             auto=optcuts.is_auto,
             mirrors=mirrors,
