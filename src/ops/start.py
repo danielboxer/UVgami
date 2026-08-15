@@ -15,7 +15,7 @@ from ..job import (
     Preserve,
     ProxyUVs,
     Result,
-    Symmetrise,
+    # Symmetrise,
     TransferUVs,
 )
 from ..logger import logger
@@ -28,9 +28,12 @@ from ..seams import (
     islands_overlap,
     uv_island_groups,
 )
-from ..similar import find_twins, mirror_matches, write_twin_output
+from ..similar import find_twins, write_twin_output
+
+# from ..similar import mirror_matches
 from ..unwrap import Unwrap
-from ..utils.geometry import apply_transforms, calc_center
+
+# from ..utils.geometry import apply_transforms, calc_center
 from ..utils.io import export_obj
 from ..utils.mesh import (
     check_collection,
@@ -591,12 +594,12 @@ class SessionBuilder:
         props = bpy.context.scene.uvgami
         symmetrize_job = None
         mirrors = None
-        if props.use_symmetry:
-            apply_transforms(obj)
-            center = calc_center(obj)
-            symmetrize_job = Symmetrise(props.sym_axes, center, props.sym_merge)
-            mirrors = mirror_matches(obj.data, center, sorted(props.sym_axes))
-            symmetrize_job.mirrors = mirrors
+        # if props.use_symmetry:
+        #     apply_transforms(obj)
+        #     center = calc_center(obj)
+        #     symmetrize_job = Symmetrise(props.sym_axes, center, props.sym_merge)
+        #     mirrors = mirror_matches(obj.data, center, sorted(props.sym_axes))
+        #     symmetrize_job.mirrors = mirrors
 
         # seams and uvs are built on the whole mesh, before the symmetry cut
         # and separation: the seams package reads region widths off the full

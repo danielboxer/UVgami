@@ -42,12 +42,12 @@ def unwrap_settings(props):
                 "stack_similar",
                 is_non_default(props, "stack_similar"),
             ),
-            (
-                "MOD_MIRROR",
-                "Symmetry",
-                "use_symmetry",
-                is_non_default(props, "use_symmetry"),
-            ),
+            # (
+            #     "MOD_MIRROR",
+            #     "Symmetry",
+            #     "use_symmetry",
+            #     is_non_default(props, "use_symmetry"),
+            # ),
             (
                 "TIME",
                 "Timeout",
