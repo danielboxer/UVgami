@@ -9,6 +9,15 @@ from ..utils.mesh import check_exists
 
 VIEWER_WORKSPACE = "UVgami Viewer"
 
+# blender's stretch_opacity default
+FILL_ALPHA = 1.0
+
+WIRE_WIDTH = 1.2
+WIRE_ALPHA = 0.7
+# a wire over triangles this small covers the colors
+WIRE_HIDDEN_PIXELS = 3.0
+WIRE_FULL_PIXELS = 10.0
+
 # workspace name and (object, mode) to restore when the viewer closes
 old_workspace = None
 old_mode = None
@@ -21,15 +30,28 @@ _wire_batch = None
 _fill_batch = None
 _wire_shader = None
 _fill_shader = None
-# per-face 3d areas of the engine input, for stretch colors
-_face_area = None
+# typical uv edge of the snapshot
+_median_edge = 0.0
+# per-corner 3d angles of the engine input, for stretch colors
+_corner_angle = None
+
+
+def _corner_angles(pts):
+    """Interior angle at each corner of every triangle, (faces, 3). The cross
+    magnitude comes from the lengths and the dot, so 2d and 3d points both
+    take the same line."""
+    to_next = pts[:, [1, 2, 0]] - pts
+    to_prev = pts[:, [2, 0, 1]] - pts
+    dot = numpy.einsum("ijk,ijk->ij", to_next, to_prev)
+    squared = (to_next * to_next).sum(2) * (to_prev * to_prev).sum(2) - dot * dot
+    return numpy.arctan2(numpy.sqrt(numpy.maximum(squared, 0)), dot)
 
 
 def load_input_mesh(path):
-    """Per-face 3d areas of the input obj. The engine keeps face order, so
+    """Per-corner 3d angles of the input obj. The engine keeps face order, so
     snapshot faces line up with these by index."""
-    global _face_area
-    _face_area = None
+    global _corner_angle
+    _corner_angle = None
     if not path.is_file():
         return
     verts = []
@@ -46,38 +68,35 @@ def load_input_mesh(path):
     pts = numpy.asarray(verts, dtype=numpy.float32)[
         numpy.asarray(tris, dtype=numpy.int32)
     ]
-    cross = numpy.cross(pts[:, 1] - pts[:, 0], pts[:, 2] - pts[:, 0])
-    _face_area = numpy.linalg.norm(cross, axis=1) / 2
+    _corner_angle = _corner_angles(pts)
+
+
+def _weight_to_rgb(weight):
+    """Blender's weight ramp, dark blue through cyan, green and yellow to red.
+    Ported from BKE_defvert_weight_to_rgb, GPL-2.0-or-later, whose four
+    branches come to the same curve as these three clamped ramps."""
+    rgb = numpy.empty(weight.shape + (3,), dtype=numpy.float32)
+    rgb[..., 0] = numpy.clip((weight - 0.5) * 4, 0, 1)
+    rgb[..., 1] = numpy.clip(numpy.minimum(weight, 1 - weight) * 4, 0, 1)
+    rgb[..., 2] = numpy.clip((0.5 - weight) * 4, 0, 1)
+    rgb *= (weight / 2 + 0.5)[..., None]
+    return rgb
 
 
 def _stretch_colors(uv_pts):
-    """Per-corner colors from uv area against 3d area, weight paint style:
-    blue is no stretch, red is 2x stretched or squashed."""
-    edge1 = uv_pts[:, 1] - uv_pts[:, 0]
-    edge2 = uv_pts[:, 2] - uv_pts[:, 0]
-    uv_area = numpy.abs(edge1[:, 0] * edge2[:, 1] - edge1[:, 1] * edge2[:, 0]) / 2
-    total_uv = uv_area.sum()
-    total_3d = _face_area.sum()
-    if total_uv == 0 or total_3d == 0:
-        return None
-    with numpy.errstate(divide="ignore", invalid="ignore"):
-        ratio = (uv_area / total_uv) / (_face_area / total_3d)
-        stretch = numpy.maximum(ratio, 1 / ratio) - 1
-    stretch = numpy.clip(numpy.nan_to_num(stretch, nan=1.0, posinf=1.0), 0, 1)
-
-    # hsv rainbow with hue from 2/3 (blue) down to 0 (red)
-    h = (1 - stretch) * 4
-    colors = numpy.empty((len(stretch), 4), dtype=numpy.float32)
-    colors[:, 0] = numpy.clip(numpy.abs(h - 3) - 1, 0, 1)
-    colors[:, 1] = numpy.clip(2 - numpy.abs(h - 2), 0, 1)
-    colors[:, 2] = numpy.clip(2 - numpy.abs(h - 4), 0, 1)
-    colors[:, 3] = 0.9
-    return numpy.repeat(colors, 3, axis=0)
+    """Per-corner colors from how far each uv corner angle is off its 3d angle,
+    the same measurement as the uv editor's angle stretch overlay."""
+    off = numpy.abs(_corner_angles(uv_pts) - _corner_angle) / numpy.pi
+    weight = 1 - (1 - off) ** 2
+    colors = numpy.empty((weight.size, 4), dtype=numpy.float32)
+    colors[:, :3] = _weight_to_rgb(weight).reshape(-1, 3)
+    colors[:, 3] = FILL_ALPHA
+    return colors
 
 
 def set_snapshot(uv_co, uv_indices):
     """Build the fill and wire batches for the latest engine snapshot."""
-    global _wire_batch, _fill_batch, _wire_shader, _fill_shader
+    global _wire_batch, _fill_batch, _wire_shader, _fill_shader, _median_edge
     if _wire_shader is None:
         _wire_shader = gpu.shader.from_builtin("UNIFORM_COLOR")
         _fill_shader = gpu.shader.from_builtin("SMOOTH_COLOR")
@@ -91,26 +110,42 @@ def set_snapshot(uv_co, uv_indices):
     _wire_batch = batch_for_shader(
         _wire_shader, "LINES", {"pos": co[edges.reshape(-1)]}
     )
+    _median_edge = numpy.median(
+        numpy.linalg.norm(co[edges[:, 0]] - co[edges[:, 1]], axis=1)
+    )
 
     _fill_batch = None
-    if _face_area is not None and len(_face_area) == len(tris):
+    if _corner_angle is not None and len(_corner_angle) == len(tris):
         uv_pts = co[tris]
-        colors = _stretch_colors(uv_pts)
-        if colors is not None:
-            _fill_batch = batch_for_shader(
-                _fill_shader, "TRIS", {"pos": uv_pts.reshape(-1, 2), "color": colors}
-            )
+        _fill_batch = batch_for_shader(
+            _fill_shader,
+            "TRIS",
+            {"pos": uv_pts.reshape(-1, 2), "color": _stretch_colors(uv_pts)},
+        )
+
+
+def _wire_fade():
+    """0 to 1 on how many pixels wide the typical triangle draws right now."""
+    view2d = bpy.context.region.view2d
+    left = view2d.view_to_region(0.0, 0.0, clip=False)[0]
+    right = view2d.view_to_region(1.0, 0.0, clip=False)[0]
+    pixels = _median_edge * (right - left)
+    span = WIRE_FULL_PIXELS - WIRE_HIDDEN_PIXELS
+    return min(max((pixels - WIRE_HIDDEN_PIXELS) / span, 0.0), 1.0)
 
 
 def _draw():
     gpu.state.blend_set("ALPHA")
     if _fill_batch is not None:
         _fill_batch.draw(_fill_shader)
-    if _wire_batch is not None:
+    # without a fill the wire is the whole picture, so it never fades out
+    fade = _wire_fade() if _fill_batch is not None else 1.0
+    if _wire_batch is not None and fade > 0:
         _wire_shader.bind()
-        alpha = 0.4 if _fill_batch is not None else 0.8
-        _wire_shader.uniform_float("color", (1.0, 1.0, 1.0, alpha))
+        gpu.state.line_width_set(WIRE_WIDTH)
+        _wire_shader.uniform_float("color", (0.0, 0.0, 0.0, WIRE_ALPHA * fade))
         _wire_batch.draw(_wire_shader)
+        gpu.state.line_width_set(1.0)
     gpu.state.blend_set("NONE")
 
 
@@ -171,7 +206,7 @@ def start_viewer_draw():
 
 
 def stop_viewer_draw():
-    global _handler, _text_handler, _wire_batch, _fill_batch, _face_area
+    global _handler, _text_handler, _wire_batch, _fill_batch, _corner_angle
     if _handler is not None:
         bpy.types.SpaceImageEditor.draw_handler_remove(_handler, "WINDOW")
         _handler = None
@@ -180,7 +215,7 @@ def stop_viewer_draw():
         _text_handler = None
     _wire_batch = None
     _fill_batch = None
-    _face_area = None
+    _corner_angle = None
     manager.viewer_done = False
 
 
