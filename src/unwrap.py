@@ -192,7 +192,8 @@ class Unwrap:
                 continue
             try:
                 pipe.close()
-            except BrokenPipeError:
+            except OSError:
+                # close flushes stdin, which a dead engine refuses. it still closes
                 pass
         self.process.wait()
 
