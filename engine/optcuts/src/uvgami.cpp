@@ -1,5 +1,6 @@
 #include <cfloat>
 #include <cstdlib>
+#include <deque>
 #include <string>
 #include <filesystem>
 #include <fstream>
@@ -599,6 +600,11 @@ void converge_preDrawFunc(void) {
 const int SOLVE_STALL_ITERATION_CAP = 100;
 const double SOLVE_STALL_RELATIVE_TOLERANCE = 1.0e-12;
 
+// rounds spent revisiting one of the last REVISIT_WINDOW seam sets before the
+// search stops. a window of 1 misses a split alternating with its own merge
+const int NO_PROGRESS_ROUNDS = 50;
+const size_t REVISIT_WINDOW = 8;
+
 bool preDrawFunc(void) {
     if (optimization_on) {
         static int stalledSolveIterations = 0;
@@ -682,29 +688,37 @@ bool preDrawFunc(void) {
             return false;
         }
 
-        // a queued split the line search rejects leaves the map untouched,
-        // the solve re-converges to the same stationary state and the same
-        // op gets picked again, with lambda creeping one dual step per round
-        // (each step is exactly eps_lambda, so oscillation detection can
-        // never see a revisit). unchanged seam energy and vertex count mean
-        // nothing is moving, stop with the map we have. distortion stays out
-        // of the check: the lambda renormalization wobbles it ~1e-6 relative
-        // on a frozen map, and a real op always moves one of the other two
+        // a seam set seen a few rounds ago is no progress: the queued op is
+        // rejected every round, or a split's local estimate keeps winning
+        // and its merge keeps undoing it. lambda creeps one dual step per
+        // round, so oscillation detection, which matches lambda to within
+        // one step, never sees either. seam energy and vertex count identify
+        // the seam set, distortion stays out because the lambda
+        // renormalization wobbles it ~1e-6 relative on a frozen map
         static int noProgressCount = 0;
-        static double E_se_last = -1.0;
-        static Eigen::Index V_last = -1;
-        if (std::abs(E_se - E_se_last) <= 1.0e-9 * std::abs(E_se_last) &&
-            triSoup[channel_result]->V_rest.rows() == V_last) {
+        static std::deque<std::pair<double, Eigen::Index>> recentSeamSets;
+        const Eigen::Index V_now = triSoup[channel_result]->V_rest.rows();
+        bool revisited = false;
+        for (const auto &seamSet : recentSeamSets) {
+            if (std::abs(E_se - seamSet.first) <=
+                    1.0e-9 * std::abs(seamSet.first) &&
+                V_now == seamSet.second) {
+                revisited = true;
+                break;
+            }
+        }
+        if (revisited) {
             // lambda creep is ~1e-6 per frozen round, far too small to flip
             // a pick the pins already blocked, so pinned runs get 3 rounds
-            if (++noProgressCount >= (pinnedMode ? 3 : 50)) {
+            if (++noProgressCount >= (pinnedMode ? 3 : NO_PROGRESS_ROUNDS)) {
                 converge_preDrawFunc();
                 return false;
             }
         } else {
             noProgressCount = 0;
-            E_se_last = E_se;
-            V_last = triSoup[channel_result]->V_rest.rows();
+            recentSeamSets.emplace_back(E_se, V_now);
+            if (recentSeamSets.size() > REVISIT_WINDOW)
+                recentSeamSets.pop_front();
         }
 
         // continue to split boundary
