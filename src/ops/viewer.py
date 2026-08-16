@@ -6,8 +6,15 @@ from gpu_extras.batch import batch_for_shader
 
 from ..manager import manager
 from ..utils.mesh import check_exists
+from ..utils.ui import tag_redraw
 
 VIEWER_WORKSPACE = "UVgami Viewer"
+
+CYCLE_KEYS = {"RIGHT_ARROW": 1, "LEFT_ARROW": -1}
+
+ARROW_FONT_SIZE = 24
+DONE_FONT_SIZE = 14
+GRID_GAP = 8
 
 # blender's stretch_opacity default
 FILL_ALPHA = 1.0
@@ -124,6 +131,12 @@ def set_snapshot(uv_co, uv_indices):
         )
 
 
+def clear_snapshot():
+    global _wire_batch, _fill_batch
+    _wire_batch = None
+    _fill_batch = None
+
+
 def _wire_fade():
     """0 to 1 on how many pixels wide the typical triangle draws right now."""
     view2d = bpy.context.region.view2d
@@ -181,17 +194,35 @@ def _schedule_workspace_trim(window, name):
     bpy.app.timers.register(tick, first_interval=0.0)
 
 
-def _draw_done_text():
+def _draw_hint_text():
     """Pixel-space companion to _draw: blf works in pixels, so the grid
     corner anchor is converted from uv space each redraw."""
-    if not manager.viewer_done:
-        return
-    x, y = bpy.context.region.view2d.view_to_region(0.0, 0.0, clip=False)
     font = 0
-    blf.size(font, 14)
-    blf.position(font, x + 10, y + 10, 0)
     blf.color(font, 1.0, 1.0, 1.0, 0.9)
-    blf.draw(font, "Done, click to exit")
+    view2d = bpy.context.region.view2d
+    if manager.viewer_done:
+        right, bottom = view2d.view_to_region(1.0, 0.0, clip=False)
+        blf.size(font, DONE_FONT_SIZE)
+        blf.position(font, right + GRID_GAP, bottom, 0)
+        blf.draw(font, "Done, click to exit")
+    if any(u is not manager.current_viewer for u in _viewable_unwraps()):
+        _draw_switch_arrows(font, view2d)
+
+
+def _draw_switch_arrows(font, view2d):
+    """Outside the grid's top corners, so they clear the islands."""
+    left, top = view2d.view_to_region(0.0, 1.0, clip=False)
+    right = view2d.view_to_region(1.0, 1.0, clip=False)[0]
+    blf.size(font, ARROW_FONT_SIZE)
+    for arrow, edge, side in (("←", left, -1), ("→", right, 1)):
+        width, height = blf.dimensions(font, arrow)
+        x = edge + side * GRID_GAP - (width if side < 0 else 0)
+        blf.position(font, x, top - height, 0)
+        blf.draw(font, arrow)
+
+
+def _viewable_unwraps():
+    return [unwrap for unwrap in manager.active if unwrap.is_viewable]
 
 
 def start_viewer_draw():
@@ -201,20 +232,19 @@ def start_viewer_draw():
             _draw, (), "WINDOW", "POST_VIEW"
         )
         _text_handler = bpy.types.SpaceImageEditor.draw_handler_add(
-            _draw_done_text, (), "WINDOW", "POST_PIXEL"
+            _draw_hint_text, (), "WINDOW", "POST_PIXEL"
         )
 
 
 def stop_viewer_draw():
-    global _handler, _text_handler, _wire_batch, _fill_batch, _corner_angle
+    global _handler, _text_handler, _corner_angle
     if _handler is not None:
         bpy.types.SpaceImageEditor.draw_handler_remove(_handler, "WINDOW")
         _handler = None
     if _text_handler is not None:
         bpy.types.SpaceImageEditor.draw_handler_remove(_text_handler, "WINDOW")
         _text_handler = None
-    _wire_batch = None
-    _fill_batch = None
+    clear_snapshot()
     _corner_angle = None
     manager.viewer_done = False
 
@@ -257,15 +287,40 @@ class UVGAMI_OT_view_unwrap(bpy.types.Operator):
             old_mode = (active, active.mode)
             bpy.ops.object.mode_set(mode="OBJECT")
 
-        load_input_mesh(unwrap.path)
         start_viewer_draw()
-        manager.current_viewer = unwrap
-        unwrap.viewing = True
+        self._show(unwrap)
         self.report({"INFO"}, "Click to exit viewer")
         context.window_manager.modal_handler_add(self)
         return {"RUNNING_MODAL"}
 
+    def _show(self, unwrap):
+        """Point the viewer at one unwrap. The new map arrives on the next
+        manager tick."""
+        if manager.current_viewer is not None:
+            manager.current_viewer.viewing = False
+        manager.viewer_done = False
+        clear_snapshot()
+        load_input_mesh(unwrap.path)
+        manager.current_viewer = unwrap
+        unwrap.viewing = True
+        tag_redraw(("WINDOW",))
+
+    def _cycle(self, step):
+        viewable = _viewable_unwraps()
+        if not viewable:
+            return
+        current = manager.current_viewer
+        # the one being viewed drops out of the list once it finishes
+        index = viewable.index(current) + step if current in viewable else 0
+        target = viewable[index % len(viewable)]
+        if target is not current:
+            self._show(target)
+
     def modal(self, context, event):
+        if event.type in CYCLE_KEYS and event.value == "PRESS":
+            self._cycle(CYCLE_KEYS[event.type])
+            return {"RUNNING_MODAL"}
+
         if event.type in {"LEFTMOUSE", "RIGHTMOUSE", "ESC"} or manager.exit_viewer:
             manager.is_viewer_active = False
             if manager.current_viewer is not None:

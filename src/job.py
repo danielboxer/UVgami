@@ -171,7 +171,13 @@ class Preserve:
 
 
 class Join:
+    _last_id = 0
+
     def __init__(self, expected):
+        # panel buttons carry this instead of a member's stem, which goes stale
+        # as soon as that piece settles
+        Join._last_id += 1
+        self.job_id = Join._last_id
         self.expected = expected
         # every piece in creation order, settled or not, for the queue ui
         self.members = []

@@ -9,15 +9,21 @@ from ..utils.paths import get_preferences
 from ..utils.ui import tag_redraw
 
 
-def resolve_targets(stem, whole_group):
-    """The unwraps a panel button targets, resolved by input file stem at
-    execute time so a stale click on an already settled piece is a no-op."""
-    target = next((u for u in manager.active if u.path.stem == stem), None)
-    if target is None:
-        return []
-    if whole_group and target.join_job is not None:
-        return [u for u in manager.active if u.join_job is target.join_job]
-    return [target]
+def group_targets(job_id):
+    """Every unwrap still running for one join job. Keyed by job id, not by a
+    member's stem: pieces settle and leave manager.active between the draw and
+    the click, so the stem the button was drawn with may already be gone."""
+    return [
+        u
+        for u in manager.active
+        if u.join_job is not None and u.join_job.job_id == job_id
+    ]
+
+
+def piece_target(stem):
+    """Resolved at execute time, so a stale click on a settled piece does
+    nothing."""
+    return [u for u in manager.active if u.path.stem == stem]
 
 
 def drop_unwrap(context, unwrap, invalid_label, result):
@@ -40,11 +46,12 @@ class UVGAMI_OT_stop(bpy.types.Operator):
     bl_label = "Stop"
     bl_description = "Stop UV unwrap"
 
+    # a group button sets job_id, a piece button sets stem
     stem: bpy.props.StringProperty()
-    whole_group: bpy.props.BoolProperty()
+    job_id: bpy.props.IntProperty()
 
     def execute(self, context):
-        unwraps = resolve_targets(self.stem, self.whole_group)
+        unwraps = group_targets(self.job_id) if self.job_id else piece_target(self.stem)
 
         stopped_pending = False
         # collect cancellations so group members can be merged into one import
@@ -124,29 +131,28 @@ class UVGAMI_OT_cancel(bpy.types.Operator):
     bl_label = "Cancel"
     bl_description = "Cancel UV unwrap"
 
+    # a group button sets job_id, a piece button sets stem
     stem: bpy.props.StringProperty()
-    whole_group: bpy.props.BoolProperty()
+    job_id: bpy.props.IntProperty()
 
     def invoke(self, context, event):
         # only a group cancel can discard finished pieces, so only it confirms
-        if self.whole_group:
-            target = next((u for u in manager.active if u.path.stem == self.stem), None)
-            job = target.join_job if target is not None else None
-            if job is not None and job.finished:
-                count = len(job.finished)
-                pieces = "piece" if count == 1 else "pieces"
-                return context.window_manager.invoke_confirm(
-                    self,
-                    event,
-                    title="Cancel Unwrap",
-                    message=f"{count} finished {pieces} will be discarded",
-                    icon="WARNING",
-                )
+        targets = group_targets(self.job_id) if self.job_id else []
+        if targets and targets[0].join_job.finished:
+            count = len(targets[0].join_job.finished)
+            pieces = "piece" if count == 1 else "pieces"
+            return context.window_manager.invoke_confirm(
+                self,
+                event,
+                title="Cancel Unwrap",
+                message=f"{count} finished {pieces} will be discarded",
+                icon="WARNING",
+            )
         return self.execute(context)
 
     def execute(self, context):
-        unwraps = resolve_targets(self.stem, self.whole_group)
-        if self.whole_group:
+        unwraps = group_targets(self.job_id) if self.job_id else piece_target(self.stem)
+        if self.job_id:
             # the user dropped the whole mesh, so the already finished pieces
             # get discarded instead of joined when the group settles
             for unwrap in unwraps:
@@ -157,7 +163,7 @@ class UVGAMI_OT_cancel(bpy.types.Operator):
             # an individual cancel from a group goes to the collection, so the
             # joined result visibly misses a piece
             is_individual_from_group = (
-                not self.whole_group
+                not self.job_id
                 and unwrap.join_job is not None
                 and unwrap.join_job.expected > 1
             )
@@ -204,7 +210,25 @@ class UVGAMI_OT_cancel_all(bpy.types.Operator):
     bl_label = "Cancel All"
     bl_description = "Cancel all active UV unwraps"
 
+    def invoke(self, context, event):
+        jobs = {u.join_job for u in manager.active if u.join_job is not None}
+        count = sum(len(job.finished) for job in jobs)
+        if count:
+            pieces = "piece" if count == 1 else "pieces"
+            return context.window_manager.invoke_confirm(
+                self,
+                event,
+                title="Cancel All",
+                message=f"{count} finished {pieces} will be discarded",
+                icon="WARNING",
+            )
+        return self.execute(context)
+
     def execute(self, context):
+        # stop_all only clears the list, so the preseeds still solving have to
+        # be told to stop first
+        for entry in list(manager.preparing):
+            entry.cancel()
         manager.stop_all()
         manager.finish()
         self.report({"INFO"}, "UV unwrap cancelled")
