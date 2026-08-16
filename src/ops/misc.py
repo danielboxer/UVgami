@@ -3,9 +3,9 @@ import gpu
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
-from ..manager import manager
 from ..utils.geometry import calc_center
 from ..utils.ui import tag_redraw
+from .stop import group_targets
 
 _sym_handler = None
 _sym_shader = None
@@ -38,12 +38,16 @@ class UVGAMI_OT_expand(bpy.types.Operator):
     bl_label = "Expand"
     bl_description = "Expand or collapse joined mesh details"
 
-    stem: bpy.props.StringProperty()
+    job_id: bpy.props.IntProperty()
 
     def execute(self, context):
-        unwrap = next((u for u in manager.active if u.path.stem == self.stem), None)
-        if unwrap is not None and unwrap.join_job is not None:
-            unwrap.join_job.is_expanded = not unwrap.join_job.is_expanded
+        targets = group_targets(self.job_id)
+        if targets:
+            job = targets[0].join_job
+            job.is_expanded = not job.is_expanded
+            # without this the arrow only flips on the next dispatch tick, so a
+            # click reads as ignored and the second one toggles it back
+            tag_redraw()
         return {"FINISHED"}
 
 

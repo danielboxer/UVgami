@@ -101,6 +101,10 @@ def optcuts_installed():
     return get_engine("OPTCUTS") in installed_engines()
 
 
+# a wide button with a small icon button beside it
+ICON_BUTTON_SPLIT = 0.85
+
+
 def draw_missing_engine(layout):
     """Stands in for a panel body that has no engine to run."""
     box = layout.box()
@@ -110,7 +114,7 @@ def draw_missing_engine(layout):
     row = box.row()
     row.alignment = "CENTER"
     row.label(text="Engine not installed", icon="INFO")
-    split = box.split(factor=0.85)
+    split = box.split(factor=ICON_BUTTON_SPLIT)
     split.scale_y = 1.5
     # skip the confirmation, this is the only way to get an engine
     split.operator_context = "EXEC_DEFAULT"
@@ -172,9 +176,11 @@ def draw_queue(box):
     for transfer in manager.pending_transfers:
         _draw_background_row(box, f"{transfer.name} (finishing)", transfer.name)
 
-    if len(groups) > 1:
+    rows = len(groups) + len(manager.preparing) + len(manager.pending_transfers)
+    if rows > 1:
         row = box.row()
-        row.operator("uvgami.cancel_all", icon="TRASH")
+        row.scale_y = 1.5
+        row.operator("uvgami.cancel_all", icon="CANCEL")
     box.separator()
 
 
@@ -182,7 +188,7 @@ def _draw_background_row(box, label, name):
     """A preseed or proxy finish, with the cancel that drops it."""
     row = box.box().row()
     row.label(text=label, icon="SORTTIME")
-    row.operator("uvgami.cancel_background", text="", icon="X").name = name
+    row.operator("uvgami.cancel_background", text="", icon="CANCEL").name = name
 
 
 def _build_unwrap_groups(active_unwraps):
@@ -213,7 +219,7 @@ def _draw_unwrap_groups(box, groups, active_groups):
                 text="",
                 icon=f"DISCLOSURE_TRI_{'DOWN' if group_id.is_expanded else 'RIGHT'}",
                 emboss=False,
-            ).stem = group[0].path.stem
+            ).job_id = group_id.job_id
             label_text = group[0].input_name
             is_active = group_id in active_groups
         else:
@@ -228,16 +234,20 @@ def _draw_unwrap_groups(box, groups, active_groups):
         )
 
         if expand_layout:
-            # pieces the exporter hasn't written yet have no input file, so
-            # stop couldn't put them in the not unwrapped collection
-            is_exporting = any(not u.is_exported for u in group)
-            if is_active and not is_exporting:
-                stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
-                stop_op.stem = group[0].path.stem
-                stop_op.whole_group = True
-            cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
-            cancel_op.stem = group[0].path.stem
-            cancel_op.whole_group = True
+            if manager.engine.supports_viewer:
+                # opens the viewer on the first piece of the group still running
+                viewable = next((u for u in group if _is_viewable(u)), None)
+                view_op = _icon_button(
+                    row, viewable is not None, "uvgami.view_unwrap", "HIDE_OFF"
+                )
+                if viewable is not None:
+                    view_op.stem = viewable.path.stem
+            _icon_button(
+                row, is_active, "uvgami.stop", "SNAP_FACE"
+            ).job_id = group_id.job_id
+            row.operator(
+                "uvgami.cancel", text="", icon="CANCEL"
+            ).job_id = group_id.job_id
             if group_id.is_expanded:
                 _draw_group_pieces(display_box, group_id)
         else:
@@ -275,19 +285,29 @@ def _draw_group_pieces(box, job):
         box.row().label(text=f"{job.reported} of {job.expected} done", icon="INFO")
 
 
+def _is_viewable(item):
+    """Only one viewer at a time, cycling inside it reaches the rest."""
+    return item.is_viewable and not manager.is_viewer_active
+
+
+def _icon_button(row, enabled, operator, icon):
+    """Greyed out rather than left out while it can't be used, so the row keeps
+    its shape instead of growing a button at a time as the queue moves."""
+    sub = row.row()
+    sub.enabled = enabled
+    return sub.operator(operator, text="", icon=icon)
+
+
 def _draw_piece_buttons(row, item):
-    # viewer button, only once the unwrap has started producing
-    if (
-        item.progress != (0, 0, 1)
-        and manager.engine.supports_viewer
-        and not manager.is_viewer_active
-    ):
-        view_op = row.operator("uvgami.view_unwrap", text="", icon="HIDE_OFF")
-        view_op.stem = item.path.stem
+    if manager.engine.supports_viewer:
+        _icon_button(
+            row, _is_viewable(item), "uvgami.view_unwrap", "HIDE_OFF"
+        ).stem = item.path.stem
     # stop button, only on an engine that can finish early with a result
-    if manager.engine.supports_early_stop and item.is_active:
-        stop_op = row.operator("uvgami.stop", text="", icon="SNAP_FACE")
-        stop_op.stem = item.path.stem
+    if manager.engine.supports_early_stop:
+        _icon_button(
+            row, item.is_active, "uvgami.stop", "SNAP_FACE"
+        ).stem = item.path.stem
     cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
     cancel_op.stem = item.path.stem
 
@@ -322,8 +342,6 @@ class UVGAMI_PT_main(bpy.types.Panel):
 
         if not manager.in_uv_editor:
             draw_summary(box)
-
-        if not manager.in_uv_editor:
             draw_queue(box)
 
         row = box.row()
@@ -451,6 +469,7 @@ class UVGAMI_PT_weights(bpy.types.Panel):
         row = generate.row()
         row.label(text="Generate", icon="SHADERFX")
         row = generate.row()
+        row.scale_y = 1.5
         row.operator("uvgami.seed_restrictions", text="From View").mode = "VIEW"
         row.operator("uvgami.seed_restrictions", text="Crevices").mode = "CREVICES"
         row.operator("uvgami.seed_restrictions", text="Both").mode = "BOTH"
@@ -513,7 +532,7 @@ class UVGAMI_PT_grid(EnginePanel, bpy.types.Panel):
         row.alignment = "CENTER"
         row.label(text="Grid", icon="TEXTURE")
 
-        split = box.split(factor=0.8)
+        split = box.split(factor=ICON_BUTTON_SPLIT)
         split.scale_y = 1.5
         split.operator("uvgami.add_grid", icon="UV_DATA")
         split.operator("uvgami.remove_grid", icon="TRASH", text="")
@@ -659,6 +678,7 @@ class UVGAMI_PT_misc(EnginePanel, bpy.types.Panel):
 
         if logger.unwrap_info:
             row = box.row()
+            row.scale_y = 1.5
             row.operator("uvgami.copy_logs", icon="COPYDOWN")
             row.operator("uvgami.clear_logs", icon="TRASH")
             col = box.column()

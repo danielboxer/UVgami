@@ -302,8 +302,8 @@ class UnwrapManager:
         if get_preferences().show_progress_bar:
             progress_bar.update(self.progress)
             tag_redraw(("WINDOW",))
-        # redraw the sidebar only on a change, a 10 per second rebuild makes
-        # its buttons drop most clicks
+        # redraw the sidebar only on a change, a 10 per second rebuild is wasted
+        # work the rest of the time
         state = self._panel_state()
         if state != self._drawn_panel_state:
             self._drawn_panel_state = state
@@ -321,8 +321,8 @@ class UnwrapManager:
                     unwrap.path.stem,
                     unwrap.is_active,
                     unwrap.is_exported,
-                    unwrap.progress != (0, 0, 1),
-                    unwrap.join_job.is_expanded if unwrap.join_job else False,
+                    unwrap.is_viewable,
+                    unwrap.is_stalled,
                 )
                 for unwrap in self.active
             ),

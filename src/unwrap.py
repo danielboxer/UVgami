@@ -76,6 +76,7 @@ class Unwrap:
 
         self.is_active = False
         self.progress = (0, 0, 1)
+        self.has_reported = False
         # shared with the other unwraps when part of a batch process
         self.process = None
         self.batch_process = None
@@ -218,6 +219,7 @@ class Unwrap:
                 parsed = tuple(float(num) for num in progress.split())
             except ValueError:
                 return
+            self.has_reported = True
             if parsed != self.progress:
                 self.progress = parsed
                 self.progress_changed_at = time.monotonic()
@@ -230,6 +232,13 @@ class Unwrap:
             and self.progress_changed_at is not None
             and time.monotonic() - self.progress_changed_at > PROGRESS_STALL_SECONDS
         )
+
+    @property
+    def is_viewable(self):
+        """Running and reporting, so the engine has uvs to snapshot. The
+        progress numbers can't say it, an all-high-distortion report is the
+        0 0 1 this starts at."""
+        return self.is_active and self.has_reported
 
     def update_viewer(self):
         manager.engine.request_snapshot(self.process)
