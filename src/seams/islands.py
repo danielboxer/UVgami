@@ -543,8 +543,23 @@ def _spatial_parameter(verts, faces, group):
     return ts, lo, hi - lo
 
 
+def whole_mesh_fragment_floor(verts, faces):
+    """The crumb floor reads the whole mesh, not the scan: split_moves scans
+    one piece of a joined output per call, and a small piece must not shrink
+    the floor under its own crumbs."""
+    return FRAGMENT_SHARE * sum(polygon_area(verts, face) for face in faces)
+
+
 def split_islands(
-    verts, faces, seams, uvs, weights=None, groups=None, edges=None, relief_cache=None
+    verts,
+    faces,
+    seams,
+    uvs,
+    weights=None,
+    groups=None,
+    edges=None,
+    relief_cache=None,
+    fragment_floor=None,
 ):
     """Extra seam edges that cut ruined uv islands into smaller pieces.
 
@@ -560,7 +575,8 @@ def split_islands(
     are scanned again on their own axes, and a neckless strip longer than
     the atlas its scanned area needs is sliced even, since one long strip
     caps how far everything can be scaled up. groups restricts the scan,
-    for a caller that knows the rest is unchanged.
+    for a caller that knows the rest is unchanged, and fragment_floor is
+    the crumb floor of the whole mesh, for a caller scanning it in pieces.
     """
     if edges is None:
         edges = face_edges(faces)
@@ -622,10 +638,8 @@ def split_islands(
     if total <= 0:
         return extra
     cap = math.sqrt(total / SPLIT_TARGET)
-    # the crumb floor reads the whole mesh, not the scan: split_moves scans
-    # one piece of a joined output per call, and a small piece must not
-    # shrink the floor under its own crumbs
-    floor = FRAGMENT_SHARE * sum(polygon_area(verts, face) for face in faces)
+    if fragment_floor is None:
+        fragment_floor = whole_mesh_fragment_floor(verts, faces)
 
     # an island is what the unwrap made one: faces joined by unseamed edges
     queue = collections.deque(groups)
@@ -690,7 +704,7 @@ def split_islands(
             continue
         pieces = split_pieces(group, links, new)
         pieces = absorb_fragments(
-            pieces, links, new, lambda f: polygon_area(verts, faces[f]), floor
+            pieces, links, new, lambda f: polygon_area(verts, faces[f]), fragment_floor
         )
         if not new:
             continue
@@ -740,11 +754,20 @@ def split_moves(verts, faces, uvs, starts, ranges=None):
         scanned = []
         extra = set()
         relief_cache = []
+        fragment_floor = whole_mesh_fragment_floor(verts, faces)
         for start, stop in ranges:
             scoped = [g for g in groups if start <= g[0] < stop]
             scanned += scoped
             extra |= split_islands(
-                verts, faces, seams, uvs, None, scoped, edges, relief_cache
+                verts,
+                faces,
+                seams,
+                uvs,
+                None,
+                scoped,
+                edges,
+                relief_cache,
+                fragment_floor,
             )
     if not extra:
         return []
