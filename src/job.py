@@ -181,8 +181,8 @@ class Join:
         self.expected = expected
         # every piece in creation order, settled or not, for the queue ui
         self.members = []
-        # finished unwraps in completion order, the merge concatenates in this
-        # order so material indices and vertex groups line up
+        # finished unwraps in creation order, the merge concatenates in this
+        # order and completion order would follow engine timing
         self.finished = []
         self.reported = 0
         # a whole-group cancel drops the finished pieces instead of joining them
@@ -193,6 +193,7 @@ class Join:
         self.reported += 1
         if result is Result.FINISHED:
             self.finished.append(unwrap)
+            self.finished.sort(key=self.members.index)
 
     def is_settled(self):
         return self.reported == self.expected
