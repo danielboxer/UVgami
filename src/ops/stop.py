@@ -47,8 +47,8 @@ class UVGAMI_OT_stop(bpy.types.Operator):
     bl_description = "Stop UV unwrap"
 
     # a group button sets job_id, a piece button sets stem
-    stem: bpy.props.StringProperty()
-    job_id: bpy.props.IntProperty()
+    stem: bpy.props.StringProperty(options={"SKIP_SAVE"})
+    job_id: bpy.props.IntProperty(options={"SKIP_SAVE"})
 
     def execute(self, context):
         unwraps = group_targets(self.job_id) if self.job_id else piece_target(self.stem)
@@ -132,8 +132,8 @@ class UVGAMI_OT_cancel(bpy.types.Operator):
     bl_description = "Cancel UV unwrap"
 
     # a group button sets job_id, a piece button sets stem
-    stem: bpy.props.StringProperty()
-    job_id: bpy.props.IntProperty()
+    stem: bpy.props.StringProperty(options={"SKIP_SAVE"})
+    job_id: bpy.props.IntProperty(options={"SKIP_SAVE"})
 
     def invoke(self, context, event):
         # only a group cancel can discard finished pieces, so only it confirms
