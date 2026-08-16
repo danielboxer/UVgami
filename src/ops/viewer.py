@@ -16,11 +16,13 @@ ARROW_FONT_SIZE = 24
 DONE_FONT_SIZE = 14
 GRID_GAP = 8
 
-# blender's stretch_opacity default
-FILL_ALPHA = 1.0
+# the stretch overlay adds onto this grey, baked in so the fill covers the grid
+EDITOR_BACKGROUND = 0.22
 
-WIRE_WIDTH = 1.2
-WIRE_ALPHA = 0.7
+WIRE_WIDTH = 1.0
+WIRE_OUTLINE_WIDTH = 3.0
+# what the core of a blender uv edge measures at
+WIRE_COLOR = (0.54, 0.54, 0.54)
 # a wire over triangles this small covers the colors
 WIRE_HIDDEN_PIXELS = 3.0
 WIRE_FULL_PIXELS = 10.0
@@ -95,17 +97,17 @@ def _stretch_colors(uv_pts):
     the same measurement as the uv editor's angle stretch overlay."""
     off = numpy.abs(_corner_angles(uv_pts) - _corner_angle) / numpy.pi
     weight = 1 - (1 - off) ** 2
-    colors = numpy.empty((weight.size, 4), dtype=numpy.float32)
-    colors[:, :3] = _weight_to_rgb(weight).reshape(-1, 3)
-    colors[:, 3] = FILL_ALPHA
-    return colors
+    colors = numpy.ones((weight.size, 4), dtype=numpy.float32)
+    colors[:, :3] = _weight_to_rgb(weight).reshape(-1, 3) + EDITOR_BACKGROUND
+    return numpy.clip(colors, 0, 1, out=colors)
 
 
 def set_snapshot(uv_co, uv_indices):
     """Build the fill and wire batches for the latest engine snapshot."""
     global _wire_batch, _fill_batch, _wire_shader, _fill_shader, _median_edge
     if _wire_shader is None:
-        _wire_shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+        # polyline sets width in the shader, past the driver's line limit of 1
+        _wire_shader = gpu.shader.from_builtin("POLYLINE_UNIFORM_COLOR")
         _fill_shader = gpu.shader.from_builtin("SMOOTH_COLOR")
 
     tris = numpy.asarray(uv_indices, dtype=numpy.int32)
@@ -148,17 +150,23 @@ def _wire_fade():
 
 
 def _draw():
-    gpu.state.blend_set("ALPHA")
+    gpu.state.blend_set("NONE")
     if _fill_batch is not None:
         _fill_batch.draw(_fill_shader)
+    gpu.state.blend_set("ALPHA")
     # without a fill the wire is the whole picture, so it never fades out
     fade = _wire_fade() if _fill_batch is not None else 1.0
     if _wire_batch is not None and fade > 0:
         _wire_shader.bind()
-        gpu.state.line_width_set(WIRE_WIDTH)
-        _wire_shader.uniform_float("color", (0.0, 0.0, 0.0, WIRE_ALPHA * fade))
-        _wire_batch.draw(_wire_shader)
-        gpu.state.line_width_set(1.0)
+        _wire_shader.uniform_float("viewportSize", gpu.state.viewport_get()[2:])
+        _wire_shader.uniform_bool("lineSmooth", True)
+        for width, rgb in (
+            (WIRE_OUTLINE_WIDTH, (0.0, 0.0, 0.0)),
+            (WIRE_WIDTH, WIRE_COLOR),
+        ):
+            _wire_shader.uniform_float("lineWidth", width)
+            _wire_shader.uniform_float("color", (*rgb, fade))
+            _wire_batch.draw(_wire_shader)
     gpu.state.blend_set("NONE")
 
 
