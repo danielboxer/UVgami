@@ -16,6 +16,7 @@
 #include "SymDirichletEnergy.hpp"
 
 #include <igl/cut_to_disk.h>
+#include <igl/default_num_threads.h>
 #include <igl/cut_mesh.h>
 #include <igl/readOFF.h>
 #include <igl/boundary_loop.h>
@@ -949,6 +950,10 @@ static void reportTerminate() {
 
 int main(int argc, char *argv[]) {
     std::set_terminate(reportTerminate);
+    // igl::parallel_for spawns a thread per core on every call and the
+    // scaffold rebuild calls it every solve iteration, so the spawn cost
+    // outweighs the loops on any mesh: one thread halves a many-piece run
+    igl::default_num_threads(1);
     std::string meshFileName;
     lambda_init = 0.999;
     std::filesystem::path inputFolderPath;
