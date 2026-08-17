@@ -29,6 +29,28 @@ from .utils.ui import popup, set_status, switch_shading, tag_redraw
 STATUS_SECONDS = 5
 SETTLE_TICK_SECONDS = 0.05
 
+
+class Settings:
+    """A frozen copy of scene.uvgami taken at session start. The engine path
+    reads this, so a slider moved mid-session doesn't reach the queued meshes."""
+
+    def __init__(self, props):
+        for prop in props.bl_rna.properties:
+            if prop.identifier == "rna_type":
+                continue
+            value = getattr(props, prop.identifier)
+            if prop.type == "POINTER":
+                value = Settings(value)
+            elif isinstance(value, set):
+                value = set(value)
+            setattr(self, prop.identifier, value)
+        # bl_rna skips the plain python properties like preserve_mesh
+        for cls in type(props).__mro__:
+            for name, attribute in vars(cls).items():
+                if isinstance(attribute, property) and not hasattr(self, name):
+                    setattr(self, name, getattr(props, name))
+
+
 PendingTransfer = namedtuple(
     "PendingTransfer", ["job", "output", "pack_index", "name", "started_at"]
 )
@@ -65,6 +87,9 @@ class UnwrapManager:
     def _reset_session(self):
         """Per-run state. Called from __init__ too, so the error path can reach
         finish() before a session ever starts."""
+        # frozen scene.uvgami, set in start()
+        self.props = None
+        self.moved_to_invalid = False
         # (unwrap, result) per settled piece, the source for all counts
         self.results = []
         self._to_import = []
@@ -100,6 +125,7 @@ class UnwrapManager:
 
     def start(self, uv_editor=False):
         self._reset_session()
+        self.props = Settings(bpy.context.scene.uvgami)
         self._fill_slots()
         if get_preferences().show_progress_bar:
             progress_bar.start(uv_editor)
@@ -111,7 +137,7 @@ class UnwrapManager:
 
     def _fill_slots(self):
         """Start queued unwraps up to the concurrency limit."""
-        props = bpy.context.scene.uvgami
+        props = self.props
         engine = self.engine
         if engine.batches_queue(props):
             if self.pieces_still_arriving > 0:
@@ -325,7 +351,7 @@ class UnwrapManager:
             tuple(
                 (
                     unwrap.path.stem,
-                    unwrap.is_active,
+                    unwrap.is_running,
                     unwrap.is_exported,
                     unwrap.is_viewable,
                     unwrap.is_stalled,
@@ -661,7 +687,9 @@ class UnwrapManager:
             if described is not None:
                 msg, move_to_invalid = described
                 if not move_to_invalid:
-                    self.error_messages.append(msg)
+                    # one code can cover several causes, stderr says which
+                    last = last_meaningful_line(unwrap.get_stderr_tail())
+                    self.error_messages.append(f"{msg} ({last})" if last else msg)
             else:
                 self.error_code = ret_code
                 tail = unwrap.get_stderr_tail()
@@ -681,6 +709,7 @@ class UnwrapManager:
                 collection = check_collection(
                     "UVgami Not Unwrapped", bpy.context.scene.collection
                 )
+                self.moved_to_invalid = True
                 move_to_collection(invalid_obj, collection)
                 label = f"{invalid_obj.name}: {msg}"
                 invalid_obj.name = label
@@ -731,12 +760,13 @@ class UnwrapManager:
             # headline first, the banner shows it alone on the top row
             finished, invalid = counts[Result.FINISHED], counts[Result.INVALID]
             cancelled, stopped = counts[Result.CANCELLED], counts[Result.STOPPED]
+            # the counts are per loose part, not per mesh
             if finished and invalid:
-                msg.append(f"{invalid} of {finished + invalid} meshes failed")
+                msg.append(f"{invalid} of {finished + invalid} parts failed")
             elif finished and stopped:
-                msg.append(f"{stopped} of {finished + stopped} meshes stopped")
+                msg.append(f"{stopped} of {finished + stopped} parts stopped")
             elif finished and cancelled:
-                msg.append(f"{cancelled} of {finished + cancelled} meshes cancelled")
+                msg.append(f"{cancelled} of {finished + cancelled} parts cancelled")
             elif finished and had_error:
                 msg.append("UV unwrap finished with errors")
             elif finished:
@@ -748,7 +778,7 @@ class UnwrapManager:
 
             if invalid:
                 logger.add_data("errors", "Some meshes were not able to be unwrapped")
-            if (invalid or stopped) and get_preferences().invalid_collection:
+            if self.moved_to_invalid:
                 msg.append("Check 'UVgami Not Unwrapped'.")
 
             if self.transfer_uv_failed:
@@ -769,7 +799,8 @@ class UnwrapManager:
                 msg.append(err_msg)
                 logger.add_data("errors", err_msg)
 
-            for err in self.error_messages:
+            # a whole queue can fail the same way, show the line once
+            for err in dict.fromkeys(self.error_messages):
                 msg.append(err)
                 logger.add_data("errors", err)
 

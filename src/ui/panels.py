@@ -209,7 +209,7 @@ def _build_unwrap_groups(active_unwraps):
             groups[unwrap_idx] = [unwrap]
             continue
         groups.setdefault(job, []).append(unwrap)
-        if unwrap.is_active and job not in active_groups:
+        if unwrap.is_running and job not in active_groups:
             active_groups.append(job)
     return groups, active_groups
 
@@ -231,7 +231,7 @@ def _draw_unwrap_groups(box, groups, active_groups):
             is_active = group_id in active_groups
         else:
             label_text = group[0].name
-            is_active = group[0].is_active
+            is_active = group[0].is_running
         # on the header too, a collapsed group hides its piece rows
         if any(u.is_stalled for u in group):
             label_text += " (stalled)"
@@ -282,12 +282,12 @@ def _draw_group_pieces(box, job):
             if small:
                 box.row().label(text=item.name, icon=_RESULT_ICONS[item.result])
             continue
-        if not small and not item.is_active:
+        if not small and not item.is_running:
             continue
         row = box.row()
         row.label(
             text=item.name + (" (stalled)" if item.is_stalled else ""),
-            icon=f"LAYER_{'ACTIVE' if item.is_active else 'USED'}",
+            icon=f"LAYER_{'ACTIVE' if item.is_running else 'USED'}",
         )
         _draw_piece_buttons(row, item)
     if not small:
