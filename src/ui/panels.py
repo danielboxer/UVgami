@@ -27,7 +27,9 @@ def unwrap_settings(props):
                 "IMPORT",
                 "Import UVs",
                 "import_uvs",
-                engine.supports_import_uvs and is_non_default(props, "import_uvs"),
+                engine.supports_import_uvs
+                and not engine.import_uvs_ignored(props)
+                and is_non_default(props, "import_uvs"),
             ),
             (
                 "MOD_VERTEX_WEIGHT",
@@ -35,7 +37,12 @@ def unwrap_settings(props):
                 "use_weights",
                 engine.supports_guided and is_non_default(props, "use_weights"),
             ),
-            ("MOD_DECIM", "Proxy", "use_proxy", is_non_default(props, "use_proxy")),
+            (
+                "MOD_DECIM",
+                "Proxy",
+                "use_proxy",
+                engine.supports_proxy and is_non_default(props, "use_proxy"),
+            ),
             (
                 "LINKED",
                 "Stack Similar",
@@ -242,9 +249,10 @@ def _draw_unwrap_groups(box, groups, active_groups):
                     "uvgami.view_unwrap",
                     "HIDE_OFF",
                 ).job_id = group_id.job_id
-            _icon_button(
-                row, is_active, "uvgami.stop", "SNAP_FACE"
-            ).job_id = group_id.job_id
+            if manager.engine.supports_early_stop:
+                _icon_button(
+                    row, is_active, "uvgami.stop", "SNAP_FACE"
+                ).job_id = group_id.job_id
             row.operator(
                 "uvgami.cancel", text="", icon="CANCEL"
             ).job_id = group_id.job_id
@@ -354,6 +362,7 @@ class UVGAMI_PT_main(bpy.types.Panel):
 
         if engine.supports_import_uvs:
             split = box.split(factor=0.7)
+            split.active = not engine.import_uvs_ignored(props)
             split.label(icon="IMPORT", text="Import UVs")
             split.prop(props, "import_uvs")
 
@@ -367,11 +376,9 @@ def draw_concurrent(layout, props, engine):
     # process, so concurrency doesn't apply
     if engine.batches_queue(props):
         return
-    sub = toggle(layout, props, "concurrent", "Concurrent", "MOD_ARRAY")
-    if sub is not None:
-        split = sub.split()
-        split.label(icon="MEMORY", text="Cores")
-        split.prop(props, "max_cores", slider=True)
+    split = layout.split(factor=0.7)
+    split.label(icon="MOD_ARRAY", text="Concurrent")
+    split.prop(props, "max_cores", slider=True)
 
 
 def draw_proxy(layout, props):
@@ -410,9 +417,12 @@ class UVGAMI_PT_speed(EnginePanel, bpy.types.Panel):
         engine = active_engine(props.engine)
         draw_concurrent(box, props, engine)
 
-        draw_proxy(box, props)
+        if engine.supports_proxy:
+            draw_proxy(box, props)
 
         split = box.split(factor=0.7)
+        # the proxy finish packs the whole mesh fresh
+        split.active = not engine.uses_proxy(props)
         split.label(icon="LINKED", text="Stack Similar")
         split.prop(props, "stack_similar")
 
@@ -439,9 +449,12 @@ class UVGAMI_PT_weights(bpy.types.Panel):
     def draw(self, context):
         props = context.scene.uvgami
         layout = self.layout
+        # the proxy flatten takes no stretch file
+        engine = active_engine(props.engine)
+        stretch_ignored = engine.uses_proxy(props) and props.reduce_stretching
         # active, not enabled: painting turns the checkbox on itself, so the
         # buttons have to stay clickable while the panel reads as off
-        layout.active = props.use_weights
+        layout.active = props.use_weights and not stretch_ignored
         box = layout.box()
 
         row = box.row()

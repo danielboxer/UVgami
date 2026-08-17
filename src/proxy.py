@@ -36,13 +36,17 @@ from .utils.mesh import (
 )
 
 
+def triangle_count(obj):
+    """Every face fans into loop_total - 2 triangles."""
+    return len(obj.data.loops) - 2 * len(obj.data.polygons)
+
+
 def make_proxy(obj, target_faces):
     """Decimate obj in place to roughly target_faces triangles.
 
     Collapsing leaves vertices with no face behind, which the engine reads as
     non-manifold vertices and refuses, so they go before the mesh is used."""
-    # every face fans into loop_total - 2 triangles
-    triangles = len(obj.data.loops) - 2 * len(obj.data.polygons)
+    triangles = triangle_count(obj)
     if triangles <= target_faces:
         return False
     bpy.context.view_layer.objects.active = obj

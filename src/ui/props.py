@@ -70,18 +70,13 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     #     default="FULL",
     # )
     # speed
-    concurrent: bpy.props.BoolProperty(
-        name="",
-        description=(
-            "Unwrap multiple meshes at the same time."
-            " This only has an effect if you are unwrapping multiple meshes, "
-            "or if the mesh is made up of multiple joined meshes"
-        ),
-        default=True,
-    )
     max_cores: bpy.props.IntProperty(
         name="",
-        description="The maximum number of processor cores to use for concurrent mode",
+        description=(
+            "How many meshes to unwrap at the same time. Set to 1 to run them"
+            " one after another. This only has an effect with multiple meshes,"
+            " or a mesh made up of multiple joined meshes"
+        ),
         default=max(1, multiprocessing.cpu_count() // 2),
         max=multiprocessing.cpu_count(),
         min=1,

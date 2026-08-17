@@ -20,6 +20,8 @@ class Engine:
     supports_early_stop = False
     supports_preserve = False
     supports_import_uvs = False
+    # the proxy finish flattens with optcuts
+    supports_proxy = False
 
     def is_available(self):
         """Whether this engine can run on the current platform."""
@@ -45,10 +47,25 @@ class Engine:
         for the panel's active strip."""
         return []
 
+    def import_uvs_ignored(self, props):
+        """Whether a setting of this engine replaces the mesh's uv map, which
+        leaves Import UVs with nothing to do."""
+        return False
+
+    def uses_import_uvs(self, props):
+        return (
+            props.import_uvs
+            and self.supports_import_uvs
+            and not self.import_uvs_ignored(props)
+        )
+
+    def uses_proxy(self, props):
+        return props.use_proxy and self.supports_proxy
+
     def prepare_uvs(self, obj, props):
         """Return whether to export obj's uv map, building one first if the
         engine wants seams of its own. obj is a temp copy, safe to edit."""
-        return props.import_uvs and self.supports_import_uvs
+        return self.uses_import_uvs(props)
 
     def preseed_work(self, obj, props, mirrors=None):
         """Split prepare_uvs for the start operator's worker thread: a
