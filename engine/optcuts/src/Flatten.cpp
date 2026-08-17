@@ -10,8 +10,10 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <map>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <string>
@@ -20,9 +22,22 @@
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
+#include <igl/flip_avoiding_line_search.h>
 #include <igl/slim.h>
+#include <tbb/parallel_for.h>
 
 #include "uvgami.h"
+
+// slim_solve's internals, in igl::core, so slimSolve can run the iteration
+// itself and keep one factorization pattern
+namespace igl {
+namespace slim {
+void update_weights_and_closest_rotations(igl::SLIMData &s,
+                                          Eigen::MatrixXd &uv);
+void build_linear_system(igl::SLIMData &s, Eigen::SparseMatrix<double> &L);
+double compute_energy(igl::SLIMData &s, const Eigen::MatrixXd &V_new);
+}  // namespace slim
+}  // namespace igl
 
 namespace {
 
@@ -236,13 +251,10 @@ struct Island {
 
 // fills localOf (global uv id -> local) for this island's uv-verts. the
 // caller resets those entries to -1 when done with the island.
-Island buildIsland(const PolyMesh &mesh, const std::vector<int> &faceIsland,
-                   int islandId, std::vector<int> &localOf) {
+Island buildIsland(const PolyMesh &mesh, std::vector<int> faces,
+                   std::vector<int> &localOf) {
     Island island;
-    for (size_t f = 0; f < mesh.faces.size(); ++f)
-        if (faceIsland[f] == islandId)
-            island.faces.push_back(static_cast<int>(f));
-
+    island.faces = std::move(faces);
     for (int f : island.faces)
         for (int c : mesh.corners[static_cast<size_t>(f)])
             if (localOf[static_cast<size_t>(c)] < 0) {
@@ -451,6 +463,33 @@ const double SLIM_ISOMETRIC = 4.0;
 const double SLIM_SETTLED = 1e-3;
 const double SLIM_STOP_SHARE = 0.1;
 
+// damping after a zero pivot: this share of the largest diagonal entry first,
+// then tenfold steps up to the entry itself
+const double DAMPING_FIRST_SHARE = 1e-12;
+const double DAMPING_STEP = 10.0;
+
+using SparseSolver = Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>>;
+
+// returns the diagonal shift that made the factorization hold, negative when
+// none did. a zero pivot comes from an init with collapsed triangles (energy
+// 1e25 and up), whose weights swamp slim's proximal term
+double factorizeDamped(SparseSolver &solver, const Eigen::SparseMatrix<double> &L) {
+    solver.factorize(L);
+    if (solver.info() == Eigen::Success) return 0.0;
+    double largest = L.diagonal().cwiseAbs().maxCoeff();
+    double shift = largest * DAMPING_FIRST_SHARE;
+    for (; shift <= largest; shift *= DAMPING_STEP) {
+        solver.setShift(shift);
+        solver.factorize(L);
+        if (solver.info() == Eigen::Success) break;
+    }
+    solver.setShift(0.0);
+    return shift <= largest ? shift : -1.0;
+}
+
+// igl::slim_solve's iteration with the symbolic factorization done once. a
+// damped step adds the shift to the rhs too, so it pulls toward the current
+// map instead of toward zero
 void slimSolve(Island &island, int maxIterations) {
     igl::SLIMData data;
     Eigen::VectorXi b;
@@ -458,15 +497,66 @@ void slimSolve(Island &island, int maxIterations) {
     igl::slim_precompute(island.V, island.T, island.UV, data,
                          igl::MappingEnergyType::SYMMETRIC_DIRICHLET, b, bc,
                          0.0);
+    SparseSolver solver;
+    Eigen::SparseMatrix<double> L;
+    Eigen::VectorXd rhs, solution;
+    std::function<double(Eigen::MatrixXd &)> energyOf =
+        [&](Eigen::MatrixXd &uv) { return igl::slim::compute_energy(data, uv); };
     for (int i = 0; i < maxIterations; ++i) {
         double before = data.energy - SLIM_ISOMETRIC;
-        igl::slim_solve(data, 1);
+        Eigen::MatrixXd next = data.V_o;
+        igl::slim::update_weights_and_closest_rotations(data, next);
+        igl::slim::build_linear_system(data, L);
+        if (i == 0) solver.analyzePattern(L);
+        double damping = factorizeDamped(solver, L);
+        if (damping < 0.0) break;
+        rhs = data.rhs;
+        for (int d = 0; d < 2; ++d)
+            rhs.segment(d * data.v_n, data.v_n) += damping * data.V_o.col(d);
+        solution = solver.solve(rhs);
+        for (int d = 0; d < 2; ++d)
+            next.col(d) = solution.segment(d * data.v_n, data.v_n);
+        data.energy = igl::flip_avoiding_line_search(
+                          data.F, data.V_o, next, energyOf,
+                          data.energy * data.mesh_area) /
+                      data.mesh_area;
         double excess = data.energy - SLIM_ISOMETRIC;
         if (excess < SLIM_SETTLED || before - excess < SLIM_STOP_SHARE * before)
             break;
     }
     if (data.V_o.rows() == island.UV.rows() && data.V_o.allFinite())
         island.UV = data.V_o;
+}
+
+// biggest island first, so it is not the one left running alone at the end
+void solveIslands(std::vector<Island> &islands,
+                  const std::vector<std::vector<int>> &loops,
+                  int maxIterations) {
+    std::vector<size_t> order(islands.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return islands[a].T.rows() > islands[b].T.rows();
+    });
+    std::mutex progressMutex;
+    int done = 0;
+    double lastProgress = -1.0;
+    tbb::parallel_for(0, static_cast<int>(order.size()), 1, [&](int k) {
+        Island &island = islands[order[static_cast<size_t>(k)]];
+        const std::vector<int> &loop = loops[order[static_cast<size_t>(k)]];
+        if (loop.empty() || !tutteInit(island, loop)) projectToPlane(island);
+        slimSolve(island, maxIterations);
+
+        std::lock_guard<std::mutex> lock(progressMutex);
+        ++done;
+        double progress =
+            std::round(100.0 * done / static_cast<double>(islands.size())) /
+            100.0;
+        if (progress > lastProgress) {
+            lastProgress = progress;
+            std::printf("progress: %.2f 0 %.2f\n", progress, 1.0 - progress);
+            std::fflush(stdout);
+        }
+    });
 }
 
 // absolute, not signed: a closed island projected to a plane cancels to zero
@@ -619,13 +709,18 @@ int runFlatten(const std::string &inputPath, const std::string &outputDir,
 
     int islandCount = 0;
     std::vector<int> faceIsland = faceIslands(mesh, islandCount);
+    std::vector<std::vector<int>> islandFaces(static_cast<size_t>(islandCount));
+    for (size_t f = 0; f < faceIsland.size(); ++f)
+        islandFaces[static_cast<size_t>(faceIsland[f])].push_back(
+            static_cast<int>(f));
     std::vector<int> localOf(mesh.uvs.size(), -1);
     std::vector<Island> islands;
     islands.reserve(static_cast<size_t>(islandCount));
-    double solvedUvArea = 0.0, restArea = 0.0;
-    double lastProgress = -1.0;
+    std::vector<std::vector<int>> loops(static_cast<size_t>(islandCount));
     for (int islandId = 0; islandId < islandCount; ++islandId) {
-        Island island = buildIsland(mesh, faceIsland, islandId, localOf);
+        Island island = buildIsland(
+            mesh, std::move(islandFaces[static_cast<size_t>(islandId)]),
+            localOf);
         if (packOnly) {
             island.UV.resize(static_cast<Eigen::Index>(island.globalUv.size()),
                              2);
@@ -634,26 +729,22 @@ int runFlatten(const std::string &inputPath, const std::string &outputDir,
                     mesh.uvs[static_cast<size_t>(island.globalUv[i])]
                         .transpose();
         } else {
-            std::vector<int> loop = outerBoundaryLoop(island, mesh, localOf);
-            if (loop.empty() || !tutteInit(island, loop))
-                projectToPlane(island);
-            slimSolve(island, maxIterations);
+            loops[static_cast<size_t>(islandId)] =
+                outerBoundaryLoop(island, mesh, localOf);
         }
         for (int c : island.globalUv) localOf[static_cast<size_t>(c)] = -1;
+        islands.push_back(std::move(island));
+    }
+
+    if (!packOnly) solveIslands(islands, loops, maxIterations);
+
+    double solvedUvArea = 0.0, restArea = 0.0;
+    for (Island &island : islands) {
         // before the normalize, which rescales even a noise-area island to
         // its full 3d area
         solvedUvArea += absUvArea(island);
         restArea += island.area3d;
         normalizeIsland(island);
-        islands.push_back(std::move(island));
-
-        double progress =
-            std::round(100.0 * (islandId + 1) / islandCount) / 100.0;
-        if (progress > lastProgress) {
-            lastProgress = progress;
-            std::printf("progress: %.2f 0 %.2f\n", progress, 1.0 - progress);
-            std::fflush(stdout);
-        }
     }
 
     // the solve can crush every island to a point and still reach here.

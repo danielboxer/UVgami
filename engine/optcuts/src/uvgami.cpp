@@ -5,9 +5,12 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <vector>
 #include <thread>
+
+#include <tbb/global_control.h>
 
 #include "uvgami.h"
 #include "Flatten.hpp"
@@ -257,20 +260,21 @@ double updateLambda(double measure_bound, double lambda_SD = energyParams[0],
 
 bool updateLambda_stationaryV(bool cancelMomentum = true,
                               bool checkConvergence = false) {
-    Eigen::MatrixXd edgeLengths;
-    igl::edge_lengths(triSoup[channel_result]->V_rest,
-                      triSoup[channel_result]->F, edgeLengths);
-    const double eps_E_se = 1.0e-3 * edgeLengths.minCoeff() /
-                            triSoup[channel_result]->virtualRadius;
+    // splits and merges only re-index the soup, rest edge lengths never change
+    static const double minRestEdgeLength = [] {
+        Eigen::MatrixXd edgeLengths;
+        igl::edge_lengths(triSoup[channel_result]->V_rest,
+                          triSoup[channel_result]->F, edgeLengths);
+        return edgeLengths.minCoeff();
+    }();
+    const double eps_E_se =
+        1.0e-3 * minRestEdgeLength / triSoup[channel_result]->virtualRadius;
 
     // measurement and energy value computation
     const double E_SD = optimizer->getLastEnergyVal(true) / energyParams[0];
     double E_se;
     triSoup[channel_result]->computeSeamSparsity(E_se);
     E_se /= triSoup[channel_result]->virtualRadius;
-    double stretch_l2, stretch_inf, stretch_shear, compress_inf;
-    triSoup[channel_result]->computeStandardStretch(
-        stretch_l2, stretch_inf, stretch_shear, compress_inf);
     double measure_bound = E_SD;
     const double eps_lambda =
         (std::min)(1.0e-3,
@@ -636,9 +640,6 @@ bool preDrawFunc(void) {
         // give postDraw option to save mesh
         canSaveMesh = true;
 
-        double stretch_l2, stretch_inf, stretch_shear, compress_inf;
-        triSoup[channel_result]->computeStandardStretch(
-            stretch_l2, stretch_inf, stretch_shear, compress_inf);
         double measure_bound =
             optimizer->getLastEnergyVal(true) / energyParams[0];
         if (converged == 2) {
@@ -962,6 +963,8 @@ int main(int argc, char *argv[]) {
     bool flattenMode = false;
     bool packOnlyMode = false;
     int flattenIters = 30;
+    // the cap holds only while this exists
+    std::unique_ptr<tbb::global_control> threadCap;
 
     try {
         TCLAP::CmdLine cmd("uvgami command line", ' ', "1.1.2");
@@ -991,7 +994,16 @@ int main(int argc, char *argv[]) {
             false, 30, "int", cmd);
         TCLAP::SwitchArg packOnlyArg(
             "", "pack_only", "Repack the input UV map without solving", cmd);
+        TCLAP::ValueArg<int> threadsArg(
+            "t", "threads",
+            "Most worker threads for the parallel loops, default every core",
+            false, 0, "int", cmd);
         cmd.parse(argc, argv);
+
+        if (threadsArg.getValue() > 0)
+            threadCap = std::make_unique<tbb::global_control>(
+                tbb::global_control::max_allowed_parallelism,
+                static_cast<size_t>(threadsArg.getValue()));
 
         flattenMode = flattenArg.getValue() || packOnlyArg.getValue();
         packOnlyMode = packOnlyArg.getValue();

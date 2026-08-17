@@ -431,6 +431,7 @@ def _relax_flips(group, uvs, targets, inner):
     position = dict(targets)
     position.update(inner)
     neighbors = {}
+    faces_at = {}
     for fi in group:
         face = uvs[fi]
         n = len(face)
@@ -438,23 +439,26 @@ def _relax_flips(group, uvs, targets, inner):
             a, b = face[i], face[(i + 1) % n]
             neighbors.setdefault(a, set()).add(b)
             neighbors.setdefault(b, set()).add(a)
+            faces_at.setdefault(a, set()).add(fi)
 
     def placed(fi):
         return [position.get(uv, uv) for uv in uvs[fi]]
 
+    def flipped_face(fi):
+        pts = placed(fi)
+        return any(
+            signed_area([pts[0], pts[i], pts[i + 1]]) * orientation < -floor
+            for i in range(1, len(pts) - 1)
+        )
+
     total = sum(signed_area(placed(fi)) for fi in group)
     orientation = 1.0 if total >= 0 else -1.0
     floor = FLIP_NOISE * abs(total)
+    # only a face touching a moved uv can change. still walked in group
+    # order, the sweep over free follows the order flipped was built in
+    candidates = set(group)
     for _ in range(RELAX_ROUNDS):
-        flipped = [
-            fi
-            for fi in group
-            if any(
-                signed_area([pts[0], pts[i], pts[i + 1]]) * orientation < -floor
-                for pts in (placed(fi),)
-                for i in range(1, len(pts) - 1)
-            )
-        ]
+        flipped = [fi for fi in group if fi in candidates and flipped_face(fi)]
         if not flipped:
             break
         free = {uv for fi in flipped for uv in uvs[fi]}
@@ -466,6 +470,7 @@ def _relax_flips(group, uvs, targets, inner):
                 sum(position.get(o, o)[0] for o in around) / len(around),
                 sum(position.get(o, o)[1] for o in around) / len(around),
             )
+        candidates = {fi for uv in free for fi in faces_at[uv]}
     for uv, p in position.items():
         if uv in inner:
             inner[uv] = p
