@@ -29,7 +29,9 @@ from .utils.ui import popup, set_status, switch_shading, tag_redraw
 STATUS_SECONDS = 5
 SETTLE_TICK_SECONDS = 0.05
 
-PendingTransfer = namedtuple("PendingTransfer", ["job", "output", "pack_index", "name"])
+PendingTransfer = namedtuple(
+    "PendingTransfer", ["job", "output", "pack_index", "name", "started_at"]
+)
 # an object being preseeded, before its pieces exist
 Preparing = namedtuple("Preparing", ["name", "cancel"])
 # how long to wait for the engine to stop before killing it
@@ -70,7 +72,7 @@ class UnwrapManager:
         self.pending_transfers = []
         self.transfer_uv_failed = False
         self.transfer_uv_fail_detail = ""
-        self.transfer_uv_missing_pieces = False
+        self.transfer_uv_reason_known = False
         self.transfer_uv_split_count = 0
         self.error_code = 0
         self.error_stderr = ""
@@ -121,10 +123,7 @@ class UnwrapManager:
                 self._start_batch_process(engine, props)
                 return
             # a single queued mesh runs the normal solo path
-        if props.concurrent and not engine.batches_queue(props):
-            max_concurrent = props.max_cores
-        else:
-            max_concurrent = 1
+        max_concurrent = 1 if engine.batches_queue(props) else props.max_cores
         # pieces export in queue order, so an unexported piece means everything
         # behind it is unexported too. copy twins never run, their representative
         # settles them
@@ -492,7 +491,7 @@ class UnwrapManager:
             missing_pieces = group is not None and len(group.finished) < group.expected
             if missing_pieces and isinstance(job, ProxyUVs):
                 failed = group.expected - len(group.finished)
-                self.transfer_uv_missing_pieces = True
+                self.transfer_uv_reason_known = True
                 report = TransferReport(
                     False, 0, f"{failed} of {group.expected} parts were not unwrapped"
                 )
@@ -503,7 +502,13 @@ class UnwrapManager:
                 if report is None:
                     # _finish_transfers settles it when the process exits
                     self.pending_transfers.append(
-                        PendingTransfer(job, output, pack_index, unwrap.input_name)
+                        PendingTransfer(
+                            job,
+                            output,
+                            pack_index,
+                            unwrap.input_name,
+                            time.monotonic(),
+                        )
                     )
                     # unlinked while it waits, or it sits in the scene
                     # beside the original
@@ -559,8 +564,20 @@ class UnwrapManager:
 
     def _finish_transfers(self):
         """Apply proxy finishes whose worker thread is done."""
+        timeout_minutes = bpy.context.scene.uvgami.unwrap_timeout
         for entry in list(self.pending_transfers):
-            job, output, pack_index, _ = entry
+            job, output, pack_index = entry.job, entry.output, entry.pack_index
+            if (
+                timeout_minutes > 0
+                and time.monotonic() - entry.started_at > timeout_minutes * 60
+            ):
+                # cancel deletes the two objects the settle path works on
+                job.cancel()
+                self.pending_transfers.remove(entry)
+                self.transfer_uv_failed = True
+                self.transfer_uv_reason_known = True
+                self.transfer_uv_fail_detail = f"{entry.name} timed out"
+                continue
             try:
                 report = job.poll()
             except Exception:
@@ -737,7 +754,7 @@ class UnwrapManager:
             if self.transfer_uv_failed:
                 detail = self.transfer_uv_fail_detail or "unknown reason"
                 line = f"UV transfer failed: {detail}."
-                if not self.transfer_uv_missing_pieces:
+                if not self.transfer_uv_reason_known:
                     line += " This can happen with cuts or symmetry enabled."
                 msg.append(line)
 

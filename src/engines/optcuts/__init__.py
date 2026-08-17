@@ -177,7 +177,7 @@ class OptcutsEngine(BinaryEngine):
     classes = (
         UVGAMI_PG_optcuts,
         UVGAMI_OT_install_optcuts,
-        UVGAMI_OT_quick_unwrap,
+        # UVGAMI_OT_quick_unwrap,
         # UVGAMI_PT_hard_surface,
     )
     supports_guided = True
@@ -185,6 +185,7 @@ class OptcutsEngine(BinaryEngine):
     supports_early_stop = True
     supports_preserve = True
     supports_import_uvs = True
+    supports_proxy = True
     release = OPTCUTS
     uses_engine_path = True
 
@@ -221,6 +222,9 @@ class OptcutsEngine(BinaryEngine):
             )
         )
 
+    def import_uvs_ignored(self, props):
+        return props.optcuts.use_hard_surface
+
     def prepare_uvs(self, obj, props):
         optcuts = props.optcuts
         if not optcuts.use_hard_surface:
@@ -229,7 +233,7 @@ class OptcutsEngine(BinaryEngine):
         if optcuts.is_auto:
             only = auto_hard_faces(obj)
             if not only:
-                return props.import_uvs
+                return False
             if len(only) == len(obj.data.polygons):
                 only = None
         applied = build_seam_uvs(
@@ -238,7 +242,7 @@ class OptcutsEngine(BinaryEngine):
             weights=seam_restrictions(obj) if props.avoid_seams else None,
             only=only,
         )
-        return applied or props.import_uvs
+        return applied
 
     def preseed_work(self, obj, props, mirrors=None):
         optcuts = props.optcuts

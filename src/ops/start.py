@@ -21,7 +21,7 @@ from ..job import (
 from ..logger import logger
 from ..manager import Preparing, manager
 from ..progress_bar import progress_bar
-from ..proxy import make_proxy
+from ..proxy import make_proxy, triangle_count
 from ..seams import (
     face_edges,
     island_layout,
@@ -54,9 +54,7 @@ from ..utils.task import BackgroundTask
 from ..utils.ui import tag_redraw
 from .guides import SEAM_RESTRICTIONS_GROUP
 
-Preseeding = namedtuple(
-    "Preseeding", ["task", "apply", "obj", "index", "symmetrize_job"]
-)
+Preseeding = namedtuple("Preseeding", ["task", "apply", "obj", "symmetrize_job"])
 
 # process objects for at most this long per tick before yielding to the event loop
 TICK_BUDGET = 0.033
@@ -171,6 +169,7 @@ class InputExporter:
         engine_ctx,
         piece_unwrap,
         piece_has_uvs,
+        piece_keeps_output,
         piece_matrix,
         separated_objects,
         start_objects,
@@ -180,6 +179,7 @@ class InputExporter:
         self.engine_ctx = engine_ctx
         self.piece_unwrap = piece_unwrap
         self.piece_has_uvs = piece_has_uvs
+        self.piece_keeps_output = piece_keeps_output
         self.piece_matrix = piece_matrix
         self.remaining = deque(separated_objects)
         self.start_objects = start_objects
@@ -251,7 +251,7 @@ class InputExporter:
             normalize_uvs(obj.data)
         # the winding only matters on the plain path, a transfer writes onto
         # the original
-        keeps_output = input_job(props) is None
+        keeps_output = self.piece_keeps_output[obj]
         vt_verts = export_obj(
             obj, path, has_uvs, flip_mirrored=keeps_output, matrix=matrix
         )
@@ -454,9 +454,11 @@ class InputExporter:
         return materials, material_indices.tolist(), vertex_groups, face_smooth.tolist()
 
 
-def input_job(props):
-    """The job that finishes an unwrap against the original input mesh."""
-    if props.use_proxy:
+def input_job(props, proxied):
+    """The job that finishes an unwrap against the original input mesh.
+
+    proxied says the mesh was decimated, one under Proxy Faces never is."""
+    if proxied:
         return ProxyUVs(props.transfer_uvs)
     if props.transfer_uvs:
         return TransferUVs()
@@ -474,8 +476,9 @@ class SessionBuilder:
         engine_ctx,
         input_path,
         names,
-        input_objs,
+        input_for,
         objects,
+        proxied_objects,
         start_objects,
         temp_collection,
     ):
@@ -483,13 +486,15 @@ class SessionBuilder:
         self.engine_ctx = engine_ctx
         self.input_path = input_path
         self.names = names
-        self.input_objs = input_objs
-        self.remaining = deque(enumerate(objects))
+        self.input_for = input_for
+        self.proxied_objects = proxied_objects
+        self.remaining = deque(objects)
         self.start_objects = start_objects
         self.temp_collection = temp_collection
         self.separated_objects = []
         self.piece_unwrap = {}
         self.piece_has_uvs = {}
+        self.piece_keeps_output = {}
         self.piece_matrix = {}
         self.pending = None
         # cancelled mid preseed, dropped when the thread unwinds
@@ -499,7 +504,7 @@ class SessionBuilder:
             obj: Preparing(
                 names[obj.name][0], functools.partial(self.cancel_object, obj)
             )
-            for _, obj in self.remaining
+            for obj in self.remaining
         }
         manager.preparing.extend(self.preparing.values())
 
@@ -543,7 +548,7 @@ class SessionBuilder:
             self.cancelled.add(obj)
         else:
             self.remaining = deque(
-                entry for entry in self.remaining if entry[1] is not obj
+                entry for entry in self.remaining if entry is not obj
             )
             self._drop_object(obj)
 
@@ -554,7 +559,7 @@ class SessionBuilder:
 
     def _advance(self):
         if self.pending is not None:
-            task, apply, obj, index, symmetrize_job = self.pending
+            task, apply, obj, symmetrize_job = self.pending
             if not task.done():
                 return 0.1
             self.pending = None
@@ -582,15 +587,13 @@ class SessionBuilder:
                         " the mesh was cut and mirrored",
                     )
                     symmetrize_job.cut(obj)
-            has_uvs = preseeded or (
-                props.import_uvs and self.engine.supports_import_uvs
-            )
-            self._separate(obj, index, has_uvs, symmetrize_job, preseeded=preseeded)
+            has_uvs = preseeded or self.engine.uses_import_uvs(props)
+            self._separate(obj, has_uvs, symmetrize_job, preseeded=preseeded)
             return 0.0
         if not self.remaining:
             return self._finish()
 
-        index, obj = self.remaining.popleft()
+        obj = self.remaining.popleft()
         props = bpy.context.scene.uvgami
         symmetrize_job = None
         mirrors = None
@@ -610,28 +613,28 @@ class SessionBuilder:
             has_uvs = self.engine.prepare_uvs(obj, props)
             if symmetrize_job is not None:
                 symmetrize_job.cut(obj)
-            self._separate(obj, index, has_uvs, symmetrize_job)
+            self._separate(obj, has_uvs, symmetrize_job)
             return 0.0
         compute, apply = work
-        self.pending = Preseeding(
-            BackgroundTask(compute), apply, obj, index, symmetrize_job
-        )
+        self.pending = Preseeding(BackgroundTask(compute), apply, obj, symmetrize_job)
         return 0.1
 
-    def _input_jobs(self, props, index):
+    def _input_jobs(self, props, obj, proxied):
         """The hide or transfer job that finishes against the input mesh."""
-        transfer_uvs_job = input_job(props)
+        transfer_uvs_job = input_job(props, proxied)
         hide_job = None
         if transfer_uvs_job is not None:
-            manager.input[transfer_uvs_job] = self.input_objs[index]
+            manager.input[transfer_uvs_job] = self.input_for[obj]
         else:
             # the hide job can come after join because it doesn't depend
             # on the unwrapped objects
             hide_job = HideInput()
-            manager.input[hide_job] = self.input_objs[index]
+            manager.input[hide_job] = self.input_for[obj]
         return hide_job, transfer_uvs_job
 
-    def _add_piece(self, obj, input_name, piece_name, jobs, has_uvs, props, preseeded):
+    def _add_piece(
+        self, obj, input_name, piece_name, jobs, has_uvs, props, preseeded, keeps_output
+    ):
         """Create the piece's session record before its input file exists, so
         cancels and the queue ui see the whole session upfront."""
         path = self.input_path / f"{engine_file_stem(piece_name)}.obj"
@@ -656,10 +659,12 @@ class SessionBuilder:
         )
         self.piece_unwrap[obj] = unwrap
         self.piece_has_uvs[obj] = uses_uvs
+        self.piece_keeps_output[obj] = keeps_output
         manager.add(unwrap)
 
-    def _separate(self, obj, index, has_uvs, symmetrize_job, preseeded=False):
+    def _separate(self, obj, has_uvs, symmetrize_job, preseeded=False):
         props = bpy.context.scene.uvgami
+        proxied = obj in self.proxied_objects
         # relink for the ops selection, all within one tick so nothing shows
         bpy.context.scene.collection.objects.link(obj)
         self.temp_collection.objects.unlink(obj)
@@ -686,12 +691,19 @@ class SessionBuilder:
                     valid.append(o)
 
             join_job = Join(len(valid))
-            hide_job, transfer_uvs_job = self._input_jobs(props, index)
+            hide_job, transfer_uvs_job = self._input_jobs(props, obj, proxied)
             for obj_idx, o in enumerate(valid):
                 jobs = (None, join_job, hide_job, symmetrize_job, transfer_uvs_job)
                 piece_name = f"{unwrap_name}_{obj_idx + 1}"
                 self._add_piece(
-                    o, unwrap_name, piece_name, jobs, has_uvs, props, preseeded
+                    o,
+                    unwrap_name,
+                    piece_name,
+                    jobs,
+                    has_uvs,
+                    props,
+                    preseeded,
+                    transfer_uvs_job is None,
                 )
                 added.append(o)
             if props.stack_similar:
@@ -699,20 +711,29 @@ class SessionBuilder:
                 bpy.context.view_layer.update()
                 # a representative always precedes its twins in valid order,
                 # so it exports and settles first
-                for twin_obj, (rep_obj, matrix, exact) in find_twins(valid).items():
+                for twin_obj, (rep_obj, twin_matrix, exact) in find_twins(
+                    valid
+                ).items():
                     twin = self.piece_unwrap[twin_obj]
                     representative = self.piece_unwrap[rep_obj]
                     twin.copy_of = representative
-                    twin.copy_matrix = matrix
+                    twin.copy_matrix = twin_matrix
                     twin.copy_reordered = not exact
                     representative.twins.append(twin)
         else:
             # object didn't need to be separated
             unwrap_name = self.names[obj.name][0]
-            hide_job, transfer_uvs_job = self._input_jobs(props, index)
+            hide_job, transfer_uvs_job = self._input_jobs(props, obj, proxied)
             jobs = (None, None, hide_job, symmetrize_job, transfer_uvs_job)
             self._add_piece(
-                obj, unwrap_name, unwrap_name, jobs, has_uvs, props, preseeded
+                obj,
+                unwrap_name,
+                unwrap_name,
+                jobs,
+                has_uvs,
+                props,
+                preseeded,
+                transfer_uvs_job is None,
             )
             added.append(obj)
 
@@ -739,6 +760,7 @@ class SessionBuilder:
             engine_ctx=self.engine_ctx,
             piece_unwrap=self.piece_unwrap,
             piece_has_uvs=self.piece_has_uvs,
+            piece_keeps_output=self.piece_keeps_output,
             piece_matrix=self.piece_matrix,
             separated_objects=self.separated_objects,
             start_objects=self.start_objects,
@@ -767,6 +789,8 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         self.objects = None
         self.names = None
+        self.input_for = None
+        self.proxied_objects = None
         self.reports = []
 
         self.temp_collection = None
@@ -805,8 +829,9 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 engine_ctx=self.engine_ctx,
                 input_path=self.input_path,
                 names=self.names,
-                input_objs=self.input_objs,
+                input_for=self.input_for,
                 objects=self.objects,
+                proxied_objects=self.proxied_objects,
                 start_objects=start_objects,
                 temp_collection=self.temp_collection,
             )
@@ -841,7 +866,9 @@ class UVGAMI_OT_start(bpy.types.Operator):
             bpy.ops.object.mode_set(mode="OBJECT")
 
         self.input_objs = context.selected_objects
-        self.objects, self.names, self.reports = self.prepare_meshes(context)
+        self.objects, self.names, self.reports, self.proxied_objects, self.input_for = (
+            self.prepare_meshes(context)
+        )
         if len(self.objects) == 0:
             reason = self.reports[0][1] if self.reports else "No object selected"
             self.report({"ERROR"}, reason)
@@ -893,12 +920,12 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         objects = []
         names = {}
+        input_for = {}
         skipped = set()
         applied_modifiers = False
+        proxied_objects = set()
         warn = get_preferences().show_warnings
-        # the result comes from the input mesh itself, so the engine has to see
-        # that mesh and not a modifier bake of it
-        keep_modifiers = input_job(props) is not None
+        depsgraph = context.evaluated_depsgraph_get()
         for obj in self.input_objs:
             if obj.type != "MESH":
                 skipped.add("non mesh objects")
@@ -914,16 +941,25 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
             obj.users_collection[0].objects.link(copy_object)
 
-            if keep_modifiers:
+            # the count is the modifier bake, what a plain run would unwrap
+            proxied = (
+                self.engine.uses_proxy(props)
+                and triangle_count(obj.evaluated_get(depsgraph)) > props.proxy_faces
+            )
+            # the result comes from the input mesh itself, so the engine has to
+            # see that mesh and not a modifier bake of it
+            if input_job(props, proxied) is not None:
                 copy_object.modifiers.clear()
             elif self._apply_modifiers(context, copy_object):
                 applied_modifiers = True
 
-            if props.use_proxy:
+            if proxied:
                 make_proxy(copy_object, props.proxy_faces)
+                proxied_objects.add(copy_object)
 
             # save name, format: input name, unwrap name
             names[copy_object.name] = [obj.name, obj.name]
+            input_for[copy_object] = obj
             objects.append(copy_object)
 
         reports = []
@@ -932,7 +968,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
         if warn and applied_modifiers:
             reports.append(("INFO", "Modifiers were applied to the unwrapped copy"))
 
-        return objects, names, reports
+        return objects, names, reports, proxied_objects, input_for
 
     def _apply_modifiers(self, context, obj):
         """True when anything was baked into the copy."""
