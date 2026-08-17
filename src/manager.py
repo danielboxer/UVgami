@@ -31,8 +31,8 @@ SETTLE_TICK_SECONDS = 0.05
 
 
 class Settings:
-    """A frozen copy of scene.uvgami taken at session start. The engine path
-    reads this, so a slider moved mid-session doesn't reach the queued meshes."""
+    """A frozen copy of scene.uvgami taken at session start. Everything the
+    session does reads this, so a slider moved mid-run changes nothing."""
 
     def __init__(self, props):
         for prop in props.bl_rna.properties:
@@ -253,33 +253,12 @@ class UnwrapManager:
             self._update_progress_bar()
 
             for unwrap in completed:
-                try:
-                    self._process_completion(unwrap)
-                except Exception:
-                    error_list = traceback.format_exc().split("\n")[:-1]
-                    logger.add_data("errors", "Error finishing unwrap:")
-                    for line in error_list:
-                        logger.add_data("errors", line)
-                        print(line)
-                    self.error_messages.append(
-                        f"Error finishing {unwrap.input_name}, see the console"
-                    )
-                    # settle the piece even on error so its group can't hang
-                    self.record_result(unwrap, Result.INVALID)
+                self._settle_step(unwrap, "finishing", self._process_completion)
 
             for unwrap, ret_code in failed:
-                try:
-                    self._handle_failure(unwrap, ret_code)
-                except Exception:
-                    error_list = traceback.format_exc().split("\n")[:-1]
-                    logger.add_data("errors", "Error handling unwrap failure:")
-                    for line in error_list:
-                        logger.add_data("errors", line)
-                        print(line)
-                    self.error_messages.append(
-                        f"Error handling {unwrap.input_name} failure, see the console"
-                    )
-                    self.record_result(unwrap, Result.INVALID)
+                self._settle_step(
+                    unwrap, "handling the failure of", self._handle_failure, ret_code
+                )
 
             self._drain_imports()
             self._finish_transfers()
@@ -423,6 +402,20 @@ class UnwrapManager:
                 )
         self._to_import.clear()
 
+    def _settle_step(self, unwrap, doing, step, *args):
+        """Run one piece's settle step. It settles either way, an exception
+        here would leave its group waiting forever."""
+        try:
+            step(unwrap, *args)
+        except Exception:
+            message = f"Error {doing} {unwrap.input_name}"
+            logger.add_data("errors", f"{message}:")
+            for line in traceback.format_exc().split("\n")[:-1]:
+                logger.add_data("errors", line)
+                print(line)
+            self.error_messages.append(f"{message}, see the console")
+            self.record_result(unwrap, Result.INVALID)
+
     def _process_completion(self, unwrap):
         if unwrap.viewing:
             self.viewer_done = True
@@ -430,7 +423,7 @@ class UnwrapManager:
         self.record_result(unwrap, Result.FINISHED)
 
     def _import_and_finalize(self, unwrap, path, edge_path, added_edges):
-        props = bpy.context.scene.uvgami
+        props = self.props
 
         if unwrap.preserve_job is not None and unwrap.maintain_mode == "FULL":
             reroute_seams(path, edge_path)
@@ -554,7 +547,7 @@ class UnwrapManager:
     def _settle_transfer(self, job, output, pack_index, report):
         """Everything after a transfer's report: pack list, hide state, grid,
         collection. Shared with the proxy finishes, which report later."""
-        props = bpy.context.scene.uvgami
+        props = self.props
         input_mesh = self.input[job]
         if report.applied:
             self.transfer_uv_split_count += report.split_count
@@ -735,7 +728,7 @@ class UnwrapManager:
 
     def _finish_batch(self):
         """Called when all unwraps are done (completed, failed, or cancelled)."""
-        props = bpy.context.scene.uvgami
+        props = self.props
         if props.pack_after_unwrap and self._pack_output_objects:
             valid_objects = [o for o in self._pack_output_objects if check_exists(o)]
             if valid_objects:
@@ -852,8 +845,8 @@ class UnwrapManager:
         self._pack_output_objects.clear()
         self.input.clear()
 
-        props = bpy.context.scene.uvgami
-        if props.auto_grid and self._result_counts()[Result.FINISHED] > 0:
+        # count first, the error path reaches here before start() set props
+        if self._result_counts()[Result.FINISHED] > 0 and self.props.auto_grid:
             switch_shading("MATERIAL")
 
         for path in get_io_dir_paths():

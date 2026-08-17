@@ -61,6 +61,11 @@ class Unwrap:
         # result state, set once through manager.record_result
         self.result = None
 
+        # what the export needs about this piece, filled by the session builder
+        self.has_uvs = False
+        self.keeps_output = True
+        self.matrix = None
+
         # export data, filled by set_export_data
         self.is_exported = False
         self.guide_path = None

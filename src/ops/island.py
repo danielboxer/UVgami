@@ -757,20 +757,17 @@ def queue_targets(engine, engine_ctx, count, queue_one):
         manager.start(uv_editor=True)
 
 
-class IslandOperator:
-    """Shared body of Unwrap Island and Relax Island. A plain mixin like
-    AreaOperator."""
+class FixOperator:
+    """Shared frame of the uv editor operators. A plain mixin: registering a
+    subclass of a registered operator unregisters the parent."""
 
     bl_options = {"UNDO"}
-    queue_target = None
-    verb = ""
 
     @classmethod
     def poll(cls, context):
         return context.mode == "EDIT_MESH"
 
     def execute(self, context):
-        props = context.scene.uvgami
         engine, engine_ctx = validate_engine(self)
         if engine is None:
             return {"CANCELLED"}
@@ -778,21 +775,28 @@ class IslandOperator:
         obj = context.view_layer.objects.active
         bpy.ops.object.mode_set(mode="OBJECT")
         try:
-            targets, error = target_islands(obj)
-            if error:
-                self.report({"ERROR"}, error)
-                return {"CANCELLED"}
-
-            def queue_one(k, input_path):
-                group, bbox, area = targets[k]
-                self.queue_target(obj, group, bbox, area, k + 1, input_path, props)
-
-            queue_targets(engine, engine_ctx, len(targets), queue_one)
+            return self.queue_selection(obj, context.scene.uvgami, engine, engine_ctx)
         finally:
             obj.select_set(True)
             context.view_layer.objects.active = obj
             bpy.ops.object.mode_set(mode="EDIT")
 
+
+class IslandOperator(FixOperator):
+    queue_target = None
+    verb = ""
+
+    def queue_selection(self, obj, props, engine, engine_ctx):
+        targets, error = target_islands(obj)
+        if error:
+            self.report({"ERROR"}, error)
+            return {"CANCELLED"}
+
+        def queue_one(k, input_path):
+            group, bbox, area = targets[k]
+            self.queue_target(obj, group, bbox, area, k + 1, input_path, props)
+
+        queue_targets(engine, engine_ctx, len(targets), queue_one)
         self.report({"INFO"}, f"{self.verb} {len(targets)} island(s)")
         return {"FINISHED"}
 
@@ -816,116 +820,76 @@ class UVGAMI_OT_relax_island(IslandOperator, bpy.types.Operator):
     verb = "Relaxing"
 
 
-class UVGAMI_OT_combine_islands(bpy.types.Operator):
+class UVGAMI_OT_combine_islands(FixOperator, bpy.types.Operator):
     bl_idname = "uvgami.combine_islands"
     bl_label = "Combine Islands"
     bl_description = (
         "Select a face on two islands to unwrap them as one."
         " The islands have to share a seam"
     )
-    bl_options = {"UNDO"}
 
-    @classmethod
-    def poll(cls, context):
-        return context.mode == "EDIT_MESH"
-
-    def execute(self, context):
-        props = context.scene.uvgami
-        engine, engine_ctx = validate_engine(self)
-        if engine is None:
+    def queue_selection(self, obj, props, engine, engine_ctx):
+        targets, error = target_islands(obj)
+        if error:
+            self.report({"ERROR"}, error)
+            return {"CANCELLED"}
+        if len(targets) < 2:
+            self.report({"ERROR"}, "Select faces on at least two islands")
+            return {"CANCELLED"}
+        if not islands_connected(obj.data, targets):
+            self.report({"ERROR"}, "The selected islands don't all share mesh edges")
             return {"CANCELLED"}
 
-        obj = context.view_layer.objects.active
-        bpy.ops.object.mode_set(mode="OBJECT")
-        try:
-            targets, error = target_islands(obj)
-            if error:
-                self.report({"ERROR"}, error)
-                return {"CANCELLED"}
-            if len(targets) < 2:
-                self.report({"ERROR"}, "Select faces on at least two islands")
-                return {"CANCELLED"}
-            if not islands_connected(obj.data, targets):
-                self.report(
-                    {"ERROR"}, "The selected islands don't all share mesh edges"
-                )
-                return {"CANCELLED"}
+        # a fresh unwrap of the union merges regardless of how the
+        # islands' seam shapes differ, unlike stitching them
+        group = sorted({fi for g, _, _ in targets for fi in g})
+        bbox = (
+            min(b[0] for _, b, _ in targets),
+            min(b[1] for _, b, _ in targets),
+            max(b[2] for _, b, _ in targets),
+            max(b[3] for _, b, _ in targets),
+        )
+        area = sum(a for _, _, a in targets)
 
-            # a fresh unwrap of the union merges regardless of how the
-            # islands' seam shapes differ, unlike stitching them
-            group = sorted({fi for g, _, _ in targets for fi in g})
-            bbox = (
-                min(b[0] for _, b, _ in targets),
-                min(b[1] for _, b, _ in targets),
-                max(b[2] for _, b, _ in targets),
-                max(b[3] for _, b, _ in targets),
-            )
-            area = sum(a for _, _, a in targets)
+        def queue_one(k, input_path):
+            queue_island(obj, group, bbox, area, k + 1, input_path, props)
 
-            def queue_one(k, input_path):
-                queue_island(obj, group, bbox, area, k + 1, input_path, props)
-
-            queue_targets(engine, engine_ctx, 1, queue_one)
-        finally:
-            obj.select_set(True)
-            context.view_layer.objects.active = obj
-            bpy.ops.object.mode_set(mode="EDIT")
-
+        queue_targets(engine, engine_ctx, 1, queue_one)
         self.report({"INFO"}, f"Combining {len(targets)} islands")
         return {"FINISHED"}
 
 
-class AreaOperator:
-    """Shared body of Unwrap Area and Relax Area. A plain mixin: registering a
-    subclass of a registered operator unregisters the parent."""
-
-    bl_options = {"UNDO"}
+class AreaOperator(FixOperator):
     nocut = False
 
-    @classmethod
-    def poll(cls, context):
-        return context.mode == "EDIT_MESH"
-
-    def execute(self, context):
-        props = context.scene.uvgami
-        engine, engine_ctx = validate_engine(self)
-        if engine is None:
+    def queue_selection(self, obj, props, engine, engine_ctx):
+        targets, whole, rings, error = target_areas(obj, props.area_expand)
+        if error:
+            self.report({"ERROR"}, error)
+            return {"CANCELLED"}
+        seam_skipped = 0
+        for target in list(targets):
+            if spans_own_seam(obj.data, target[0]):
+                targets.remove(target)
+                seam_skipped += 1
+        if not targets:
+            if whole:
+                error = "The whole island is selected, use Unwrap Island instead"
+            elif seam_skipped:
+                error = (
+                    "The area covers both sides of a seam,"
+                    " deselect the faces on one side"
+                )
+            else:
+                error = "The area rings a hole, deselect a face to break the ring"
+            self.report({"ERROR"}, error)
             return {"CANCELLED"}
 
-        obj = context.view_layer.objects.active
-        bpy.ops.object.mode_set(mode="OBJECT")
-        try:
-            targets, whole, rings, error = target_areas(obj, props.area_expand)
-            if error:
-                self.report({"ERROR"}, error)
-                return {"CANCELLED"}
-            seam_skipped = 0
-            for target in list(targets):
-                if spans_own_seam(obj.data, target[0]):
-                    targets.remove(target)
-                    seam_skipped += 1
-            if not targets:
-                if whole:
-                    error = "The whole island is selected, use Unwrap Island instead"
-                elif seam_skipped:
-                    error = (
-                        "The area covers both sides of a seam,"
-                        " deselect the faces on one side"
-                    )
-                else:
-                    error = "The area rings a hole, deselect a face to break the ring"
-                self.report({"ERROR"}, error)
-                return {"CANCELLED"}
+        def queue_one(k, input_path):
+            patch, border = targets[k]
+            queue_area(obj, patch, border, k + 1, input_path, props, self.nocut)
 
-            def queue_one(k, input_path):
-                patch, border = targets[k]
-                queue_area(obj, patch, border, k + 1, input_path, props, self.nocut)
-
-            queue_targets(engine, engine_ctx, len(targets), queue_one)
-        finally:
-            obj.select_set(True)
-            context.view_layer.objects.active = obj
-            bpy.ops.object.mode_set(mode="EDIT")
+        queue_targets(engine, engine_ctx, len(targets), queue_one)
 
         notes = []
         if whole:
