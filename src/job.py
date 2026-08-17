@@ -12,6 +12,7 @@ from .hard_surface import (
     apply_face_uvs,
     apply_interior_seams,
     apply_seams,
+    apply_seams_except_faces,
     flatten_engine,
     marked_seams,
 )
@@ -57,6 +58,7 @@ class Result(Enum):
     FINISHED = "finished"
     INVALID = "invalid"
     CANCELLED = "cancelled"
+    STOPPED = "stopped"
 
 
 def world_positions(obj):
@@ -239,6 +241,7 @@ class TransferUVs:
     # whether the manager should repack the input mesh in place of the
     # deleted output at session end
     repack_input = True
+    allows_missing_pieces = True
 
     def finish(self, input_mesh, output):
         if not check_exists(input_mesh) or not check_exists(output):
@@ -259,6 +262,7 @@ class TransferUVs:
             plan = plan_transfer(
                 *self._extract(input_mesh, output, output_uv),
                 repack=self.repack_input,
+                partial=self.allows_missing_pieces,
             )
             if not plan.ok:
                 return TransferReport(False, 0, f"{plan.reason}: {plan.detail}")
@@ -290,10 +294,12 @@ class TransferUVs:
         if not input_data.uv_layers:
             input_data.uv_layers.new(name="UVMap")
 
-        coords = [plan.loop_uvs[i] for i in range(len(input_data.loops))]
-        set_loop_uvs(input_data, numpy.array(coords))
+        coords = numpy.empty((len(input_data.loops), 2))
+        input_data.uv_layers.active.data.foreach_get("uv", coords.ravel())
+        coords[list(plan.loop_uvs)] = list(plan.loop_uvs.values())
+        set_loop_uvs(input_data, coords)
 
-        apply_seams(input_data, plan.seam_edges)
+        apply_seams_except_faces(input_data, plan.untouched_faces, plan.seam_edges)
         input_data.update()
 
     def _apply_with_splits(self, input_mesh, plan):
@@ -304,9 +310,13 @@ class TransferUVs:
 
         loop_idx = 0
         to_split = []
+        kept_edges = set()
         for face_idx, face in enumerate(bm.faces):
             parts = plan.split_faces.get(face_idx)
-            if parts is None:
+            if face_idx in plan.untouched_faces:
+                kept_edges.update(face.edges)
+                loop_idx += len(face.loops)
+            elif parts is None:
                 for loop in face.loops:
                     loop[uv_layer].uv = plan.loop_uvs[loop_idx]
                     loop_idx += 1
@@ -328,6 +338,8 @@ class TransferUVs:
                     loop[uv_layer].uv = uv
 
         for edge in bm.edges:
+            if edge in kept_edges:
+                continue
             a, b = edge.verts[0].index, edge.verts[1].index
             edge.seam = ((a, b) if a < b else (b, a)) in plan.seam_edges
 
@@ -340,6 +352,7 @@ class IslandUVs(TransferUVs):
     TransferUVs' position matching, fed only the island's faces."""
 
     repack_input = False
+    allows_missing_pieces = False
 
     def __init__(self, faces, bbox, area, mirrored=False):
         self.faces = faces

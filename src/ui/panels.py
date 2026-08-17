@@ -236,12 +236,12 @@ def _draw_unwrap_groups(box, groups, active_groups):
         if expand_layout:
             if manager.engine.supports_viewer:
                 # opens the viewer on the first piece of the group still running
-                viewable = next((u for u in group if _is_viewable(u)), None)
-                view_op = _icon_button(
-                    row, viewable is not None, "uvgami.view_unwrap", "HIDE_OFF"
-                )
-                if viewable is not None:
-                    view_op.stem = viewable.path.stem
+                _icon_button(
+                    row,
+                    any(_is_viewable(u) for u in group),
+                    "uvgami.view_unwrap",
+                    "HIDE_OFF",
+                ).job_id = group_id.job_id
             _icon_button(
                 row, is_active, "uvgami.stop", "SNAP_FACE"
             ).job_id = group_id.job_id
@@ -261,6 +261,7 @@ _RESULT_ICONS = {
     Result.FINISHED: "CHECKMARK",
     Result.INVALID: "ERROR",
     Result.CANCELLED: "X",
+    Result.STOPPED: "SNAP_FACE",
 }
 
 

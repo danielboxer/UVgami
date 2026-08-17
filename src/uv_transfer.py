@@ -1,5 +1,5 @@
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -13,6 +13,8 @@ class TransferPlan:
     loop_uvs: dict  # input loop index -> (u, v), for faces kept whole
     split_faces: dict  # input face index -> [(verts, uvs)] replacing that face
     seam_edges: set  # sorted (input v0, input v1) tuples
+    # input faces the output never reached, they keep their uvs and seams
+    untouched_faces: set = field(default_factory=set)
     ok: bool = True
 
 
@@ -307,9 +309,11 @@ def plan_transfer(
     output_uvs,
     tol=None,
     repack=True,
+    partial=False,
 ):
     """repack says a pack runs on the result, which sets how strict the weld
-    overlap check has to be."""
+    overlap check has to be. partial lets input faces the output doesn't reach
+    keep their uvs, for an output missing whole pieces."""
     in_pos = np.asarray(input_positions, dtype=float)
     out_pos = np.asarray(output_positions, dtype=float)
 
@@ -406,8 +410,12 @@ def plan_transfer(
     layout = None
     loop_uvs = {}
     split_faces = {}
+    untouched = set()
     for fi, poly in enumerate(input_polygons):
         parts = face_parts[fi]
+        if partial and not parts:
+            untouched.add(fi)
+            continue
         covered = {v for assign, _ in parts for v in assign}
         if covered != set(poly):
             return TransferFailure(
@@ -453,8 +461,13 @@ def plan_transfer(
 
         split_faces[fi] = [_order_part(local, assign, uvs) for assign, uvs in parts]
 
+    if len(untouched) == len(input_polygons):
+        return TransferFailure("incomplete_coverage", "no input face got uvs")
+
     faces = []
     for fi, poly in enumerate(input_polygons):
+        if fi in untouched:
+            continue
         parts = split_faces.get(fi)
         if parts is None:
             base = input_loop_start[fi]
@@ -462,4 +475,4 @@ def plan_transfer(
         else:
             faces.extend(parts)
 
-    return TransferPlan(loop_uvs, split_faces, _seams_from_uvs(faces))
+    return TransferPlan(loop_uvs, split_faces, _seams_from_uvs(faces), untouched)

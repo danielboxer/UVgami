@@ -53,7 +53,6 @@ class UVGAMI_OT_stop(bpy.types.Operator):
     def execute(self, context):
         unwraps = group_targets(self.job_id) if self.job_id else piece_target(self.stem)
 
-        stopped_pending = False
         # collect cancellations so group members can be merged into one import
         to_cancel = []
         for unwrap in unwraps:
@@ -62,13 +61,14 @@ class UVGAMI_OT_stop(bpy.types.Operator):
                 # so the cli skips them, in-flight ones finish normally
                 if unwrap.path.stem not in unwrap.batch_process.started:
                     to_cancel.append(unwrap)
-                    stopped_pending = True
             elif unwrap.process is not None:
                 if manager.engine.supports_early_stop:
                     # the flag re-sends the request each tick and arms the
                     # manager's STOP_SECONDS force kill
                     unwrap.is_stopped = True
-                    if not manager.engine.request_early_stop(unwrap.process):
+                    delivered = manager.engine.request_early_stop(unwrap.process)
+                    # a process that exited since the last tick finishes on its own
+                    if not delivered and unwrap.process.poll() is None:
                         self.report({"ERROR"}, "Could not stop unwrap")
                 # a running solo mesh on an engine without early stop just
                 # finishes normally, like an in-flight batch member
@@ -76,17 +76,15 @@ class UVGAMI_OT_stop(bpy.types.Operator):
                 # queued: starting a mesh just to stop it gives a map with no
                 # work in it, so drop it and let it show as not unwrapped
                 to_cancel.append(unwrap)
-                stopped_pending = True
 
         self._cancel_collected(context, to_cancel)
         if to_cancel:
             manager.exit_viewer = True
             tag_redraw()
 
-        if stopped_pending:
-            self.report({"INFO"}, "Stop: queued meshes dropped")
-        else:
-            self.report({"INFO"}, "UV unwrap stop in progress")
+        # without early stop the wait would be a full unwrap
+        if manager.engine.supports_early_stop:
+            manager.run_until_settled(unwraps)
         return {"FINISHED"}
 
     def _cancel_collected(self, context, to_cancel):
@@ -107,10 +105,10 @@ class UVGAMI_OT_stop(bpy.types.Operator):
             self._import_merged_group(context, group)
             # import already done above, so skip re-importing per member
             for unwrap in group:
-                drop_unwrap(context, unwrap, None, Result.INVALID)
+                drop_unwrap(context, unwrap, None, Result.STOPPED)
 
         for unwrap in singles:
-            drop_unwrap(context, unwrap, "Stopped", Result.INVALID)
+            drop_unwrap(context, unwrap, "Stopped", Result.STOPPED)
 
     def _import_merged_group(self, context, group):
         if not get_preferences().invalid_collection:

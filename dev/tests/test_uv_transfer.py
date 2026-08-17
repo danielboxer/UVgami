@@ -429,3 +429,42 @@ def test_unmatched_output_face_fails():
 
     assert not result.ok
     assert result.reason == "face_match"
+
+
+# two loose triangles, the output only unwrapped the first
+LOOSE_POS = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (5, 0, 0), (6, 0, 0), (5, 1, 0)]
+LOOSE_FACES = [[0, 1, 2], [3, 4, 5]]
+FIRST_TRIANGLE_UVS = [[(0, 0), (1, 0), (0, 1)]]
+
+
+def test_missing_piece_fails_unless_partial():
+    result = plan_transfer(
+        LOOSE_POS, LOOSE_FACES, LOOSE_POS[:3], [[0, 1, 2]], FIRST_TRIANGLE_UVS
+    )
+
+    assert not result.ok
+    assert result.reason == "incomplete_coverage"
+
+
+def test_partial_leaves_the_missing_piece_alone():
+    plan = plan_transfer(
+        LOOSE_POS,
+        LOOSE_FACES,
+        LOOSE_POS[:3],
+        [[0, 1, 2]],
+        FIRST_TRIANGLE_UVS,
+        partial=True,
+    )
+
+    assert plan.ok
+    assert plan.untouched_faces == {1}
+    assert plan.loop_uvs == approx_uvs({0: (0, 0), 1: (1, 0), 2: (0, 1)})
+    assert not plan.split_faces
+    assert not plan.seam_edges
+
+
+def test_partial_with_nothing_covered_fails():
+    result = plan_transfer(LOOSE_POS, LOOSE_FACES, [], [], [], partial=True)
+
+    assert not result.ok
+    assert result.reason == "incomplete_coverage"

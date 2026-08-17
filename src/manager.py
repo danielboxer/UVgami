@@ -27,6 +27,7 @@ from .utils.ui import popup, set_status, switch_shading, tag_redraw
 
 # how long a clean run's status bar message stays up
 STATUS_SECONDS = 5
+SETTLE_TICK_SECONDS = 0.05
 
 PendingTransfer = namedtuple("PendingTransfer", ["job", "output", "pack_index", "name"])
 # an object being preseeded, before its pieces exist
@@ -287,6 +288,12 @@ class UnwrapManager:
 
         return 0.1
 
+    def run_until_settled(self, unwraps):
+        while self.is_active and any(u.result is None for u in unwraps):
+            if self._dispatch() is None:
+                return
+            time.sleep(SETTLE_TICK_SECONDS)
+
     def _update_progress_bar(self):
         # unexported pieces sit at (0, 0, 1) until they start reporting
         progress = [numpy.array(unwrap.progress) for unwrap in self.active]
@@ -480,13 +487,14 @@ class UnwrapManager:
                     if obj == output:
                         pack_index = i
                         break
-            # a group missing pieces can never cover every input face
+            # the proxy finish flattens the whole original, so it can't skip parts
             group = unwrap.join_job
-            if group is not None and len(group.finished) < group.expected:
+            missing_pieces = group is not None and len(group.finished) < group.expected
+            if missing_pieces and isinstance(job, ProxyUVs):
                 failed = group.expected - len(group.finished)
                 self.transfer_uv_missing_pieces = True
                 report = TransferReport(
-                    False, 0, f"{failed} of {group.expected} parts failed to unwrap"
+                    False, 0, f"{failed} of {group.expected} parts were not unwrapped"
                 )
                 self._settle_transfer(job, output, pack_index, report)
                 return
@@ -705,22 +713,26 @@ class UnwrapManager:
 
             # headline first, the banner shows it alone on the top row
             finished, invalid = counts[Result.FINISHED], counts[Result.INVALID]
-            cancelled = counts[Result.CANCELLED]
+            cancelled, stopped = counts[Result.CANCELLED], counts[Result.STOPPED]
             if finished and invalid:
                 msg.append(f"{invalid} of {finished + invalid} meshes failed")
+            elif finished and stopped:
+                msg.append(f"{stopped} of {finished + stopped} meshes stopped")
             elif finished and cancelled:
                 msg.append(f"{cancelled} of {finished + cancelled} meshes cancelled")
             elif finished and had_error:
                 msg.append("UV unwrap finished with errors")
             elif finished:
                 msg.append("UV unwrap complete!")
+            elif stopped and not invalid:
+                msg.append("UV unwrap stopped")
             else:
                 msg.append("UV unwrap failed")
 
             if invalid:
-                if get_preferences().invalid_collection:
-                    msg.append("Check 'UVgami Not Unwrapped'.")
                 logger.add_data("errors", "Some meshes were not able to be unwrapped")
+            if (invalid or stopped) and get_preferences().invalid_collection:
+                msg.append("Check 'UVgami Not Unwrapped'.")
 
             if self.transfer_uv_failed:
                 detail = self.transfer_uv_fail_detail or "unknown reason"
