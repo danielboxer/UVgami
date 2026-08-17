@@ -445,14 +445,26 @@ bool tutteInit(Island &island, const std::vector<int> &loop) {
     return true;
 }
 
-void slimSolve(Island &island, int iterations) {
+// symmetric dirichlet per unit area, 4 is isometric. the solve stops when the
+// excess is under SLIM_SETTLED or a step removes less than SLIM_STOP_SHARE of it
+const double SLIM_ISOMETRIC = 4.0;
+const double SLIM_SETTLED = 1e-3;
+const double SLIM_STOP_SHARE = 0.1;
+
+void slimSolve(Island &island, int maxIterations) {
     igl::SLIMData data;
     Eigen::VectorXi b;
     Eigen::MatrixXd bc(0, 2);
     igl::slim_precompute(island.V, island.T, island.UV, data,
                          igl::MappingEnergyType::SYMMETRIC_DIRICHLET, b, bc,
                          0.0);
-    igl::slim_solve(data, iterations);
+    for (int i = 0; i < maxIterations; ++i) {
+        double before = data.energy - SLIM_ISOMETRIC;
+        igl::slim_solve(data, 1);
+        double excess = data.energy - SLIM_ISOMETRIC;
+        if (excess < SLIM_SETTLED || before - excess < SLIM_STOP_SHARE * before)
+            break;
+    }
     if (data.V_o.rows() == island.UV.rows() && data.V_o.allFinite())
         island.UV = data.V_o;
 }
@@ -562,7 +574,7 @@ void emitFailed(const std::string &stem, int code) {
 namespace uvgami {
 
 int runFlatten(const std::string &inputPath, const std::string &outputDir,
-               int iterations, bool packOnly) {
+               int maxIterations, bool packOnly) {
     std::filesystem::path input(inputPath);
     std::string stem = input.stem().string();
     std::printf("start: %s\n", stem.c_str());
@@ -625,7 +637,7 @@ int runFlatten(const std::string &inputPath, const std::string &outputDir,
             std::vector<int> loop = outerBoundaryLoop(island, mesh, localOf);
             if (loop.empty() || !tutteInit(island, loop))
                 projectToPlane(island);
-            slimSolve(island, iterations);
+            slimSolve(island, maxIterations);
         }
         for (int c : island.globalUv) localOf[static_cast<size_t>(c)] = -1;
         // before the normalize, which rescales even a noise-area island to

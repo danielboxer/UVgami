@@ -9,6 +9,6 @@ namespace uvgami {
 // repacks the input map. polygons stay polygons: the solve fan-triangulates
 // internally but output corners match the input faces one to one.
 int runFlatten(const std::string &inputPath, const std::string &outputDir,
-               int iterations, bool packOnly);
+               int maxIterations, bool packOnly);
 
 }  // namespace uvgami

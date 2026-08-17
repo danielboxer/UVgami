@@ -1303,6 +1303,19 @@ def test_snap_paths_drops_a_cut_with_nowhere_to_go():
     assert snap_paths(verts, adjacent, mapped, {(0, 2)}) == set()
 
 
+def test_snap_paths_drops_a_cut_between_loose_parts():
+    # two copies of the grid side by side, a cut with an end on each is
+    # dropped and the same-part cut still snaps
+    verts, faces, _ = grid_island(4, 4)
+    offset = len(verts)
+    verts = verts + [(x + 10.0, y, z) for x, y, z in verts]
+    faces = faces + [[v + offset for v in face] for face in faces]
+    mapped = [0, offset + 2, 2]
+    adjacent = vertex_adjacency(faces)
+    assert snap_paths(verts, adjacent, mapped, {(0, 1)}) == set()
+    assert snap_paths(verts, adjacent, mapped, {(0, 2)}) == {(0, 1), (1, 2)}
+
+
 def test_uv_fit_scales_into_old_bounds():
     move = uv_fit([(0, 0), (2, 1)], (10, 10, 11, 10.5))
     assert move((0, 0)) == (10, 10)

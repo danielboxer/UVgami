@@ -961,7 +961,7 @@ int main(int argc, char *argv[]) {
     bool ignoreUV = false;
     bool flattenMode = false;
     bool packOnlyMode = false;
-    int flattenIters = 10;
+    int flattenIters = 30;
 
     try {
         TCLAP::CmdLine cmd("uvgami command line", ' ', "1.1.2");
@@ -985,8 +985,10 @@ int main(int argc, char *argv[]) {
             "", "flatten",
             "Flatten and pack along the _seams sidecar, no optimization", cmd);
         TCLAP::ValueArg<int> flattenItersArg(
-            "", "flatten_iters", "SLIM iterations in flatten mode", false, 10,
-            "int", cmd);
+            "", "flatten_iters",
+            "Most SLIM iterations per island in flatten mode, the solve stops "
+            "early once the energy settles",
+            false, 30, "int", cmd);
         TCLAP::SwitchArg packOnlyArg(
             "", "pack_only", "Repack the input UV map without solving", cmd);
         cmd.parse(argc, argv);
