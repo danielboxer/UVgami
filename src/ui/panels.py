@@ -37,7 +37,7 @@ def unwrap_settings(props):
             ),
             ("MOD_DECIM", "Proxy", "use_proxy", is_non_default(props, "use_proxy")),
             (
-                "MOD_ARRAY",
+                "LINKED",
                 "Stack Similar",
                 "stack_similar",
                 is_non_default(props, "stack_similar"),
@@ -56,7 +56,7 @@ def unwrap_settings(props):
             ),
             # ("MOD_TRIANGULATE", "Preserve Mesh", "untriangulate", props.preserve_mesh),
             (
-                "UV_DATA",
+                "MOD_DATA_TRANSFER",
                 "Transfer UVs",
                 "transfer_uvs",
                 is_non_default(props, "transfer_uvs"),
@@ -357,7 +357,7 @@ class UVGAMI_PT_main(bpy.types.Panel):
             split.prop(props, "import_uvs")
 
         split = box.split(factor=0.7)
-        split.label(icon="UV_DATA", text="Transfer UVs")
+        split.label(icon="MOD_DATA_TRANSFER", text="Transfer UVs")
         split.prop(props, "transfer_uvs")
 
 
@@ -366,10 +366,10 @@ def draw_concurrent(layout, props, engine):
     # process, so concurrency doesn't apply
     if engine.batches_queue(props):
         return
-    sub = toggle(layout, props, "concurrent", "Concurrent", "CON_ROTLIKE")
+    sub = toggle(layout, props, "concurrent", "Concurrent", "MOD_ARRAY")
     if sub is not None:
         split = sub.split()
-        split.label(icon="SYSTEM", text="Cores")
+        split.label(icon="MEMORY", text="Cores")
         split.prop(props, "max_cores", slider=True)
 
 
@@ -412,7 +412,7 @@ class UVGAMI_PT_speed(EnginePanel, bpy.types.Panel):
         draw_proxy(box, props)
 
         split = box.split(factor=0.7)
-        split.label(icon="MOD_ARRAY", text="Stack Similar")
+        split.label(icon="LINKED", text="Stack Similar")
         split.prop(props, "stack_similar")
 
         draw_timeout(box, props)
@@ -453,7 +453,7 @@ class UVGAMI_PT_weights(bpy.types.Panel):
 
         row = box.row()
         row.scale_y = 1.5
-        row.operator("uvgami.clear_draw", icon="FILE_REFRESH")
+        row.operator("uvgami.clear_draw", icon="TRASH")
         row.operator("uvgami.exit_draw", icon="PANEL_CLOSE")
 
         row = box.row()
@@ -469,7 +469,6 @@ class UVGAMI_PT_weights(bpy.types.Panel):
         row = generate.row()
         row.label(text="Generate", icon="SHADERFX")
         row = generate.row()
-        row.scale_y = 1.5
         row.operator("uvgami.seed_restrictions", text="From View").mode = "VIEW"
         row.operator("uvgami.seed_restrictions", text="Crevices").mode = "CREVICES"
         row.operator("uvgami.seed_restrictions", text="Both").mode = "BOTH"

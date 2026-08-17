@@ -362,7 +362,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         box.separator()
 
         row = box.row()
-        row.scale_y = 1.5
         row.operator(
             "uvgami.reset_settings", text="Reset Settings", icon="FILE_REFRESH"
         )
