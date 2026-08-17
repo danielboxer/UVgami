@@ -560,6 +560,7 @@ def split_islands(
     edges=None,
     relief_cache=None,
     fragment_floor=None,
+    groups_clean=False,
 ):
     """Extra seam edges that cut ruined uv islands into smaller pieces.
 
@@ -577,6 +578,8 @@ def split_islands(
     caps how far everything can be scaled up. groups restricts the scan,
     for a caller that knows the rest is unchanged, and fragment_floor is
     the crumb floor of the whole mesh, for a caller scanning it in pieces.
+    groups_clean says the caller already dropped every ruined group from
+    groups, so only the pieces cut off them get the ruined check.
     """
     if edges is None:
         edges = face_edges(faces)
@@ -642,16 +645,16 @@ def split_islands(
         fragment_floor = whole_mesh_fragment_floor(verts, faces)
 
     # an island is what the unwrap made one: faces joined by unseamed edges
-    queue = collections.deque(groups)
+    queue = collections.deque((group, groups_clean) for group in groups)
     while queue:
-        group = queue.popleft()
+        group, known_clean = queue.popleft()
         m = measure(group)
         if m is None:
             continue
         ts, lo, length, size, areas, density = m
         # the cap in this island's own uv units
         local_cap = cap / density
-        ruined = island_ruined(group, faces, uvs, edges, seams)
+        ruined = not known_clean and island_ruined(group, faces, uvs, edges, seams)
         # a ruined island's uv bins still place a good cut, a crushed one's
         # do not, so a flipped face takes the ruined path
         crushed = (
@@ -712,7 +715,7 @@ def split_islands(
         # a bent island hides its next neck until each piece is measured on
         # its own axis, so the pieces go back through the scan
         if clean and len(pieces) > 1:
-            queue.extend(pieces)
+            queue.extend((piece, False) for piece in pieces)
     return extra
 
 
@@ -747,7 +750,9 @@ def split_moves(verts, faces, uvs, starts, ranges=None):
     groups = [g for g in groups if not island_ruined(g, faces, uvs, edges, seams)]
     if ranges is None:
         scanned = groups
-        extra = split_islands(verts, faces, seams, uvs, None, groups, edges)
+        extra = split_islands(
+            verts, faces, seams, uvs, None, groups, edges, groups_clean=True
+        )
     else:
         # one call per piece: each piece's engine output has its own uv scale,
         # so its length cap has to come from its own area alone
@@ -768,6 +773,7 @@ def split_moves(verts, faces, uvs, starts, ranges=None):
                 edges,
                 relief_cache,
                 fragment_floor,
+                groups_clean=True,
             )
     if not extra:
         return []
