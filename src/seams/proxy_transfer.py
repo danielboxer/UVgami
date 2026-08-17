@@ -9,7 +9,7 @@ import collections
 import numpy
 
 from .cancel import check_cancelled
-from .cuts import connect_loops, snap_paths
+from .cuts import connect_loops, part_labels, snap_paths
 from .islands import uv_topology
 from .mesh import face_edges, island_groups, pair
 from .preseed import check_manifold
@@ -73,21 +73,58 @@ def repair_islands(verts, faces, torn_seams, weights=None):
     return seams
 
 
-def snap_cuts(verts, edges, mapped, cuts):
-    """Another mesh's cut network redrawn along this mesh's own edges."""
+def edge_adjacency(edges):
     adjacent = collections.defaultdict(set)
     for a, b in numpy.asarray(edges).reshape(-1, 2).tolist():
         adjacent[a].add(b)
         adjacent[b].add(a)
-    return snap_paths(verts, adjacent, mapped, cuts)
+    return adjacent
 
 
-def finish_proxy(dense, proxy, weights, engine, mapped, progress=None, cancelled=None):
+def snap_cuts(verts, edges, mapped, cuts):
+    """Another mesh's cut network redrawn along this mesh's own edges."""
+    return snap_paths(verts, edge_adjacency(edges), mapped, cuts)
+
+
+def vertex_parts(count, adjacent):
+    """A loose part label per vertex, -1 for a vertex on no edge."""
+    labels = numpy.full(count, -1)
+    for v, label in part_labels(adjacent).items():
+        labels[v] = label
+    return labels
+
+
+def match_within_parts(dense_parts, proxy_parts, nearest):
+    """Each proxy vertex's dense vertex, kept inside the dense loose part its
+    own part sits on.
+
+    nearest(dense_indices, proxy_indices) gives each listed proxy vertex its
+    nearest listed dense vertex. Where two parts touch that lands on the other
+    part, and a cut with an end there breaks the part's cut network, so each
+    proxy part is paired with the dense part most of it lands on and the rest
+    matched again within it."""
+    dense_parts = numpy.asarray(dense_parts)
+    proxy_parts = numpy.asarray(proxy_parts)
+    mapped = numpy.asarray(
+        nearest(numpy.arange(len(dense_parts)), numpy.arange(len(proxy_parts)))
+    )
+    for part in numpy.unique(proxy_parts):
+        members = numpy.flatnonzero(proxy_parts == part)
+        landed = dense_parts[mapped[members]]
+        labels, counts = numpy.unique(landed, return_counts=True)
+        home = labels[counts.argmax()]
+        strays = members[landed != home]
+        if len(strays):
+            mapped[strays] = nearest(numpy.flatnonzero(dense_parts == home), strays)
+    return mapped.tolist()
+
+
+def finish_proxy(dense, proxy, weights, engine, nearest, progress=None, cancelled=None):
     """Cut the dense mesh along the proxy's cuts and flatten it.
 
-    Returns (seams, uvs) for the dense mesh. mapped is each proxy vertex's
-    dense vertex, weights are painted restrictions on dense indices, and
-    cancelled is polled while the flatten runs."""
+    Returns (seams, uvs) for the dense mesh. nearest is match_within_parts'
+    matcher, weights are painted restrictions on dense indices, and cancelled
+    is polled while the flatten runs."""
 
     def report(fraction):
         if progress is not None:
@@ -95,6 +132,13 @@ def finish_proxy(dense, proxy, weights, engine, mapped, progress=None, cancelled
 
     dense_verts = numpy.asarray(dense["positions"], dtype=numpy.float64).tolist()
     dense_faces = dense["faces"]
+    dense_adjacent = edge_adjacency(dense["edges"])
+    proxy_adjacent = edge_adjacency(list(face_edges(proxy["faces"])))
+    mapped = match_within_parts(
+        vertex_parts(len(dense_verts), dense_adjacent),
+        vertex_parts(len(proxy["positions"]), proxy_adjacent),
+        nearest,
+    )
 
     cuts = cut_edges(proxy["faces"], proxy["corner_uvs"])
     report(CUT_PROGRESS)
@@ -103,7 +147,7 @@ def finish_proxy(dense, proxy, weights, engine, mapped, progress=None, cancelled
         proxy_verts, proxy["faces"], cuts, moved_weights(weights, mapped)
     )
     report(REPAIR_PROGRESS)
-    seams = snap_cuts(dense_verts, dense["edges"], mapped, cuts)
+    seams = snap_paths(dense_verts, dense_adjacent, mapped, cuts)
     report(SNAP_PROGRESS)
 
     check_manifold(dense_faces)

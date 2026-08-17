@@ -16,6 +16,7 @@ from seams import Cancelled, face_edges  # noqa: E402
 from seams.proxy_transfer import (  # noqa: E402
     cut_edges,
     finish_proxy,
+    match_within_parts,
     moved_weights,
     repair_islands,
     snap_cuts,
@@ -115,8 +116,25 @@ def test_snap_cuts_follows_real_edges():
     assert snap_cuts(verts, edges, mapped, {(0, 1)}) == {(0, 1), (1, 2), (2, 3)}
 
 
+def nearest_by_position(dense, proxy):
+    """The matcher finish_proxy takes, by distance alone."""
+    dense_positions = numpy.asarray(dense["positions"], dtype=numpy.float64)
+    proxy_positions = numpy.asarray(proxy["positions"], dtype=numpy.float64)
+
+    def nearest(dense_indices, proxy_indices):
+        dense_indices = numpy.asarray(dense_indices)
+        candidates = dense_positions[dense_indices]
+        mapped = []
+        for i in proxy_indices:
+            distances = numpy.linalg.norm(candidates - proxy_positions[i], axis=1)
+            mapped.append(int(dense_indices[distances.argmin()]))
+        return mapped
+
+    return nearest
+
+
 def plane_inputs():
-    """A 4x4 dense grid and its torn 2x2 proxy, with the exact vertex map."""
+    """A 4x4 dense grid and its torn 2x2 proxy."""
     dense_verts, dense_faces = quad_grid(4)
     proxy_verts, proxy_faces, proxy_uvs = torn_proxy()
     dense = {
@@ -133,16 +151,64 @@ def plane_inputs():
         "normals": up_normals(proxy_verts),
         "matrix": IDENTITY,
     }
-    # proxy verts sit on every second dense vert of the 5 by 5 grid
-    mapped = [row * 10 + column * 2 for row in range(3) for column in range(3)]
-    return dense, proxy, mapped
+    return dense, proxy
+
+
+def test_match_within_parts_keeps_a_stray_on_its_own_part():
+    dense_parts = [0, 0, 0, 1, 1, 1]
+    proxy_parts = [0, 0, 1, 1, 1]
+    calls = []
+
+    def nearest(dense_indices, proxy_indices):
+        calls.append((list(dense_indices), list(proxy_indices)))
+        if len(calls) == 1:
+            # proxy vert 2 is on part 1 but lands on part 0's vert 2
+            return [0, 1, 2, 4, 5]
+        return [3]
+
+    assert match_within_parts(dense_parts, proxy_parts, nearest) == [0, 1, 3, 4, 5]
+    assert calls[1] == ([3, 4, 5], [2])
+
+
+def test_finish_proxy_matches_each_part_within_itself():
+    """Two stacked grids: the proxy tear on the upper one snaps to the upper
+    dense grid even though its first row of vertices sits nearer the lower one."""
+    lower_verts, lower_faces = quad_grid(4)
+    upper_verts = [(x, y, 0.3) for x, y, _ in lower_verts]
+    dense_faces = lower_faces + [[v + len(lower_verts) for v in f] for f in lower_faces]
+    dense_verts = lower_verts + upper_verts
+    proxy_verts, proxy_faces, proxy_uvs = torn_proxy()
+    upper_proxy = [(x, y, 0.05 if y == 0 else 0.3) for x, y, _ in proxy_verts]
+    dense = {
+        "positions": dense_verts,
+        "faces": dense_faces,
+        "edges": grid_edges(dense_faces),
+        "normals": up_normals(dense_verts),
+        "matrix": IDENTITY,
+    }
+    proxy = {
+        "positions": proxy_verts + upper_proxy,
+        "faces": proxy_faces + [[v + len(proxy_verts) for v in f] for f in proxy_faces],
+        "corner_uvs": grid_uvs(proxy_verts, proxy_faces) + proxy_uvs,
+        "normals": up_normals(proxy_verts + upper_proxy),
+        "matrix": IDENTITY,
+    }
+    seams, _ = finish_proxy(
+        dense, proxy, None, StubEngine(), nearest_by_position(dense, proxy)
+    )
+    lower_seams = {(2, 7), (7, 12), (10, 11), (11, 12)}
+    assert seams == {
+        (a + len(lower_verts), b + len(lower_verts)) for a, b in lower_seams
+    }
 
 
 def test_finish_proxy_cuts_the_dense_mesh_and_returns_its_uvs():
-    dense, proxy, mapped = plane_inputs()
+    dense, proxy = plane_inputs()
     engine = StubEngine()
     reported = []
-    seams, uvs = finish_proxy(dense, proxy, None, engine, mapped, reported.append)
+    seams, uvs = finish_proxy(
+        dense, proxy, None, engine, nearest_by_position(dense, proxy), reported.append
+    )
 
     # the proxy tear runs from dense vert 2 to 12 and from 10 to 12
     assert seams == {(2, 7), (7, 12), (10, 11), (11, 12)}
@@ -156,9 +222,16 @@ def test_finish_proxy_cuts_the_dense_mesh_and_returns_its_uvs():
 
 
 def test_finish_proxy_stops_on_cancel():
-    dense, proxy, mapped = plane_inputs()
+    dense, proxy = plane_inputs()
     engine = StubEngine()
     with pytest.raises(Cancelled):
-        finish_proxy(dense, proxy, None, engine, mapped, cancelled=lambda: True)
+        finish_proxy(
+            dense,
+            proxy,
+            None,
+            engine,
+            nearest_by_position(dense, proxy),
+            cancelled=lambda: True,
+        )
     # cancelled before the flatten was asked for anything
     assert engine.faces is None

@@ -87,7 +87,7 @@ def _rotation_array(matrix):
     return numpy.array(Matrix(matrix.tolist()).to_3x3().inverted_safe().transposed())
 
 
-def nearest_facing_vertices(
+def facing_matcher(
     input_positions,
     input_normals,
     input_matrix,
@@ -95,18 +95,15 @@ def nearest_facing_vertices(
     output_normals,
     output_matrix,
 ):
-    """Each output vertex to the nearest input vertex facing the same way,
-    matched in world space.
+    """nearest(input_indices, output_indices): each listed output vertex to
+    the nearest listed input vertex facing the same way, matched in world
+    space.
 
     Thin walls put the far side of the wall nearest, and a cut snapped
     through the wall would seam both sides at once."""
     matrix = numpy.asarray(input_matrix, dtype=numpy.float64)
     positions = numpy.asarray(input_positions).reshape(-1, 3)
     positions = positions @ matrix[:3, :3].T + matrix[:3, 3]
-    kd = KDTree(len(positions))
-    for i, position in enumerate(positions):
-        kd.insert(position, i)
-    kd.balance()
 
     normals = numpy.asarray(input_normals).reshape(-1, 3) @ _rotation_array(matrix).T
     lengths = numpy.linalg.norm(normals, axis=1)
@@ -120,32 +117,42 @@ def nearest_facing_vertices(
     facings = numpy.asarray(output_normals).reshape(-1, 3)
     facings = facings @ _rotation_array(out_matrix).T
 
-    mapped = []
-    for position, facing in zip(queries, facings):
-        found = kd.find_n(position, NEAREST_VERTS)
-        best = found[0][1]
-        for _, index, _ in found:
-            if normals[index] @ facing > 0:
-                best = index
-                break
-        mapped.append(best)
-    return mapped
+    def nearest(input_indices, output_indices):
+        kd = KDTree(len(input_indices))
+        for i in input_indices:
+            kd.insert(positions[i], int(i))
+        kd.balance()
+        mapped = []
+        for i in output_indices:
+            found = kd.find_n(queries[i], NEAREST_VERTS)
+            best = found[0][1]
+            for _, index, _ in found:
+                if normals[index] @ facings[i] > 0:
+                    best = index
+                    break
+            mapped.append(best)
+        return mapped
+
+    return nearest
 
 
 def vertex_map(input_mesh, output, matrix=None, out_matrix=None):
-    """nearest_facing_vertices on two objects, in world space unless a frame
-    is given for each."""
+    """Every output vertex's nearest facing input vertex, in world space
+    unless a frame is given for each."""
     if matrix is None:
         matrix = input_mesh.matrix_world
     if out_matrix is None:
         out_matrix = output.matrix_world
-    return nearest_facing_vertices(
+    nearest = facing_matcher(
         _vertex_array(input_mesh.data, "co"),
         _vertex_array(input_mesh.data, "normal"),
         numpy.array(matrix, dtype=numpy.float64),
         _vertex_array(output.data, "co"),
         _vertex_array(output.data, "normal"),
         numpy.array(out_matrix, dtype=numpy.float64),
+    )
+    return nearest(
+        range(len(input_mesh.data.vertices)), range(len(output.data.vertices))
     )
 
 
@@ -187,7 +194,7 @@ def transfer_inputs(input_mesh, output):
 def finish_transfer(dense, proxy, weights, engine, progress=None, cancelled=None):
     """Map, repair, snap and flatten extracted arrays. No bpy, so this is the
     half that runs off the main thread."""
-    mapped = nearest_facing_vertices(
+    nearest = facing_matcher(
         dense["positions"],
         dense["normals"],
         dense["matrix"],
@@ -196,7 +203,7 @@ def finish_transfer(dense, proxy, weights, engine, progress=None, cancelled=None
         proxy["matrix"],
     )
     return proxy_transfer.finish_proxy(
-        dense, proxy, weights, engine, mapped, progress, cancelled
+        dense, proxy, weights, engine, nearest, progress, cancelled
     )
 
 
