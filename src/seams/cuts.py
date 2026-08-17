@@ -137,12 +137,21 @@ def cut_path(verts, adjacent, sources, targets, weights=None, relief=None):
     staircase that happens to be shortest.
     """
     if relief is None:
+        # without relief an edge costs at least its length, so with one target
+        # the straight line distance left never overestimates
+        goal = verts[next(iter(targets))] if len(targets) == 1 else None
+
+        def remaining(v):
+            if goal is None:
+                return 0.0
+            return norm([verts[v][i] - goal[i] for i in range(3)])
+
         dist = dict.fromkeys(sources, 0.0)
         prev = {}
-        heap = [(0.0, v) for v in sources]
+        heap = [(remaining(v), 0.0, v) for v in sources]
         heapq.heapify(heap)
         while heap:
-            d, v = heapq.heappop(heap)
+            _, d, v = heapq.heappop(heap)
             if d != dist[v]:
                 continue
             if v in targets:
@@ -155,7 +164,7 @@ def cut_path(verts, adjacent, sources, targets, weights=None, relief=None):
                 if step < dist.get(w, math.inf):
                     dist[w] = step
                     prev[w] = v
-                    heapq.heappush(heap, (step, w))
+                    heapq.heappush(heap, (step + remaining(w), step, w))
         return []
 
     # state is (vertex, arrived-from), -1 for a start with no direction yet
@@ -186,18 +195,37 @@ def cut_path(verts, adjacent, sources, targets, weights=None, relief=None):
     return []
 
 
+def part_labels(adjacent):
+    """A loose part id per vertex of the graph."""
+    label = {}
+    for start in adjacent:
+        if start in label:
+            continue
+        label[start] = start
+        stack = [start]
+        while stack:
+            v = stack.pop()
+            for w in adjacent[v]:
+                if w not in label:
+                    label[w] = start
+                    stack.append(w)
+    return label
+
+
 def snap_paths(verts, adjacent, mapped, cuts):
     """Redraw another mesh's cut network on this one, edge by edge.
 
     Each cut edge becomes the shortest path between the vertices its ends
     map to, and since every vertex maps to one vertex here, segments that
     met still meet and loops stay closed. A segment collapsing to a point
-    or with no path is dropped, leaving the rest intact.
+    or with no path is dropped, leaving the rest intact. Ends on two loose
+    parts are dropped before searching, a failed search walks the whole part.
     """
+    part = part_labels(adjacent)
     paths = set()
     for a, b in cuts:
         va, vb = mapped[a], mapped[b]
-        if va == vb:
+        if va == vb or part.get(va) != part.get(vb):
             continue
         path = cut_path(verts, adjacent, {va}, {vb})
         for x, y in zip(path, path[1:]):
