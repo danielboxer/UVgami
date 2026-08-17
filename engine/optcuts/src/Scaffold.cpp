@@ -9,7 +9,7 @@
 #include <igl/avg_edge_length.h>
 #include <igl/vertex_components.h>
 
-#include <tbb/tbb.h>
+#include "ParallelFor.hpp"
 
 namespace uvgami {
 Scaffold::Scaffold(void) : wholeMeshSize(0) {}
@@ -313,7 +313,7 @@ void Scaffold::mergeVNeighbor(const std::vector<std::set<int>> &vNeighbor_mesh,
                               std::vector<std::set<int>> &vNeighbor) const {
     vNeighbor = vNeighbor_mesh;
     vNeighbor.resize(wholeMeshSize);
-    tbb::parallel_for(0, (int)airMesh.vNeighbor.size(), 1, [&](int scafVI) {
+    parallelFor((int)airMesh.vNeighbor.size(), [&](int scafVI) {
         auto &neighbors = vNeighbor[localVI2Global[scafVI]];
         for (const auto &nb_scafVI : airMesh.vNeighbor[scafVI])
             neighbors.insert(localVI2Global[nb_scafVI]);

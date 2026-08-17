@@ -2,7 +2,7 @@
 
 #include "IglUtils.hpp"
 
-#include <tbb/tbb.h>
+#include "ParallelFor.hpp"
 
 #include <set>
 #include <unordered_map>
@@ -13,7 +13,7 @@ void IglUtils::computeUniformLaplacian(const Eigen::MatrixXi &F,
                                        Eigen::SparseMatrix<double> &graphL) {
     int vertAmt = F.maxCoeff() + 1;
     std::vector<Eigen::Triplet<double>> triplet(F.rows() * 9);
-    tbb::parallel_for(0, (int)F.rows(), 1, [&](int rowI) {
+    parallelFor((int)F.rows(), [&](int rowI) {
         int startInd = rowI * 9;
 
         triplet[startInd] = Eigen::Triplet<double>(F(rowI, 0), F(rowI, 1), 1.0);

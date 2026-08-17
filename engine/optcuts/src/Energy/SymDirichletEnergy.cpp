@@ -11,7 +11,7 @@
 #include <igl/cotmatrix.h>
 #include <igl/massmatrix.h>
 
-#include <tbb/tbb.h>
+#include "ParallelFor.hpp"
 
 namespace uvgami {
 SymDirichletEnergy::SymDirichletEnergy(void) : Energy(true) {}
@@ -21,7 +21,7 @@ void SymDirichletEnergy::getEnergyValPerElem(const TriMesh &data,
     const double normalizer_div = data.surfaceArea;
 
     energyValPerElem.resize(data.F.rows());
-    tbb::parallel_for(0, (int)data.F.rows(), 1, [&](int triI) {
+    parallelFor((int)data.F.rows(), [&](int triI) {
         const Eigen::Vector3i &triVInd = data.F.row(triI);
 
         const Eigen::RowVector2d &U1 = data.V.row(triVInd[0]);
@@ -243,7 +243,7 @@ void SymDirichletEnergy::computeGradient(const TriMesh &data,
     gradient.setZero();
 
     std::vector<Eigen::Matrix<double, 6, 1>> triGrads(data.F.rows());
-    tbb::parallel_for(0, (int)data.F.rows(), 1, [&](int triI) {
+    parallelFor((int)data.F.rows(), [&](int triI) {
         const Eigen::Vector3i &triVInd = data.F.row(triI);
 
         const Eigen::Vector2d &U1 = data.V.row(triVInd[0]);
@@ -325,7 +325,7 @@ void SymDirichletEnergy::computeHessian(const TriMesh &data,
 
     std::vector<Eigen::Matrix<double, 6, 6>> triHessians(data.F.rows());
     std::vector<Eigen::Vector3i> vInds(data.F.rows());
-    tbb::parallel_for(0, (int)data.F.rows(), 1, [&](int triI) {
+    parallelFor((int)data.F.rows(), [&](int triI) {
         //        for(int triI = 0; triI < data.F.rows(); triI++) {
         const Eigen::Vector3i &triVInd = data.F.row(triI);
 
@@ -451,11 +451,7 @@ void SymDirichletEnergy::computeHessian(const TriMesh &data,
                  dRight3 * dLeft3.transpose());
 
         // project to nearest SPD matrix
-#ifdef _WIN32
-        IglUtils::makePD<double, 6>(curHessian);
-#else
-            IglUtils::makePD<double,6>(curHessian);
-#endif
+        IglUtils::makePDTriangleHessian(curHessian);
 
         Eigen::Vector3i &vInd = vInds[triI];
         vInd = triVInd;
@@ -492,7 +488,7 @@ void SymDirichletEnergy::computeHessian(const TriMesh &data, Eigen::VectorXd *V,
 
     std::vector<Eigen::Matrix<double, 6, 6>> triHessians(data.F.rows());
     std::vector<Eigen::Vector3i> vInds(data.F.rows());
-    tbb::parallel_for(0, (int)data.F.rows(), 1, [&](int triI) {
+    parallelFor((int)data.F.rows(), [&](int triI) {
         //        for(int triI = 0; triI < data.F.rows(); triI++) {
         const Eigen::Vector3i &triVInd = data.F.row(triI);
 
@@ -618,11 +614,7 @@ void SymDirichletEnergy::computeHessian(const TriMesh &data, Eigen::VectorXd *V,
                  dRight3 * dLeft3.transpose());
 
         // project to nearest SPD matrix
-#ifdef _WIN32
-        IglUtils::makePD<double, 6>(curHessian);
-#else
-            IglUtils::makePD<double,6>(curHessian);
-#endif
+        IglUtils::makePDTriangleHessian(curHessian);
 
         Eigen::Vector3i &vInd = vInds[triI];
         vInd = triVInd;
@@ -651,7 +643,7 @@ void SymDirichletEnergy::computeHessian(const TriMesh &data, Eigen::VectorXd *V,
         I->conservativeResize(triTripletStart[data.F.rows()]);
         J->conservativeResize(triTripletStart[data.F.rows()]);
     }
-    tbb::parallel_for(0, (int)data.F.rows(), 1, [&](int triI) {
+    parallelFor((int)data.F.rows(), [&](int triI) {
         IglUtils::addBlockToMatrix(triHessians[triI], vInds[triI], 2, V, I, J,
                                    triTripletStart[triI]);
     });
@@ -676,8 +668,8 @@ void SymDirichletEnergy::initStepSize(const TriMesh &data,
 
     const double stepSizeInit = stepSize;
     // min reduce is fp-order-independent
-    stepSize = tbb::parallel_reduce(
-        tbb::blocked_range<int>(0, (int)data.F.rows()), stepSizeInit,
+    stepSize = parallelReduce(
+        (int)data.F.rows(), stepSizeInit,
         [&](const tbb::blocked_range<int> &range, double localStep) -> double {
             for (int triI = range.begin(); triI != range.end(); triI++) {
                 const Eigen::Vector3i &triVInd = data.F.row(triI);
