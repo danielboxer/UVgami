@@ -2,6 +2,7 @@
 // stdout is a parsed protocol (start:/progress:/done:/failed:), diagnostics go
 // to stderr. see AGENTS.md in the repo root.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -189,6 +190,33 @@ bool write_obj(const std::string &path, const std::vector<Vec3> &positions,
     return static_cast<bool>(file);
 }
 
+// xatlas drops faces under an absolute area of FLT_EPSILON (kAreaEpsilon), so a
+// mesh in millimetres loses every face. growing the longest side to 1 fixes
+// that. never shrink: a large mesh scaled down loses its thinnest triangles the
+// same way, and their uvs collapse to points in the output.
+std::vector<Vec3> grown_positions(const std::vector<Vec3> &positions) {
+    Vec3 low = positions[0];
+    Vec3 high = positions[0];
+    for (const Vec3 &p : positions) {
+        low.x = std::min(low.x, p.x);
+        low.y = std::min(low.y, p.y);
+        low.z = std::min(low.z, p.z);
+        high.x = std::max(high.x, p.x);
+        high.y = std::max(high.y, p.y);
+        high.z = std::max(high.z, p.z);
+    }
+    float extent = std::max({high.x - low.x, high.y - low.y, high.z - low.z});
+    if (!std::isfinite(extent) || extent <= 0.0f || extent >= 1.0f) {
+        return positions;
+    }
+    std::vector<Vec3> scaled;
+    scaled.reserve(positions.size());
+    for (const Vec3 &p : positions) {
+        scaled.push_back({p.x / extent, p.y / extent, p.z / extent});
+    }
+    return scaled;
+}
+
 void emit_failed(const std::string &stem, int code) {
     std::printf("failed: %s %d\n", stem.c_str(), code);
     std::fflush(stdout);
@@ -245,9 +273,12 @@ int main(int argc, char **argv) {
     ProgressState progress_state;
     xatlas::SetProgressCallback(atlas, progress_callback, &progress_state);
 
+    // write_obj still writes the input positions, only xatlas sees the grown ones
+    const std::vector<Vec3> scaled = grown_positions(positions);
+
     xatlas::MeshDecl decl;
-    decl.vertexCount = static_cast<uint32_t>(positions.size());
-    decl.vertexPositionData = positions.data();
+    decl.vertexCount = static_cast<uint32_t>(scaled.size());
+    decl.vertexPositionData = scaled.data();
     decl.vertexPositionStride = sizeof(Vec3);
     decl.indexCount = static_cast<uint32_t>(indices.size());
     decl.indexData = indices.data();

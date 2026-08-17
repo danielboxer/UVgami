@@ -300,7 +300,8 @@ class PartuvEngine(Engine):
         # partuv cli exit codes
         return {
             2: ("Invalid input mesh", True),
-            3: ("PartUV runtime error, reinstall in preferences", False),
+            # missing module, config, checkpoint or cuda, stderr says which
+            3: ("PartUV could not start", False),
             4: ("PartUV failed on this mesh", True),
             5: ("PartUV produced invalid output", True),
         }.get(code) or super().describe_failure(code)

@@ -201,7 +201,8 @@ class InputExporter:
             return None
 
         try:
-            props = bpy.context.scene.uvgami
+            # frozen, so a slider moved during the export can't reach the engine
+            props = manager.props
             start = time.monotonic()
             while self.remaining:
                 self._export_object(self.remaining.popleft(), props)
@@ -641,7 +642,10 @@ class SessionBuilder:
         # names can repeat across pieces and session extends, and the output
         # file is keyed by stem, so claim a stem no other unwrap holds
         claimed = {u.path for u in manager.active}
-        claimed.update(u.path for u, _ in manager.results)
+        # the last session's results stay until manager.start clears them, and
+        # counting those would suffix the stem on every rerun
+        if manager.is_active:
+            claimed.update(u.path for u, _ in manager.results)
         while path.is_file() or path in claimed:
             path = path.parent / f"{path.stem}1.obj"
 

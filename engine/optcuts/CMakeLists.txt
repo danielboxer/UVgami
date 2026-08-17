@@ -115,6 +115,12 @@ endif()
 
 add_executable(${PROJECT_NAME} ${SRCFILES})
 
+# argv and the narrow file opens use the process codepage, so a path with a
+# character outside it arrives as question marks. needs windows 10 1903
+if(MSVC)
+  target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/utf8.manifest)
+endif()
+
 target_link_libraries(${PROJECT_NAME} PRIVATE igl::core  igl_restricted::triangle  TBB::tbb ${UVGAMI_COMPILE_OPTIONS})
 
 # link the mimalloc object file so its malloc/free override the crt (windows only)

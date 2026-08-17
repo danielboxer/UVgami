@@ -38,6 +38,7 @@ def drop_unwrap(context, unwrap, invalid_label, result):
         move_to_collection(invalid_obj, collection)
         invalid_obj.name = f"{invalid_obj.name}: {invalid_label}"
         invalid_obj.hide_set(True)
+        manager.moved_to_invalid = True
     manager.record_result(unwrap, result)
 
 
@@ -122,6 +123,7 @@ class UVGAMI_OT_stop(bpy.types.Operator):
         move_to_collection(merged_obj, collection)
         merged_obj.name = f"{group[0].input_name}: Stopped"
         merged_obj.hide_set(True)
+        manager.moved_to_invalid = True
 
 
 class UVGAMI_OT_cancel(bpy.types.Operator):

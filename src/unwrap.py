@@ -4,7 +4,6 @@ import subprocess
 import threading
 import time
 
-import bpy
 import mathutils
 
 from .batch import EngineOutput, read_stderr_tail
@@ -120,8 +119,7 @@ class Unwrap:
         self.is_exported = True
 
     def start_unwrap(self):
-        props = bpy.context.scene.uvgami
-        args = manager.engine.build_args(manager.engine_ctx, self.path, props)
+        args = manager.engine.build_args(manager.engine_ctx, self.path, manager.props)
 
         self.process = subprocess.Popen(
             args,
@@ -224,6 +222,14 @@ class Unwrap:
             if parsed != self.progress:
                 self.progress = parsed
                 self.progress_changed_at = time.monotonic()
+
+    @property
+    def is_running(self):
+        """Whether the engine is on this mesh now. A batch process takes the
+        whole queue when it spawns, so is_active alone would show them all."""
+        if self.batch_process is None:
+            return self.is_active
+        return self.is_active and self.path.stem in self.batch_process.started
 
     @property
     def is_stalled(self):
