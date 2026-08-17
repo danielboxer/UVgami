@@ -347,6 +347,7 @@ class UVGAMI_PT_main(bpy.types.Panel):
 
         row = box.row()
         row.scale_y = 2
+        row.enabled = not manager.is_active
         row.operator("uvgami.start", icon="UV")
 
         if not manager.in_uv_editor:

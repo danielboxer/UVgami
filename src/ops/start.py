@@ -20,7 +20,6 @@ from ..job import (
 )
 from ..logger import logger
 from ..manager import Preparing, manager
-from ..progress_bar import progress_bar
 from ..proxy import make_proxy, triangle_count
 from ..seams import (
     face_edges,
@@ -163,25 +162,11 @@ class InputExporter:
     """Writes separated objects to engine input files across timer ticks so the
     UI stays responsive."""
 
-    def __init__(
-        self,
-        engine,
-        engine_ctx,
-        piece_unwrap,
-        piece_has_uvs,
-        piece_keeps_output,
-        piece_matrix,
-        separated_objects,
-        start_objects,
-        temp_collection,
-    ):
+    def __init__(self, engine, engine_ctx, pieces, start_objects, temp_collection):
         self.engine = engine
         self.engine_ctx = engine_ctx
-        self.piece_unwrap = piece_unwrap
-        self.piece_has_uvs = piece_has_uvs
-        self.piece_keeps_output = piece_keeps_output
-        self.piece_matrix = piece_matrix
-        self.remaining = deque(separated_objects)
+        self.pieces = pieces
+        self.remaining = deque(pieces)
         self.start_objects = start_objects
         self.temp_collection = temp_collection
 
@@ -192,10 +177,10 @@ class InputExporter:
 
         # the session we joined was cancelled mid-export (Cancel All), so drop the
         # remaining pieces instead of exporting into a dead session
-        if self.piece_unwrap and not manager.is_active:
+        if self.pieces and not manager.is_active:
             # report it first so a failure below can't leave the count stuck
             manager.finished_adding()
-            for obj in self.remaining:
+            for obj, _ in self.remaining:
                 bpy.data.objects.remove(obj, do_unlink=True)
             bpy.data.collections.remove(self.temp_collection)
             return None
@@ -205,7 +190,7 @@ class InputExporter:
             props = manager.props
             start = time.monotonic()
             while self.remaining:
-                self._export_object(self.remaining.popleft(), props)
+                self._export_object(*self.remaining.popleft(), props)
                 if time.monotonic() - start >= TICK_BUDGET:
                     # yield to the event loop, resume next pass
                     return 0.0
@@ -222,16 +207,12 @@ class InputExporter:
             manager.finished_adding()
             # settle the pieces that never got exported so their groups and
             # the session can still finish
-            for unwrap in self.piece_unwrap.values():
+            for _, unwrap in self.pieces:
                 if unwrap.result is None and not unwrap.is_exported:
                     manager.record_result(unwrap, Result.INVALID)
-            # nothing was added, so no session is using the bar
-            if not manager.is_active:
-                progress_bar.remove()
             return None
 
-    def _export_object(self, obj, props):
-        unwrap = self.piece_unwrap[obj]
+    def _export_object(self, obj, unwrap, props):
         if unwrap.result is not None:
             # cancelled while waiting to export
             bpy.data.objects.remove(obj, do_unlink=True)
@@ -244,17 +225,15 @@ class InputExporter:
         fix_inconsistent_winding(obj)
         edge_path, new_edges = self._triangulate_mesh(obj, unwrap, path, props)
 
-        matrix = self.piece_matrix[obj]
+        matrix = unwrap.matrix
 
         # seams and uvs were built before separation, see create_jobs
-        has_uvs = self.piece_has_uvs[obj]
-        if has_uvs:
+        if unwrap.has_uvs:
             normalize_uvs(obj.data)
         # the winding only matters on the plain path, a transfer writes onto
         # the original
-        keeps_output = self.piece_keeps_output[obj]
         vt_verts = export_obj(
-            obj, path, has_uvs, flip_mirrored=keeps_output, matrix=matrix
+            obj, path, unwrap.has_uvs, flip_mirrored=unwrap.keeps_output, matrix=matrix
         )
 
         guide_path = self._create_guide_file(obj, path, props, vt_verts)
@@ -324,12 +303,6 @@ class InputExporter:
             manager.record_result(unwrap, Result.FINISHED)
 
     def _finish(self):
-        # a session with no valid pieces never started in _separate, start it
-        # anyway so the empty run still finishes and reports
-        if not manager.is_active:
-            manager.engine = self.engine
-            manager.engine_ctx = self.engine_ctx
-            manager.start()
         bpy.data.collections.remove(self.temp_collection)
         manager.finished_adding()
 
@@ -492,11 +465,8 @@ class SessionBuilder:
         self.remaining = deque(objects)
         self.start_objects = start_objects
         self.temp_collection = temp_collection
-        self.separated_objects = []
+        self.pieces = []
         self.piece_unwrap = {}
-        self.piece_has_uvs = {}
-        self.piece_keeps_output = {}
-        self.piece_matrix = {}
         self.pending = None
         # cancelled mid preseed, dropped when the thread unwinds
         self.cancelled = set()
@@ -532,8 +502,6 @@ class SessionBuilder:
             for unwrap in self.piece_unwrap.values():
                 if unwrap.result is None:
                     manager.record_result(unwrap, Result.INVALID)
-            if not manager.is_active:
-                progress_bar.remove()
             return None
 
     def _drop_preparing(self, obj):
@@ -573,7 +541,7 @@ class SessionBuilder:
             result = task.result()
             if not check_exists(obj):
                 raise RuntimeError("Undo removed the working copy mid unwrap")
-            props = bpy.context.scene.uvgami
+            props = manager.props
             preseeded = apply(result)
             if symmetrize_job is not None:
                 if preseeded:
@@ -595,7 +563,7 @@ class SessionBuilder:
             return self._finish()
 
         obj = self.remaining.popleft()
-        props = bpy.context.scene.uvgami
+        props = manager.props
         symmetrize_job = None
         mirrors = None
         # if props.use_symmetry:
@@ -639,13 +607,10 @@ class SessionBuilder:
         """Create the piece's session record before its input file exists, so
         cancels and the queue ui see the whole session upfront."""
         path = self.input_path / f"{engine_file_stem(piece_name)}.obj"
-        # names can repeat across pieces and session extends, and the output
-        # file is keyed by stem, so claim a stem no other unwrap holds
+        # names can repeat across pieces, and the output file is keyed by
+        # stem, so claim a stem no other unwrap holds
         claimed = {u.path for u in manager.active}
-        # the last session's results stay until manager.start clears them, and
-        # counting those would suffix the stem on every rerun
-        if manager.is_active:
-            claimed.update(u.path for u, _ in manager.results)
+        claimed.update(u.path for u, _ in manager.results)
         while path.is_file() or path in claimed:
             path = path.parent / f"{path.stem}1.obj"
 
@@ -661,13 +626,13 @@ class SessionBuilder:
             # maintain_mode=props.maintain_mode,
             preseeded=preseeded and uses_uvs,
         )
+        unwrap.has_uvs = uses_uvs
+        unwrap.keeps_output = keeps_output
         self.piece_unwrap[obj] = unwrap
-        self.piece_has_uvs[obj] = uses_uvs
-        self.piece_keeps_output[obj] = keeps_output
         manager.add(unwrap)
 
     def _separate(self, obj, has_uvs, symmetrize_job, preseeded=False):
-        props = bpy.context.scene.uvgami
+        props = manager.props
         proxied = obj in self.proxied_objects
         # relink for the ops selection, all within one tick so nothing shows
         bpy.context.scene.collection.objects.link(obj)
@@ -745,28 +710,18 @@ class SessionBuilder:
 
         deselect_all()
         for piece in added:
-            self.piece_matrix[piece] = matrix
-            self.separated_objects.append(piece)
+            unwrap = self.piece_unwrap[piece]
+            unwrap.matrix = matrix
+            self.pieces.append((piece, unwrap))
             for coll in piece.users_collection:
                 coll.objects.unlink(piece)
             self.temp_collection.objects.link(piece)
-
-        # the pieces are queued, start the session so the bar and the queue ui
-        # track them while the export catches up
-        if added and not manager.is_active:
-            manager.engine = self.engine
-            manager.engine_ctx = self.engine_ctx
-            manager.start()
 
     def _finish(self):
         exporter = InputExporter(
             engine=self.engine,
             engine_ctx=self.engine_ctx,
-            piece_unwrap=self.piece_unwrap,
-            piece_has_uvs=self.piece_has_uvs,
-            piece_keeps_output=self.piece_keeps_output,
-            piece_matrix=self.piece_matrix,
-            separated_objects=self.separated_objects,
+            pieces=self.pieces,
             start_objects=self.start_objects,
             temp_collection=self.temp_collection,
         )
@@ -811,13 +766,10 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 logger.discard_info()
                 return {"CANCELLED"}
 
-            # the manager holds one engine for the whole session, so pieces added
-            # to a running session would export for this engine and run on the old
-            if manager.is_active and manager.engine is not self.engine:
-                self.report(
-                    {"ERROR"},
-                    "Finish or cancel the current unwrap before switching engine",
-                )
+            # a mesh added to a running session would take the first one's
+            # engine and settings
+            if manager.is_active:
+                self.report({"ERROR"}, "Finish or cancel the current unwrap first")
                 logger.discard_info()
                 return {"CANCELLED"}
 
@@ -841,11 +793,13 @@ class UVGAMI_OT_start(bpy.types.Operator):
             )
             bpy.app.timers.register(builder.tick)
             builder_registered = True
-            manager.pieces_still_arriving += 1
 
-            # show the progress bar now instead of after every piece exports
-            if get_preferences().show_progress_bar:
-                progress_bar.start()
+            # before the first piece exists, so the bar and the queue ui are
+            # up while the builder works
+            manager.engine = self.engine
+            manager.engine_ctx = self.engine_ctx
+            manager.pieces_still_arriving += 1
+            manager.start()
             tag_redraw()
 
             for level, text in self.reports:
