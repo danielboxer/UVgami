@@ -107,7 +107,7 @@ void Optimizer::precompute(void) {
         }
     }
     lastEDec = 0.0;
-    data_findExtrema = data0;
+    // data_findExtrema = data0;
     updateTargetGRes();
     computeEnergyVal(result, scaffold, lastEnergyVal);
     // std::cout << "E_initial = " << lastEnergyVal << std::endl;
@@ -245,7 +245,7 @@ bool Optimizer::createFracture(int opType, const std::vector<int> &path,
                                bool allowPropagate) {
     topoIter++;
     bool isMerge = false;
-    data_findExtrema = result; // potentially time-consuming
+    // data_findExtrema = result; // potentially time-consuming
     switch (opType) {
     case 0: // boundary split
             // std::cout << "boundary split without querying again" <<
@@ -301,7 +301,7 @@ bool Optimizer::createFracture(int opType, const std::vector<int> &path,
 
 bool Optimizer::stitchIslands(void) {
     topoIter++;
-    data_findExtrema = result;
+    // data_findExtrema = result;
     if (!result.stitchIsland())
         return false;
     if (scaffolding) {
@@ -335,7 +335,7 @@ bool Optimizer::createFracture(double stressThres, int propType,
     }
     bool changed = false;
     bool isMerge = false;
-    data_findExtrema = result;
+    // data_findExtrema = result;
     switch (propType) {
     case 0: // initiation
         changed = result.splitOrMerge(1.0 - energyParams[0], stressThres, false,

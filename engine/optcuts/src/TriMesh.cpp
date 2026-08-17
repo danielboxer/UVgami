@@ -374,7 +374,7 @@ void TriMesh::computeFeatures(bool multiComp, bool resetFixedV) {
     // e0dote1_div_dbAreaSq =" << e0dote1_div_dbAreaSq.sum() /
     // e0dote1_div_dbAreaSq.size() << std::endl;
 
-    computeLaplacianMtr();
+    // computeLaplacianMtr();
 
     bbox.block(0, 0, 1, 3) = V_rest.row(0);
     bbox.block(1, 0, 1, 3) = V_rest.row(0);
@@ -409,32 +409,32 @@ void TriMesh::computeFeatures(bool multiComp, bool resetFixedV) {
         }
     }
 
-    validSplit.resize(V_rest.rows());
-    for (int vI = 0; vI < V_rest.rows(); vI++) {
-        validSplit[vI].clear();
-        if (isBoundaryVert(vI))
-            continue;
-
-        std::vector<int> nbVs(vNeighbor[vI].begin(), vNeighbor[vI].end());
-        std::vector<Eigen::RowVector3d> projectedEdge(nbVs.size());
-        for (int nbI = 0; nbI < nbVs.size(); nbI++) {
-            const Eigen::RowVector3d edge =
-                V_rest.row(nbVs[nbI]) - V_rest.row(vI);
-            projectedEdge[nbI] =
-                (edge - edge.dot(vertNormals[vI]) * vertNormals[vI])
-                    .normalized();
-        }
-        for (int nbI = 0; nbI + 1 < nbVs.size(); nbI++) {
-            for (int nbJ = nbI + 1; nbJ < nbVs.size(); nbJ++) {
-                if (projectedEdge[nbI].dot(projectedEdge[nbJ]) <= 0.0) {
-                    validSplit[vI].insert(
-                        std::pair<int, int>(nbVs[nbI], nbVs[nbJ]));
-                    validSplit[vI].insert(
-                        std::pair<int, int>(nbVs[nbJ], nbVs[nbI]));
-                }
-            }
-        }
-    }
+    // validSplit.resize(V_rest.rows());
+    // for (int vI = 0; vI < V_rest.rows(); vI++) {
+    //     validSplit[vI].clear();
+    //     if (isBoundaryVert(vI))
+    //         continue;
+    //
+    //     std::vector<int> nbVs(vNeighbor[vI].begin(), vNeighbor[vI].end());
+    //     std::vector<Eigen::RowVector3d> projectedEdge(nbVs.size());
+    //     for (int nbI = 0; nbI < nbVs.size(); nbI++) {
+    //         const Eigen::RowVector3d edge =
+    //             V_rest.row(nbVs[nbI]) - V_rest.row(vI);
+    //         projectedEdge[nbI] =
+    //             (edge - edge.dot(vertNormals[vI]) * vertNormals[vI])
+    //                 .normalized();
+    //     }
+    //     for (int nbI = 0; nbI + 1 < nbVs.size(); nbI++) {
+    //         for (int nbJ = nbI + 1; nbJ < nbVs.size(); nbJ++) {
+    //             if (projectedEdge[nbI].dot(projectedEdge[nbJ]) <= 0.0) {
+    //                 validSplit[vI].insert(
+    //                     std::pair<int, int>(nbVs[nbI], nbVs[nbJ]));
+    //                 validSplit[vI].insert(
+    //                     std::pair<int, int>(nbVs[nbJ], nbVs[nbI]));
+    //             }
+    //         }
+    //     }
+    // }
 
     // init fracture tail record
     fracTail.clear();
@@ -466,7 +466,7 @@ void TriMesh::updateFeatures(void) {
             (V_rest.row(cohE(cohI, 0)) - V_rest.row(cohE(cohI, 1))).norm();
     }
 
-    computeLaplacianMtr();
+    // computeLaplacianMtr();
 }
 
 void TriMesh::resetFixedVert(const std::set<int> &p_fixedVert) {
@@ -474,7 +474,7 @@ void TriMesh::resetFixedVert(const std::set<int> &p_fixedVert) {
         assert(vI < V.rows());
 
     fixedVert = p_fixedVert;
-    computeLaplacianMtr();
+    // computeLaplacianMtr();
 }
 
 void TriMesh::buildCohEfromRecord(const Eigen::MatrixXi &cohERecord) {
