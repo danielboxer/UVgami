@@ -90,6 +90,21 @@ def apply_seams(mesh, seams):
     mesh.edges.foreach_set("use_seam", numpy.isin(_edge_keys(mesh), _packed(seams)))
 
 
+def apply_seams_except_faces(mesh, faces, seams):
+    """Like apply_seams, but the edges of these faces keep their marks."""
+    loop_total = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
+    mesh.polygons.foreach_get("loop_total", loop_total)
+    loop_edges = numpy.empty(len(mesh.loops), dtype=numpy.int64)
+    mesh.loops.foreach_get("edge_index", loop_edges)
+    kept_faces = numpy.zeros(len(mesh.polygons), dtype=bool)
+    kept_faces[list(faces)] = True
+    kept = numpy.zeros(len(mesh.edges), dtype=bool)
+    kept[loop_edges[numpy.repeat(kept_faces, loop_total)]] = True
+    flags = numpy.isin(_edge_keys(mesh), _packed(seams))
+    flags[kept] = seam_flags(mesh)[kept]
+    mesh.edges.foreach_set("use_seam", flags)
+
+
 def apply_interior_seams(mesh, interior, seams):
     """Mark the seams on the interior edges only, leaving every other edge's
     mark as it was."""

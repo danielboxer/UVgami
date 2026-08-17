@@ -5,6 +5,7 @@ import numpy
 from gpu_extras.batch import batch_for_shader
 
 from ..manager import manager
+from .stop import group_targets, piece_target
 from ..utils.mesh import check_exists
 from ..utils.ui import tag_redraw
 
@@ -262,13 +263,19 @@ class UVGAMI_OT_view_unwrap(bpy.types.Operator):
     bl_label = "View Unwrap"
     bl_description = "Show the unwrap live in the UV editor"
 
-    stem: bpy.props.StringProperty()
+    # a group button sets job_id, a piece button sets stem
+    stem: bpy.props.StringProperty(options={"SKIP_SAVE"})
+    job_id: bpy.props.IntProperty(options={"SKIP_SAVE"})
 
     def execute(self, context):
-        unwrap = next((u for u in manager.active if u.path.stem == self.stem), None)
-        if unwrap is None:
+        if self.job_id:
+            candidates = [u for u in group_targets(self.job_id) if u.is_viewable]
+        else:
+            candidates = piece_target(self.stem)
+        if not candidates:
             # the unwrap settled between the panel draw and the click
             return {"CANCELLED"}
+        unwrap = candidates[0]
         manager.is_viewer_active = True
         manager.exit_viewer = False
         manager.viewer_done = False
