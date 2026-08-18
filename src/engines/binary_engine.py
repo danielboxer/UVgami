@@ -177,7 +177,7 @@ class BinaryEngine(Engine):
             if not raw.is_file():
                 return None, "Engine path doesn't exist"
             if raw.stem != self.release.name:
-                return None, "Engine path is incorrect"
+                return None, f"Engine file must be named {self.release.name}"
             return raw, None
 
         # a local build in engines/ wins over the download, for dev checkouts
