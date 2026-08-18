@@ -209,7 +209,9 @@ class UVGAMI_OT_install_partuv(PartuvTask, bpy.types.Operator):
             self,
             event,
             title="Download PartUV AI" if ai else "Download PartUV",
-            message=AI_DOWNLOAD_SIZE if ai else GEOMETRIC_DOWNLOAD_SIZE,
+            message=f"{AI_DOWNLOAD_SIZE}. The NVIDIA AI model is non-commercial only"
+            if ai
+            else GEOMETRIC_DOWNLOAD_SIZE,
             confirm_text="Download",
         )
 

@@ -10,15 +10,24 @@ jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
+
       - name: Download checkpoint from Hugging Face
         run: |
           curl -fL -o model_objaverse.ckpt \
             https://huggingface.co/mikaelaangel/partfield-ckpt/resolve/main/model_objaverse.ckpt
 
+      - name: Copy the PartField license
+        run: cp engine/partuv/LICENSE PartField-LICENSE.txt
+
       - name: Upload to the checkpoint release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES: >-
+            PartField checkpoint from NVIDIA, licensed for non-commercial
+            research and educational use only. Terms in PartField-LICENSE.txt.
         run: |
           gh release view checkpoint -R ${{ github.repository }} >/dev/null 2>&1 \
-            || gh release create checkpoint -R ${{ github.repository }} --latest=false --title checkpoint --notes "PartField checkpoint mirror"
-          gh release upload checkpoint -R ${{ github.repository }} model_objaverse.ckpt --clobber
+            || gh release create checkpoint -R ${{ github.repository }} --latest=false --title checkpoint --notes ""
+          gh release edit checkpoint -R ${{ github.repository }} --notes "$NOTES"
+          gh release upload checkpoint -R ${{ github.repository }} model_objaverse.ckpt PartField-LICENSE.txt --clobber
