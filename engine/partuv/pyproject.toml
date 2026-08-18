@@ -7,7 +7,7 @@ name = "partuv"
 version = "0.1.4"
 description = "UV unwrapping pipeline with pybind11 bindings and preprocessing utilities"
 requires-python = ">=3.9"
-authors = [{ name = "Zhaoning Wang" }]
+authors = [{ name = "Zhaoning Wang" }, { name = "Daniel Boxer" }]
 # base deps cover the torch-free path (partuv.geometric + pipeline);
 # numpy unpinned so the wheel installs on python 3.13 (no numpy 1.x wheels)
 dependencies = [

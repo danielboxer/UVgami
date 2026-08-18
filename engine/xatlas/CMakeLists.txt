@@ -34,5 +34,6 @@ endif()
 install(TARGETS xatlas RUNTIME DESTINATION .)
 # the engine zip is the only distribution of the binary, so the notice ships here
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE DESTINATION . RENAME LICENSE.txt)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../LICENSE DESTINATION licenses RENAME GPL-3.0.txt)
 set(CPACK_PACKAGE_NAME xatlas)
 include(CPack)
