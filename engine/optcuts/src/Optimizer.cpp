@@ -428,7 +428,8 @@ bool Optimizer::lineSearch(void) {
     stepForward(resultV0, scaffoldV0, result, scaffold, stepSize);
     double testingE;
     computeEnergyVal(result, scaffold, testingE);
-    while (testingE > lastEnergyVal) // ensure energy decrease
+    // written this way so a nan energy counts as an increase
+    while (!(testingE <= lastEnergyVal)) // ensure energy decrease
     {
         stepSize /= 2.0;
         if (stepSize == 0.0) {

@@ -33,6 +33,12 @@ void SymDirichletEnergy::getEnergyValPerElem(const TriMesh &data,
 
         const double area_U = 0.5 * (U2m1[0] * U3m1[1] - U2m1[1] * U3m1[0]);
 
+        // a flat rest triangle with a flat uv one gives 0 * inf, and the
+        // line search accepts a nan step
+        if (area_U <= 0.0) {
+            energyValPerElem[triI] = DBL_MAX;
+            return;
+        }
         const double w =
             (uniformWeight ? 1.0
                            : (data.faceWeight[triI] * data.triArea[triI] /
@@ -62,6 +68,10 @@ void SymDirichletEnergy::getEnergyValByElemID(const TriMesh &data, int elemI,
     const Eigen::Vector2d U3m1 = U3 - U1;
 
     const double area_U = 0.5 * (U2m1[0] * U3m1[1] - U2m1[1] * U3m1[0]);
+    if (area_U <= 0.0) {
+        energyVal = DBL_MAX;
+        return;
+    }
 
     const double w =
         (uniformWeight

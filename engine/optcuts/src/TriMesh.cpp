@@ -33,6 +33,10 @@ extern std::atomic<bool> forceQuit;
 
 namespace uvgami {
 
+// stand-in rest area for a zero-area triangle, a fraction of its own longest
+// edge squared so a local query mesh sees the same shape it does
+static const double ZERO_AREA_STAND_IN = 1e-6;
+
 TriMesh::TriMesh(void) : surfaceArea(0), curFracTail(0), initSeamLen(0) {}
 
 TriMesh::TriMesh(const Eigen::MatrixXd &V_mesh, const Eigen::MatrixXi &F_mesh,
@@ -303,7 +307,24 @@ void TriMesh::computeFeatures(bool multiComp, bool resetFixedV) {
     e0dote1_div_dbAreaSq.resize(F.rows());
     std::vector<Eigen::RowVector3d> vertNormals(V_rest.rows(),
                                                 Eigen::Vector3d::Zero());
-    bool isMeshInvalid = false;
+    int zeroAreaAmt = 0;
+    for (int triI = 0; triI < F.rows(); triI++) {
+        const Eigen::Vector3i &triVInd = F.row(triI);
+        const Eigen::Vector3d P1 = V_rest.row(triVInd[0]);
+        const Eigen::Vector3d P2 = V_rest.row(triVInd[1]);
+        const Eigen::Vector3d P3 = V_rest.row(triVInd[2]);
+        const Eigen::RowVector3d normalVec = (P2 - P1).cross(P3 - P1);
+        triNormal.row(triI) = normalVec.normalized();
+        triArea[triI] = 0.5 * normalVec.norm();
+        zeroAreaAmt += triArea[triI] == 0.0;
+    }
+    // a zero-area rest triangle has no shape to measure distortion against
+    double meanArea = 0.0;
+    if (zeroAreaAmt) {
+        if (zeroAreaAmt == F.rows())
+            throw std::runtime_error("every rest triangle has zero area");
+        meanArea = triArea.sum() / (F.rows() - zeroAreaAmt);
+    }
     for (int triI = 0; triI < F.rows(); triI++) {
         const Eigen::Vector3i &triVInd = F.row(triI);
 
@@ -315,24 +336,25 @@ void TriMesh::computeFeatures(bool multiComp, bool resetFixedV) {
         const Eigen::Vector3d P3m1 = P3 - P1;
         const Eigen::RowVector3d normalVec = P2m1.cross(P3m1);
 
-        triNormal.row(triI) = normalVec.normalized();
-        triArea[triI] = 0.5 * normalVec.norm();
+        double floorArea = areaThres_AM;
         if (triArea[triI] == 0.0) {
-            // std::cout << "area of triangle No." << triI << " (0-index) is 0"
-            // << std::endl; std::cout << "vertex indices (0-index) are " <<
-            // triVInd.transpose() << std::endl;
-            isMeshInvalid = true;
+            const double longestSq =
+                (std::max)({P2m1.squaredNorm(), P3m1.squaredNorm(),
+                            (P3 - P2).squaredNorm()});
+            floorArea = (std::max)(
+                floorArea,
+                ZERO_AREA_STAND_IN * (longestSq > 0.0 ? longestSq : meanArea));
         }
-        if (triArea[triI] < areaThres_AM) {
-            // air mesh triangle degeneracy prevention
-            triArea[triI] = areaThres_AM;
-            surfaceArea += areaThres_AM;
-            triAreaSq[triI] = areaThres_AM * areaThres_AM;
-            e0SqLen[triI] = e1SqLen[triI] = 4.0 / std::sqrt(3.0) * areaThres_AM;
+        if (triArea[triI] < floorArea) {
+            // air mesh triangle degeneracy prevention, and the stand-in
+            triArea[triI] = floorArea;
+            surfaceArea += floorArea;
+            triAreaSq[triI] = floorArea * floorArea;
+            e0SqLen[triI] = e1SqLen[triI] = 4.0 / std::sqrt(3.0) * floorArea;
             e0dote1[triI] = e0SqLen[triI] / 2.0;
 
             e0SqLen_div_dbAreaSq[triI] = e1SqLen_div_dbAreaSq[triI] =
-                2.0 / std::sqrt(3.0) / areaThres_AM;
+                2.0 / std::sqrt(3.0) / floorArea;
             e0dote1_div_dbAreaSq[triI] = e0SqLen_div_dbAreaSq[triI] / 2.0;
         } else {
             surfaceArea += triArea[triI];
@@ -348,11 +370,6 @@ void TriMesh::computeFeatures(bool multiComp, bool resetFixedV) {
         vertNormals[triVInd[0]] += normalVec;
         vertNormals[triVInd[1]] += normalVec;
         vertNormals[triVInd[2]] += normalVec;
-    }
-    if (isMeshInvalid) {
-        // load-time inputs are rejected before construction, so this firing
-        // means an internal mesh went degenerate
-        throw std::runtime_error("zero-area rest triangle in computeFeatures");
     }
     avgEdgeLen = igl::avg_edge_length(V_rest, F);
     virtualRadius = std::sqrt(surfaceArea / M_PI);
@@ -2059,8 +2076,9 @@ bool TriMesh::checkInversion(int triI, bool mute) const {
     const Eigen::Vector2d e_u[2] = {V.row(triVInd[1]) - V.row(triVInd[0]),
                                     V.row(triVInd[2]) - V.row(triVInd[0])};
 
+    // a flat triangle counts too, its distortion is infinite
     const double dbArea = e_u[0][0] * e_u[1][1] - e_u[0][1] * e_u[1][0];
-    if (dbArea < eps) {
+    if (dbArea <= eps) {
         if (!mute) {
             std::cout << "***Element inversion detected: " << dbArea << " < "
                       << eps << std::endl;
@@ -2736,6 +2754,10 @@ double TriMesh::computeLocalEdDec_inSplit(const std::vector<int> &triangles,
             static_cast<int>(localMesh.V.rows()) - 1;
     }
 
+    // the optimizer throws on a flat or folded start
+    if (!localMesh.checkInversion(true))
+        return -DBL_MAX;
+
     // conduct optimization on local mesh
     std::vector<uvgami::Energy *> energyTerms(1, &SD);
     std::vector<double> energyParams(1, 1.0);
@@ -2857,6 +2879,10 @@ double TriMesh::computeLocalEdDec_merge(
             bnd[bndI] = finder->second;
         }
     }
+
+    // the optimizer throws on a flat or folded start
+    if (!localMesh.checkInversion(true))
+        return -DBL_MAX;
 
     // conduct optimization on local mesh
     std::vector<uvgami::Energy *> energyTerms(1, &SD);
@@ -3162,6 +3188,10 @@ double TriMesh::computeLocalEdDec_bSplit(const std::vector<int> &triangles,
         break;
     }
 
+    // the optimizer throws on a flat or folded start
+    if (!localMesh.checkInversion(true))
+        return -DBL_MAX;
+
     // conduct optimization on local mesh
     std::vector<uvgami::Energy *> energyTerms(1, &SD);
     std::vector<double> energyParams(1, 1.0);
@@ -3170,7 +3200,6 @@ double TriMesh::computeLocalEdDec_bSplit(const std::vector<int> &triangles,
     optimizer.precompute();
     optimizer.setRelGL2Tol(1.0e-6);
     optimizer.solve(maxIter);
-
     double curE;
     optimizer.computeEnergyVal(optimizer.getResult(), optimizer.getScaffold(),
                                curE, true);

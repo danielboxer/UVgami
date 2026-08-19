@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <cfloat>
+#include <cmath>
 #include <cstdlib>
 #include <deque>
 #include <string>
@@ -63,6 +65,9 @@ int converged = 0;
 double fracThres = 0.0;
 bool topoLineSearch = true;
 int initCutOption = 0;
+// one cut per inverted piece per round about halves its depth, so a handful
+// of rounds covers any tube
+const int MAX_DEEPEN_ROUNDS = 6;
 bool outerLoopFinished = false;
 double upperBound = 4.1;
 const double convTol_upperBound = 1.0e-3;
@@ -861,8 +866,9 @@ static double importedMapMeasure(const uvgami::TriMesh &mesh) {
             mesh.V_rest.row(tri[2]) - mesh.V_rest.row(tri[0]);
         const double l1 = e1.norm();
         const double area = e1.cross(e2).norm() / 2;
-        if (l1 <= 0.0 || area <= 0.0)
-            return DBL_MAX;
+        // a zero-area rest triangle has no distortion to measure
+        if (area <= 0.0)
+            continue;
         const double x2 = e1.dot(e2) / l1;
         const double y2 = 2 * area / l1;
         const Eigen::RowVector2d u1 = mesh.V.row(tri[1]) - mesh.V.row(tri[0]);
@@ -887,6 +893,8 @@ static double importedMapMeasure(const uvgami::TriMesh &mesh) {
 
 // a bowtie vertex joins two face fans at a point. split it into one vertex
 // per fan, the position is unchanged and the fans were only touching anyway.
+// an edge with three or more faces joins no fans either, so a fin comes off
+// along it and the edge keeps the pair still connected around either end.
 // with triComponent given, a vertex whose fans span two components is left
 // alone and every split component is flagged
 static int splitBowtieVertices(Eigen::MatrixXd &V, Eigen::MatrixXi &F,
@@ -924,6 +932,9 @@ static int splitBowtieVertices(Eigen::MatrixXd &V, Eigen::MatrixXi &F,
                 for (int i = 0; i < 3; ++i) {
                     const int u = F(fan[fanI], i);
                     if (u == vI) {
+                        continue;
+                    }
+                    if (edgeTris[u].size() != 2) {
                         continue;
                     }
                     for (const auto nbTriI : edgeTris[u]) {
@@ -964,6 +975,84 @@ static int splitBowtieVertices(Eigen::MatrixXd &V, Eigen::MatrixXi &F,
         }
     }
     return bowtieAmt;
+}
+
+// the path from a piece's boundary to its deepest vertex, empty when the
+// piece has no boundary. hop count is the distance because that is what a
+// tutte map rounds away, one ring of a long tube per step
+static std::vector<int> deepestPath(const Eigen::MatrixXi &F_component) {
+    std::map<std::pair<int, int>, int> edgeUse;
+    std::map<int, std::vector<int>> adjacency;
+    for (int triI = 0; triI < F_component.rows(); ++triI) {
+        for (int i = 0; i < 3; ++i) {
+            int a = F_component(triI, i), b = F_component(triI, (i + 1) % 3);
+            if (++edgeUse[{(std::min)(a, b), (std::max)(a, b)}] == 1) {
+                adjacency[a].emplace_back(b);
+                adjacency[b].emplace_back(a);
+            }
+        }
+    }
+    std::map<int, int> parent;
+    std::deque<int> queue;
+    for (const auto &[edge, uses] : edgeUse) {
+        if (uses == 1) {
+            for (int vI : {edge.first, edge.second}) {
+                if (parent.emplace(vI, -1).second)
+                    queue.emplace_back(vI);
+            }
+        }
+    }
+    int deepest = -1;
+    while (!queue.empty()) {
+        deepest = queue.front();
+        queue.pop_front();
+        for (int nbI : adjacency[deepest]) {
+            if (parent.emplace(nbI, deepest).second)
+                queue.emplace_back(nbI);
+        }
+    }
+    std::vector<int> path;
+    for (int vI = deepest; vI >= 0; vI = parent[vI])
+        path.emplace_back(vI);
+    std::reverse(path.begin(), path.end());
+    return path;
+}
+
+// cutPath opens an interior path only while its middle stays clear of the
+// boundary, and cut_to_disk returns seams that touch earlier passes' cuts.
+// this splits such a seam at its boundary vertices, rotating a closed one to
+// start at the first. a seam clear of the boundary comes back whole
+static std::vector<std::vector<int>> seamSegments(const uvgami::TriMesh &mesh,
+                                                  std::vector<int> seam) {
+    if (seam.size() < 2)
+        return {};
+    const bool closed = seam.front() == seam.back();
+    if (closed)
+        seam.pop_back();
+    const auto firstBoundary =
+        std::find_if(seam.begin(), seam.end(),
+                     [&](int vI) { return mesh.isBoundaryVert(vI); });
+    if (firstBoundary == seam.end()) {
+        if (closed)
+            seam.emplace_back(seam.front());
+        return {seam};
+    }
+    if (closed) {
+        std::rotate(seam.begin(), firstBoundary, seam.end());
+        seam.emplace_back(seam.front());
+    }
+    std::vector<std::vector<int>> segments;
+    std::vector<int> segment;
+    for (int vI : seam) {
+        segment.emplace_back(vI);
+        if (mesh.isBoundaryVert(vI) && segment.size() >= 2) {
+            segments.emplace_back(segment);
+            segment = {vI};
+        }
+    }
+    if (segment.size() >= 2)
+        segments.emplace_back(segment);
+    return segments;
 }
 
 // cut_to_disk can return only boundary edges, which cutPath skips, so an
@@ -1158,16 +1247,6 @@ int main(int argc, char *argv[]) {
         std::cerr << "input has non-finite or extreme coordinates" << std::endl;
         return UVGAMI_RC_INVALID_COORDS;
     }
-    // computeFeatures throws on a zero-area rest triangle, refuse at load
-    // with the same area it computes
-    for (int triI = 0; triI < F.rows(); triI++) {
-        const Eigen::Vector3d e1 = V.row(F(triI, 1)) - V.row(F(triI, 0));
-        const Eigen::Vector3d e2 = V.row(F(triI, 2)) - V.row(F(triI, 0));
-        if (0.5 * e1.cross(e2).norm() == 0.0) {
-            std::cerr << "input has zero-area faces" << std::endl;
-            return UVGAMI_RC_ZERO_AREA_FACES;
-        }
-    }
     //    //DEBUG
     //    uvgami::TriMesh squareMesh(uvgami::P_SQUARE, 1.0, 0.1, false);
     //    V = squareMesh.V_rest;
@@ -1180,7 +1259,8 @@ int main(int argc, char *argv[]) {
             splitBowtieVertices(V, F, Eigen::VectorXi(), noComponentFlags);
         if (bowtieAmt) {
             std::cerr << "split " << bowtieAmt
-                      << " non-manifold vertices into per-fan copies"
+                      << " vertices at bowties and non-manifold edges into "
+                         "per-fan copies"
                       << std::endl;
         }
         vertAmt_input = V.rows();
@@ -1324,8 +1404,8 @@ int main(int argc, char *argv[]) {
             inverted[c] = !temp.checkInversion(true, chartTris[c]);
         }
 
-        // zero area passes the inversion test and a point boundary evades
-        // the crossing test, but a collapsed chart cannot seed the solve
+        // a point boundary evades the crossing test, but a collapsed chart
+        // cannot seed the solve
         std::vector<bool> degenerate(n_components, false);
         for (int triI = 0; triI < temp.F.rows(); ++triI) {
             const Eigen::RowVector3i &tri = temp.F.row(triI);
@@ -1536,19 +1616,28 @@ int main(int argc, char *argv[]) {
                         // inconsistency
                         int cuts_made = 0;
                         for (auto &seamI : cuts) {
-                            if (seamI.front() == seamI.back()) {
-                                // cutPath() does not support closed-loop cuts,
-                                // split it into two cuts
-                                cuts_made += temp.cutPath(
-                                    std::vector<int>({seamI[seamI.size() - 3],
-                                                      seamI[seamI.size() - 2],
-                                                      seamI[seamI.size() - 1]}),
-                                    true);
+                            // a cut renumbers one side of its end vertex, so
+                            // a later segment would start off the surface
+                            for (auto &segment : seamSegments(temp, seamI)) {
+                                if (segment.front() == segment.back() &&
+                                    !temp.isBoundaryVert(segment.front())) {
+                                    // cutPath() does not support closed-loop
+                                    // cuts, split it into two cuts
+                                    cuts_made += temp.cutPath(
+                                        std::vector<int>(
+                                            {segment[segment.size() - 3],
+                                             segment[segment.size() - 2],
+                                             segment[segment.size() - 1]}),
+                                        true);
+                                    temp.initSeams = temp.cohE;
+                                    segment.resize(segment.size() - 2);
+                                }
+                                cuts_made += temp.cutPath(segment, true);
                                 temp.initSeams = temp.cohE;
-                                seamI.resize(seamI.size() - 2);
+                                if (cuts_made) {
+                                    break;
+                                }
                             }
-                            cuts_made += temp.cutPath(seamI, true);
-                            temp.initSeams = temp.cohE;
                             if (cuts_made) {
                                 break;
                             }
@@ -1647,7 +1736,7 @@ int main(int argc, char *argv[]) {
         // follows: its zero laplacian row makes the tutte solve singular,
         // and the scaffold seeds a triangle hole at its position, so drop
         // orphan rows and remap before flattening
-        {
+        auto dropOrphanVertices = [&]() {
             std::vector<int> vMap(temp.V.rows(), -1);
             for (int triI = 0; triI < temp.F.rows(); ++triI) {
                 for (int i = 0; i < 3; ++i) {
@@ -1677,7 +1766,8 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
-        }
+        };
+        dropOrphanVertices();
 
         F_component.assign(n_components, Eigen::MatrixXi());
         V_ind_component.assign(n_components, std::set<int>());
@@ -1744,100 +1834,125 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // compute boundary UV coordinates, using a grid layout for multiComp
-        Eigen::VectorXi bnd_stacked;
-        Eigen::MatrixXd bnd_uv_stacked;
-        for (int componentI = 0; componentI < n_components; ++componentI) {
-            if (keepChart[componentI]) {
-                // pin every vertex of a kept chart, so the harmonic solve
-                // reproduces its input UV exactly and only fills in the rest
-                const std::set<int> &chartV = V_ind_component[componentI];
-                int base = bnd_stacked.size();
-                bnd_stacked.conservativeResize(base + chartV.size());
-                bnd_uv_stacked.conservativeResize(base + chartV.size(), 2);
-                for (const auto &vI : chartV) {
-                    bnd_stacked[base] = vI;
-                    bnd_uv_stacked.row(base) = temp.V.row(vI);
-                    ++base;
+        // compute boundary UV coordinates, using a grid layout for multiComp,
+        // then the harmonic map with uniform weights
+        auto solveTutte = [&]() {
+            Eigen::MatrixXd UV_Tutte;
+            Eigen::VectorXi bnd_stacked;
+            Eigen::MatrixXd bnd_uv_stacked;
+            for (int componentI = 0; componentI < n_components; ++componentI) {
+                if (keepChart[componentI]) {
+                    // pin every vertex of a kept chart, so the harmonic solve
+                    // reproduces its input UV exactly and only fills in the rest
+                    const std::set<int> &chartV = V_ind_component[componentI];
+                    int base = bnd_stacked.size();
+                    bnd_stacked.conservativeResize(base + chartV.size());
+                    bnd_uv_stacked.conservativeResize(base + chartV.size(), 2);
+                    for (const auto &vI : chartV) {
+                        bnd_stacked[base] = vI;
+                        bnd_uv_stacked.row(base) = temp.V.row(vI);
+                        ++base;
+                    }
+                    continue;
                 }
-                continue;
-            }
-            std::vector<std::vector<int>> bnd_all;
-            igl::boundary_loop(F_component[componentI], bnd_all);
+                std::vector<std::vector<int>> bnd_all;
+                igl::boundary_loop(F_component[componentI], bnd_all);
 
-            int longest_bnd_id = 0;
-            for (int bnd_id = 1; bnd_id < bnd_all.size(); ++bnd_id) {
-                if (bnd_all[longest_bnd_id].size() < bnd_all[bnd_id].size()) {
-                    longest_bnd_id = bnd_id;
+                int longest_bnd_id = 0;
+                for (int bnd_id = 1; bnd_id < bnd_all.size(); ++bnd_id) {
+                    if (bnd_all[longest_bnd_id].size() < bnd_all[bnd_id].size()) {
+                        longest_bnd_id = bnd_id;
+                    }
                 }
-            }
 
-            bnd_stacked.conservativeResize(bnd_stacked.size() +
-                                           bnd_all[longest_bnd_id].size());
-            bnd_stacked.tail(bnd_all[longest_bnd_id].size()) =
-                Eigen::VectorXi::Map(bnd_all[longest_bnd_id].data(),
-                                     bnd_all[longest_bnd_id].size());
+                bnd_stacked.conservativeResize(bnd_stacked.size() +
+                                               bnd_all[longest_bnd_id].size());
+                bnd_stacked.tail(bnd_all[longest_bnd_id].size()) =
+                    Eigen::VectorXi::Map(bnd_all[longest_bnd_id].data(),
+                                         bnd_all[longest_bnd_id].size());
 
-            Eigen::MatrixXd bnd_uv;
-            if (n_components == 1) {
-                // multiComp keeps unit circles so the 2.1 grid offsets hold
-                uvgami::IglUtils::map_vertices_to_circle(
-                    temp.V_rest,
-                    bnd_stacked.tail(bnd_all[longest_bnd_id].size()), bnd_uv);
-            } else {
-                igl::map_vertices_to_circle(
-                    temp.V_rest,
-                    bnd_stacked.tail(bnd_all[longest_bnd_id].size()), bnd_uv);
-            }
-            double xOffset = gridOriginX + componentI % UVGridDim * gridCell,
-                   yOffset = componentI / UVGridDim * gridCell;
-            for (int bnd_uvI = 0; bnd_uvI < bnd_uv.rows(); bnd_uvI++) {
-                bnd_uv(bnd_uvI, 0) =
-                    bnd_uv(bnd_uvI, 0) * chartRadius[componentI] + xOffset;
-                bnd_uv(bnd_uvI, 1) =
-                    bnd_uv(bnd_uvI, 1) * chartRadius[componentI] + yOffset;
-            }
-            bnd_uv_stacked.conservativeResize(
-                bnd_uv_stacked.rows() + bnd_uv.rows(), 2);
-            bnd_uv_stacked.bottomRows(bnd_uv.rows()) = bnd_uv;
-        }
-
-        // Harmonic map with uniform weights
-        Eigen::MatrixXd UV_Tutte;
-        Eigen::SparseMatrix<double> A, M;
-        uvgami::IglUtils::computeUniformLaplacian(temp.F, A);
-        igl::harmonic(A, M, bnd_stacked, bnd_uv_stacked, 1, UV_Tutte);
-
-        triSoup.emplace_back(
-            new uvgami::TriMesh(V, F, UV_Tutte, temp.F, false));
-
-        // a genus-0 one-point cut can invert under rounding on large or curvy
-        // meshes; retry from successive split vertices until the map is valid.
-        // upstream dropped this in 2218d87; kept here so such meshes still pass
-        if (rand1PInitCut) {
-            int splitVI = 0;
-            while (!triSoup.back()->checkInversion(true) &&
-                   splitVI + 1 < V.rows()) {
-                std::cerr << "element inversion during UV init, trying another "
-                             "vertex"
-                          << std::endl;
-                uvgami::TriMesh cutMesh(V, F, Eigen::MatrixXd(),
-                                        Eigen::MatrixXi(), false);
-                cutMesh.onePointCut(++splitVI);
-                Eigen::VectorXi bnd;
-                igl::boundary_loop(cutMesh.F, bnd);
-                assert(bnd.size());
                 Eigen::MatrixXd bnd_uv;
-                uvgami::IglUtils::map_vertices_to_circle(cutMesh.V_rest, bnd,
-                                                         bnd_uv);
-                Eigen::SparseMatrix<double> A_retry, M_retry;
-                uvgami::IglUtils::computeUniformLaplacian(cutMesh.F, A_retry);
-                Eigen::MatrixXd UV_retry;
-                igl::harmonic(A_retry, M_retry, bnd, bnd_uv, 1, UV_retry);
-                delete triSoup.back();
-                triSoup.back() =
-                    new uvgami::TriMesh(V, F, UV_retry, cutMesh.F, false);
+                if (n_components == 1) {
+                    // multiComp keeps unit circles so the 2.1 grid offsets hold
+                    uvgami::IglUtils::map_vertices_to_circle(
+                        temp.V_rest,
+                        bnd_stacked.tail(bnd_all[longest_bnd_id].size()), bnd_uv);
+                } else {
+                    igl::map_vertices_to_circle(
+                        temp.V_rest,
+                        bnd_stacked.tail(bnd_all[longest_bnd_id].size()), bnd_uv);
+                }
+                double xOffset = gridOriginX + componentI % UVGridDim * gridCell,
+                       yOffset = componentI / UVGridDim * gridCell;
+                for (int bnd_uvI = 0; bnd_uvI < bnd_uv.rows(); bnd_uvI++) {
+                    bnd_uv(bnd_uvI, 0) =
+                        bnd_uv(bnd_uvI, 0) * chartRadius[componentI] + xOffset;
+                    bnd_uv(bnd_uvI, 1) =
+                        bnd_uv(bnd_uvI, 1) * chartRadius[componentI] + yOffset;
+                }
+                bnd_uv_stacked.conservativeResize(
+                    bnd_uv_stacked.rows() + bnd_uv.rows(), 2);
+                bnd_uv_stacked.bottomRows(bnd_uv.rows()) = bnd_uv;
             }
+
+            Eigen::SparseMatrix<double> A, M;
+            uvgami::IglUtils::computeUniformLaplacian(temp.F, A);
+            igl::harmonic(A, M, bnd_stacked, bnd_uv_stacked, 1, UV_Tutte);
+            return UV_Tutte;
+        };
+        triSoup.emplace_back(
+            new uvgami::TriMesh(V, F, solveTutte(), temp.F, false));
+
+        // temp's adjacency is stale by now, so the cut runs on a rebuild
+        // from its arrays
+        for (int round = 0; round < MAX_DEEPEN_ROUNDS; ++round) {
+            std::set<int> inverted;
+            const uvgami::TriMesh &init = *triSoup.back();
+            for (int triI = 0; triI < init.F.rows(); ++triI) {
+                if (keepChart[C[triI]])
+                    continue;
+                // an area too small for the energy's 1 / area^2 is as dead as
+                // an inverted one
+                const Eigen::RowVector2d e1 =
+                    init.V.row(init.F(triI, 1)) - init.V.row(init.F(triI, 0));
+                const Eigen::RowVector2d e2 =
+                    init.V.row(init.F(triI, 2)) - init.V.row(init.F(triI, 0));
+                const double dbArea = e1[0] * e2[1] - e1[1] * e2[0];
+                if (!init.checkInversion(triI, true) ||
+                    !std::isfinite(1.0 / (dbArea * dbArea)))
+                    inverted.insert(C[triI]);
+            }
+            if (inverted.empty())
+                break;
+            uvgami::TriMesh deeper(temp.V_rest, temp.F, temp.V, temp.F, false);
+            int cuts = 0;
+            for (const int componentI : inverted) {
+                const std::vector<int> path =
+                    deepestPath(F_component[componentI]);
+                if (path.size() < 2)
+                    continue;
+                cuts += deeper.cutPath(path, true);
+                deeper.initSeams = deeper.cohE;
+            }
+            if (!cuts)
+                break;
+            std::cerr << "element inversion during UV init, cutting deeper"
+                      << std::endl;
+            temp = deeper;
+            dropOrphanVertices();
+            rand1PInitCut = false;
+            F_component.assign(n_components, Eigen::MatrixXi());
+            V_ind_component.assign(n_components, std::set<int>());
+            for (int triI = 0; triI < temp.F.rows(); ++triI) {
+                F_component[C[triI]].conservativeResize(
+                    F_component[C[triI]].rows() + 1, 3);
+                F_component[C[triI]].bottomRows(1) = temp.F.row(triI);
+                for (int i = 0; i < 3; ++i)
+                    V_ind_component[C[triI]].insert(temp.F(triI, i));
+            }
+            delete triSoup.back();
+            triSoup.back() =
+                new uvgami::TriMesh(V, F, solveTutte(), temp.F, false);
         }
     }
     if (!fixedVerts.empty()) {
