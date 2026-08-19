@@ -33,8 +33,9 @@ extern std::atomic<bool> forceQuit;
 
 namespace uvgami {
 
-// stand-in rest area for a zero-area triangle, a fraction of its own longest
-// edge squared so a local query mesh sees the same shape it does
+// stand-in rest area for a flat or needle triangle, a fraction of its own
+// longest edge squared so a local query mesh sees the same shape it does.
+// below it the energy is rounding noise and can come out negative
 static const double ZERO_AREA_STAND_IN = 1e-6;
 
 TriMesh::TriMesh(void) : surfaceArea(0), curFracTail(0), initSeamLen(0) {}
@@ -307,6 +308,7 @@ void TriMesh::computeFeatures(bool multiComp, bool resetFixedV) {
     e0dote1_div_dbAreaSq.resize(F.rows());
     std::vector<Eigen::RowVector3d> vertNormals(V_rest.rows(),
                                                 Eigen::Vector3d::Zero());
+    Eigen::VectorXd longestSq(F.rows());
     int zeroAreaAmt = 0;
     for (int triI = 0; triI < F.rows(); triI++) {
         const Eigen::Vector3i &triVInd = F.row(triI);
@@ -316,6 +318,9 @@ void TriMesh::computeFeatures(bool multiComp, bool resetFixedV) {
         const Eigen::RowVector3d normalVec = (P2 - P1).cross(P3 - P1);
         triNormal.row(triI) = normalVec.normalized();
         triArea[triI] = 0.5 * normalVec.norm();
+        longestSq[triI] =
+            (std::max)({(P2 - P1).squaredNorm(), (P3 - P1).squaredNorm(),
+                        (P3 - P2).squaredNorm()});
         zeroAreaAmt += triArea[triI] == 0.0;
     }
     // a zero-area rest triangle has no shape to measure distortion against
@@ -336,15 +341,10 @@ void TriMesh::computeFeatures(bool multiComp, bool resetFixedV) {
         const Eigen::Vector3d P3m1 = P3 - P1;
         const Eigen::RowVector3d normalVec = P2m1.cross(P3m1);
 
-        double floorArea = areaThres_AM;
-        if (triArea[triI] == 0.0) {
-            const double longestSq =
-                (std::max)({P2m1.squaredNorm(), P3m1.squaredNorm(),
-                            (P3 - P2).squaredNorm()});
-            floorArea = (std::max)(
-                floorArea,
-                ZERO_AREA_STAND_IN * (longestSq > 0.0 ? longestSq : meanArea));
-        }
+        const double floorArea = (std::max)(
+            areaThres_AM,
+            ZERO_AREA_STAND_IN *
+                (longestSq[triI] > 0.0 ? longestSq[triI] : meanArea));
         if (triArea[triI] < floorArea) {
             // air mesh triangle degeneracy prevention, and the stand-in
             triArea[triI] = floorArea;
@@ -621,8 +621,13 @@ void TriMesh::querySplit(double lambda_t, bool propagate, bool splitInterior,
             }
         }
 
+        // the lists outlive this call, updateLambda_stationaryV queues an
+        // op from them rounds later, so stale positions invert triangles
         if (!splitInterior) {
             if (sortedCandVerts_b.empty()) {
+                paths_bSplit.clear();
+                newVertPoses_bSplit.clear();
+                energyChanges_bSplit.clear();
                 EwDec_max = 0.0;
                 return;
             }
@@ -638,6 +643,9 @@ void TriMesh::querySplit(double lambda_t, bool propagate, bool splitInterior,
             }
         } else {
             if (sortedCandVerts_in.empty()) {
+                paths_iSplit.clear();
+                newVertPoses_iSplit.clear();
+                energyChanges_iSplit.clear();
                 EwDec_max = 0.0;
                 return;
             }
