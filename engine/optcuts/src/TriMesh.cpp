@@ -3256,6 +3256,37 @@ double TriMesh::queryLocalEdDec_bSplit(const std::pair<int, int> &edge,
                                     newVertPos);
 }
 
+bool TriMesh::queriedOpFits(int opType, const std::vector<int> &path,
+                            const Eigen::MatrixXd &newVertPos) const {
+    for (const auto &vI : path)
+        if (vI < 0 || vI >= V.rows())
+            return false;
+    auto hasEdge = [this](int a, int b) {
+        return edge2Tri.find(std::pair<int, int>(a, b)) != edge2Tri.end();
+    };
+    switch (opType) {
+    case 0: {
+        if (path.size() != 2 || !hasEdge(path[0], path[1]) ||
+            !hasEdge(path[1], path[0]))
+            return false;
+        const int boundaryEnds = isBoundaryVert(path[0]) + isBoundaryVert(path[1]);
+        // one boundary end is a plain split, two is a cut-through
+        return boundaryEnds == (newVertPos.rows() == 4 ? 2 : 1);
+    }
+    case 1:
+        return path.size() == 3 && hasEdge(path[0], path[1]) &&
+               hasEdge(path[1], path[0]) && hasEdge(path[1], path[2]) &&
+               hasEdge(path[2], path[1]) && !isBoundaryVert(path[0]) &&
+               !isBoundaryVert(path[1]) && !isBoundaryVert(path[2]);
+    case 2:
+        return path.size() == 3 && hasEdge(path[0], path[1]) &&
+               !hasEdge(path[1], path[0]) && hasEdge(path[1], path[2]) &&
+               !hasEdge(path[2], path[1]);
+    default:
+        return false;
+    }
+}
+
 void TriMesh::splitEdgeOnBoundary(const std::pair<int, int> &edge,
                                   const Eigen::MatrixXd &newVertPos,
                                   bool changeVertPos, bool allowCutThrough) {

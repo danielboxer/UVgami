@@ -2,7 +2,6 @@
 
 #include "Scaffold.hpp"
 #include "IglUtils.hpp"
-#include "SymDirichletEnergy.hpp"
 
 #include <igl/triangle/triangulate.h>
 #include <igl/boundary_loop.h>
@@ -10,6 +9,7 @@
 #include <igl/vertex_components.h>
 
 #include "ParallelFor.hpp"
+#include <cfloat>
 
 namespace uvgami {
 Scaffold::Scaffold(void) : wholeMeshSize(0) {}
@@ -92,70 +92,25 @@ Scaffold::Scaffold(const TriMesh &mesh, Eigen::MatrixXd UV_bnds,
                 maxY - segI * stepY;
         }
 
-        // compute connected component of mesh
+        // a marker on the boundary lets Triangle keep the air instead of
+        // the chart, so it has to be strictly inside however small the
+        // chart is
         Eigen::VectorXi compI_V;
         igl::vertex_components(mesh.F, compI_V);
-        // mark holes
-        std::set<int> processedComp;
-        for (int vI = 0; vI < compI_V.size(); vI++) {
-            if (processedComp.find(compI_V[vI]) == processedComp.end()) {
-                H.conservativeResize(H.rows() + 1, 2);
-
-                std::vector<int> incTris;
-                std::pair<int, int> bEdge;
-                if (mesh.isBoundaryVert(vI, *mesh.vNeighbor[vI].begin(),
-                                        incTris, bEdge, false)) {
-                    // push vI a little bit inside mesh and then add into H
-                    // get all incident triangles
-                    std::vector<int> temp;
-                    mesh.isBoundaryVert(vI, *mesh.vNeighbor[vI].begin(), temp,
-                                        bEdge, true);
-                    incTris.insert(incTris.end(), temp.begin(), temp.end());
-                    // construct local mesh
-                    Eigen::MatrixXi localF;
-                    localF.resize(incTris.size(), 3);
-                    Eigen::MatrixXd localV_rest, localV;
-                    std::map<int, int> globalVI2local;
-                    int localTriI = 0;
-                    for (const auto triI : incTris) {
-                        for (int vI = 0; vI < 3; vI++) {
-                            int globalVI = mesh.F(triI, vI);
-                            auto localVIFinder = globalVI2local.find(globalVI);
-                            if (localVIFinder == globalVI2local.end()) {
-                                int localVI =
-                                    static_cast<int>(localV_rest.rows());
-                                localV_rest.conservativeResize(localVI + 1, 3);
-                                localV_rest.row(localVI) =
-                                    mesh.V_rest.row(globalVI);
-                                localV.conservativeResize(localVI + 1, 2);
-                                localV.row(localVI) = mesh.V.row(globalVI);
-                                localF(localTriI, vI) = localVI;
-                                globalVI2local[globalVI] = localVI;
-                            } else {
-                                localF(localTriI, vI) = localVIFinder->second;
-                            }
-                        }
-                        localTriI++;
-                    }
-                    TriMesh localMesh(localV_rest, localF, localV,
-                                      Eigen::MatrixXi(), false);
-                    // compute inward normal
-                    Eigen::RowVector2d sepDir_oneV;
-                    mesh.compute2DInwardNormal(vI, sepDir_oneV);
-                    Eigen::VectorXd sepDir =
-                        Eigen::VectorXd::Zero(localMesh.V.rows() * 2);
-                    sepDir.block(globalVI2local[vI] * 2, 0, 2, 1) =
-                        sepDir_oneV.transpose();
-                    double stepSize_sep = 1.0;
-                    SymDirichletEnergy SD;
-                    SD.initStepSize(localMesh, sepDir, stepSize_sep);
-                    H.bottomRows(1) =
-                        mesh.V.row(vI) + 0.5 * stepSize_sep * sepDir_oneV;
-                } else {
-                    H.bottomRows(1) = mesh.V.row(vI);
-                }
-
-                processedComp.insert(compI_V[vI]);
+        const int compAmt = compI_V.maxCoeff() + 1;
+        std::vector<double> largestArea(compAmt, -DBL_MAX);
+        H.resize(compAmt, 2);
+        for (int triI = 0; triI < mesh.F.rows(); triI++) {
+            const Eigen::RowVector3i &tri = mesh.F.row(triI);
+            const Eigen::RowVector2d &a = mesh.V.row(tri[0]);
+            const Eigen::RowVector2d &b = mesh.V.row(tri[1]);
+            const Eigen::RowVector2d &c = mesh.V.row(tri[2]);
+            const double area = (b[0] - a[0]) * (c[1] - a[1]) -
+                                (b[1] - a[1]) * (c[0] - a[0]);
+            const int compI = compI_V[tri[0]];
+            if (area > largestArea[compI]) {
+                largestArea[compI] = area;
+                H.row(compI) = (a + b + c) / 3.0;
             }
         }
     } else {
@@ -437,27 +392,40 @@ bool Scaffold::getCornerAirLoop(const std::vector<int> &corner_mesh,
         fI++;
     }
 
-    // compute outer loop and ensure no vertex duplication
+    // the fan wraps the whole mesh when its boundary is only a few vertices
+    // long, so the corners can land on an inner loop or on none
+    std::vector<std::vector<int>> loops;
+    igl::boundary_loop(F_inc, loops);
     std::vector<int> loop;
-    igl::boundary_loop(F_inc, loop);
-    std::set<int> testDuplication(loop.begin(), loop.end());
-    if (testDuplication.size() != loop.size())
-        assert(0 && "vertex duplication found in loop!");
-
-    // eliminate merged vertices from loop
     int startI = -1;
-    for (int vI = 0; vI < loop.size(); vI++) {
-        if (loop[vI] == corner[0]) {
-            if ((loop[(vI - 1 + loop.size()) % loop.size()] == corner[1]) &&
-                (loop[(vI - 2 + loop.size()) % loop.size()] == corner[2])) {
+    for (const auto &candidate : loops) {
+        for (int vI = 0; vI < candidate.size(); vI++) {
+            const int n = static_cast<int>(candidate.size());
+            if (candidate[vI] == corner[0] &&
+                candidate[(vI - 1 + n) % n] == corner[1] &&
+                candidate[(vI - 2 + n) % n] == corner[2]) {
+                loop = candidate;
                 startI = vI;
                 break;
-            } else {
-                assert(0 && "corner not found on air mesh boundary loop");
             }
         }
+        if (startI >= 0)
+            break;
     }
-    assert(startI >= 0);
+    if (startI < 0 || loop.size() < 5)
+        return false;
+    double loopArea2 = 0.0;
+    for (int vI = 0; vI < loop.size(); vI++) {
+        const Eigen::RowVector2d &p = airMesh.V.row(loop[vI]);
+        const Eigen::RowVector2d &q =
+            airMesh.V.row(loop[(vI + 1) % loop.size()]);
+        loopArea2 += p[0] * q[1] - q[0] * p[1];
+    }
+    // a negative area is a hole loop, the mesh interior side of a wrapped fan
+    if (loopArea2 <= 0.0)
+        return false;
+
+    // eliminate merged vertices from loop
     int delI = (startI - 2 + loop.size()) % loop.size();
     if (delI + 1 == loop.size()) {
         loop.erase(loop.begin() + delI);

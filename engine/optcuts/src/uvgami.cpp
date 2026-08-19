@@ -885,6 +885,87 @@ static double importedMapMeasure(const uvgami::TriMesh &mesh) {
     return 2 * std::sqrt(grow * shrink) / total;
 }
 
+// a bowtie vertex joins two face fans at a point. split it into one vertex
+// per fan, the position is unchanged and the fans were only touching anyway.
+// with triComponent given, a vertex whose fans span two components is left
+// alone and every split component is flagged
+static int splitBowtieVertices(Eigen::MatrixXd &V, Eigen::MatrixXi &F,
+                               const Eigen::VectorXi &triComponent,
+                               std::vector<bool> &bowtieComponent) {
+    std::vector<std::vector<int>> vertTris(V.rows());
+    for (int triI = 0; triI < F.rows(); ++triI) {
+        for (int i = 0; i < 3; ++i) {
+            vertTris[F(triI, i)].emplace_back(triI);
+        }
+    }
+    int bowtieAmt = 0;
+    const int vAmt = static_cast<int>(vertTris.size());
+    for (int vI = 0; vI < vAmt; ++vI) {
+        const std::vector<int> &tris = vertTris[vI];
+        if (tris.size() < 2) {
+            continue;
+        }
+        // fans are the connected groups of incident triangles, joined when
+        // two share an edge through vI
+        std::map<int, std::vector<int>> edgeTris;
+        for (const auto triI : tris) {
+            for (int i = 0; i < 3; ++i) {
+                if (F(triI, i) != vI) {
+                    edgeTris[F(triI, i)].emplace_back(triI);
+                }
+            }
+        }
+        std::set<int> left(tris.begin(), tris.end());
+        std::vector<std::vector<int>> fans;
+        while (!left.empty()) {
+            std::vector<int> fan({*left.begin()});
+            left.erase(fan[0]);
+            for (size_t fanI = 0; fanI < fan.size(); ++fanI) {
+                for (int i = 0; i < 3; ++i) {
+                    const int u = F(fan[fanI], i);
+                    if (u == vI) {
+                        continue;
+                    }
+                    for (const auto nbTriI : edgeTris[u]) {
+                        if (left.erase(nbTriI)) {
+                            fan.emplace_back(nbTriI);
+                        }
+                    }
+                }
+            }
+            fans.emplace_back(fan);
+        }
+        if (fans.size() < 2) {
+            continue;
+        }
+        if (triComponent.size()) {
+            const int component = triComponent[fans[0][0]];
+            bool oneComponent = true;
+            for (const auto &fan : fans) {
+                oneComponent = oneComponent && triComponent[fan[0]] == component;
+            }
+            if (!oneComponent) {
+                continue;
+            }
+            bowtieComponent[component] = true;
+        }
+        for (size_t fanI = 1; fanI < fans.size(); ++fanI) {
+            const int nV = static_cast<int>(V.rows());
+            V.conservativeResize(nV + 1, V.cols());
+            V.row(nV) = V.row(vI);
+            for (const auto triI : fans[fanI]) {
+                for (int i = 0; i < 3; ++i) {
+                    if (F(triI, i) == vI) {
+                        F(triI, i) = nV;
+                    }
+                }
+            }
+            ++bowtieAmt;
+        }
+    }
+    return bowtieAmt;
+}
+
 // cut_to_disk can return only boundary edges, which cutPath skips, so an
 // annulus makes no cut. this joins two of its boundary loops instead
 static std::vector<int> boundaryLoopConnector(const uvgami::TriMesh &mesh,
@@ -1094,73 +1175,13 @@ int main(int argc, char *argv[]) {
 
     hasUV = !ignoreUV && (UV.rows() != 0);
     if (!hasUV) {
-        // a bowtie vertex joins two face fans at a point. split it into one
-        // vertex per fan so the mesh passes the manifold check below, the
-        // position is unchanged and the fans were only touching anyway
-        {
-            std::vector<std::vector<int>> vertTris(V.rows());
-            for (int triI = 0; triI < F.rows(); ++triI) {
-                for (int i = 0; i < 3; ++i) {
-                    vertTris[F(triI, i)].emplace_back(triI);
-                }
-            }
-            int bowtieAmt = 0;
-            const int vAmt = static_cast<int>(vertTris.size());
-            for (int vI = 0; vI < vAmt; ++vI) {
-                const std::vector<int> &tris = vertTris[vI];
-                if (tris.size() < 2) {
-                    continue;
-                }
-                // fans are the connected groups of incident triangles,
-                // joined when two share an edge through vI
-                std::map<int, std::vector<int>> edgeTris;
-                for (const auto triI : tris) {
-                    for (int i = 0; i < 3; ++i) {
-                        if (F(triI, i) != vI) {
-                            edgeTris[F(triI, i)].emplace_back(triI);
-                        }
-                    }
-                }
-                std::set<int> left(tris.begin(), tris.end());
-                bool firstFan = true;
-                while (!left.empty()) {
-                    std::vector<int> fan({*left.begin()});
-                    left.erase(fan[0]);
-                    for (size_t fanI = 0; fanI < fan.size(); ++fanI) {
-                        for (int i = 0; i < 3; ++i) {
-                            const int u = F(fan[fanI], i);
-                            if (u == vI) {
-                                continue;
-                            }
-                            for (const auto nbTriI : edgeTris[u]) {
-                                if (left.erase(nbTriI)) {
-                                    fan.emplace_back(nbTriI);
-                                }
-                            }
-                        }
-                    }
-                    if (firstFan) {
-                        firstFan = false;
-                        continue;
-                    }
-                    const int nV = static_cast<int>(V.rows());
-                    V.conservativeResize(nV + 1, 3);
-                    V.row(nV) = V.row(vI);
-                    for (const auto triI : fan) {
-                        for (int i = 0; i < 3; ++i) {
-                            if (F(triI, i) == vI) {
-                                F(triI, i) = nV;
-                            }
-                        }
-                    }
-                    ++bowtieAmt;
-                }
-            }
-            if (bowtieAmt) {
-                std::cerr << "split " << bowtieAmt
-                          << " non-manifold vertices into per-fan copies"
-                          << std::endl;
-            }
+        std::vector<bool> noComponentFlags;
+        const int bowtieAmt =
+            splitBowtieVertices(V, F, Eigen::VectorXi(), noComponentFlags);
+        if (bowtieAmt) {
+            std::cerr << "split " << bowtieAmt
+                      << " non-manifold vertices into per-fan copies"
+                      << std::endl;
         }
         vertAmt_input = V.rows();
         Eigen::VectorXi B;
@@ -1195,6 +1216,19 @@ int main(int argc, char *argv[]) {
     Eigen::VectorXi C;
     igl::facet_components(hasUV ? FUV : F, C);
     int n_components = C.maxCoeff() + 1;
+
+    // a chart pinched at a uv vertex reads as one short of a disk and no
+    // interior edge can cut it open. the two copies land on top of each
+    // other, so a split chart is never kept
+    std::vector<bool> bowtieChart(n_components, false);
+    if (hasUV) {
+        const int bowtieAmt = splitBowtieVertices(UV, FUV, C, bowtieChart);
+        if (bowtieAmt) {
+            std::cerr << "split " << bowtieAmt
+                      << " pinched uv vertices into per-fan copies"
+                      << std::endl;
+        }
+    }
 
     uvgami::TriMesh temp =
         hasUV ? uvgami::TriMesh(V, F, UV, FUV, false)
@@ -1341,8 +1375,12 @@ int main(int argc, char *argv[]) {
 
         // whole-map decision first, so a map that was kept before is still
         // kept byte for byte
-        keepInputUV = (allDisks || stitchKeepable) && !anyInversion &&
-                      !anyDegenerate && crossingVerts.empty();
+        bool anyBowtie = false;
+        for (int c = 0; c < n_components; ++c) {
+            anyBowtie = anyBowtie || bowtieChart[c];
+        }
+        keepInputUV = (allDisks || stitchKeepable) && !anyBowtie &&
+                      !anyInversion && !anyDegenerate && crossingVerts.empty();
 
         int badInverted = 0, badOverlapping = 0, badNonDisk = 0,
             badDegenerate = 0;
@@ -1351,8 +1389,8 @@ int main(int argc, char *argv[]) {
             keptCharts = n_components;
         } else {
             for (int c = 0; c < n_components; ++c) {
-                keepChart[c] = isDisk[c] && !overlaps[c] && !inverted[c] &&
-                               !pinched[c] && !degenerate[c];
+                keepChart[c] = isDisk[c] && !bowtieChart[c] && !overlaps[c] &&
+                               !inverted[c] && !pinched[c] && !degenerate[c];
                 keptCharts += keepChart[c];
                 if (inverted[c]) {
                     ++badInverted;
@@ -1360,7 +1398,7 @@ int main(int argc, char *argv[]) {
                     ++badDegenerate;
                 } else if (overlaps[c]) {
                     ++badOverlapping;
-                } else if (!isDisk[c]) {
+                } else if (!isDisk[c] || bowtieChart[c]) {
                     ++badNonDisk;
                 }
             }

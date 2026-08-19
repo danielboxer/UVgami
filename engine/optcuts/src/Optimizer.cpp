@@ -243,6 +243,10 @@ void Optimizer::updateEnergyData(bool updateEVal, bool updateGradient,
 bool Optimizer::createFracture(int opType, const std::vector<int> &path,
                                const Eigen::MatrixXd &newVertPos,
                                bool allowPropagate) {
+    // the op was queried one round back, so an op applied since can have
+    // moved its vertices onto the boundary or renumbered them
+    if (!result.queriedOpFits(opType, path, newVertPos))
+        return false;
     topoIter++;
     bool isMerge = false;
     // data_findExtrema = result; // potentially time-consuming

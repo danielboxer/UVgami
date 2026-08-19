@@ -152,6 +152,10 @@ class TriMesh {
     bool isBoundaryVert(int vI) const;
 
     bool cutLeavesPinlessPiece(const std::vector<int> &path) const;
+    // whether a split or merge queried on an earlier mesh still fits the
+    // current topology: 0 boundary split, 1 interior split, 2 merge
+    bool queriedOpFits(int opType, const std::vector<int> &path,
+                       const Eigen::MatrixXd &newVertPos) const;
 
     void compute2DInwardNormal(int vI, Eigen::RowVector2d &normal) const;
 
