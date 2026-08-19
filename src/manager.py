@@ -684,6 +684,8 @@ class UnwrapManager:
                     last = last_meaningful_line(unwrap.get_stderr_tail())
                     self.error_messages.append(f"{msg} ({last})" if last else msg)
             else:
+                msg = f"Unknown Engine Error ({ret_code})"
+                move_to_invalid = True
                 self.error_code = ret_code
                 tail = unwrap.get_stderr_tail()
                 last = last_meaningful_line(tail)
