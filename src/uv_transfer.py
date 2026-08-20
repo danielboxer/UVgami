@@ -18,6 +18,10 @@ class TransferPlan:
     ok: bool = True
 
 
+# the only transfer failure a cut or symmetry can't cause
+AMBIGUOUS_GEOMETRY = "ambiguous_geometry"
+
+
 @dataclass
 class TransferFailure:
     reason: str  # machine string: vertex_match, ambiguous_geometry, ...
@@ -26,12 +30,10 @@ class TransferFailure:
 
 
 def _default_tol(positions):
-    # the obj round trip snaps positions to 6 decimals, an absolute error the
-    # relative term misses on a small mesh, so keep a floor well above it
+    # the engine writes 7 significant digits, so error grows with distance from origin
     if len(positions) == 0:
         return 1e-5
-    diag = float(np.linalg.norm(positions.max(axis=0) - positions.min(axis=0)))
-    return max(diag * 1e-5, 1e-5)
+    return max(float(np.abs(positions).max()) * 2e-6, 1e-5)
 
 
 def _grid_key(p, inv):
@@ -339,9 +341,17 @@ def plan_transfer(
             local[v] = corner
         input_vertex_local.append(local)
 
+    # optcuts and xatlas keep the input vertex indices and append cut copies,
+    # partuv merges doubles and shifts them, so check before trusting an index
+    n_in = len(in_pos)
+    keeps_indices = 0 < n_in <= len(out_pos) and bool(
+        (((out_pos[:n_in] - in_pos) ** 2).sum(axis=1) <= tol2).all()
+    )
     candidate_cache = {}
 
     def candidates(out_v):
+        if keeps_indices and out_v < n_in:
+            return [out_v]
         cached = candidate_cache.get(out_v)
         if cached is None:
             cached = _query_grid(in_grid, inv, in_pos, out_pos[out_v], tol2)
@@ -389,7 +399,7 @@ def plan_transfer(
                 matches = [v for v in corner if v in fvs]
                 if len(matches) > 1:
                     return TransferFailure(
-                        "ambiguous_geometry",
+                        AMBIGUOUS_GEOMETRY,
                         f"output face {fo} corner matches multiple vertices"
                         " of one input face",
                     )
@@ -398,7 +408,7 @@ def plan_transfer(
 
         if len(valid) > 1:
             return TransferFailure(
-                "ambiguous_geometry", f"output face {fo} matches multiple input faces"
+                AMBIGUOUS_GEOMETRY, f"output face {fo} matches multiple input faces"
             )
         f, assign = valid[0]
         face_uvs = output_uvs[fo]
@@ -442,7 +452,7 @@ def plan_transfer(
         # a uv cut runs through this face, so one face can't hold its uvs
         if len({frozenset(assign) for assign, _ in parts}) != len(parts):
             return TransferFailure(
-                "ambiguous_geometry",
+                AMBIGUOUS_GEOMETRY,
                 f"input face {fi} maps to overlapping output faces",
             )
 
