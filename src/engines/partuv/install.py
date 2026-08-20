@@ -21,20 +21,21 @@ from .paths import (
 # must match engine/partuv/pyproject.toml
 PARTUV_VERSION = "0.1.4"
 PARTUV_RELEASE_API = f"https://api.github.com/repos/DanielBoxer/UVgami/releases/tags/partuv-v{PARTUV_VERSION}"
-# mirrored onto the fixed `checkpoint` release so installs don't depend on the HF
-# repo staying up or its main branch not moving (see mirror-checkpoint.yml)
+# the hugging face original moves with its main branch
 CHECKPOINT_URL = "https://github.com/DanielBoxer/UVgami/releases/download/checkpoint/model_objaverse.ckpt"
-# the ai extra pins torch 2.3.0 (cu121). torch-scatter has no matching pypi
-# wheel, so pip must be pointed at the pyg wheel index to avoid a source build
-TORCH_SCATTER_FIND_LINKS = "https://data.pyg.org/whl/torch-2.3.0+cu121.html"
-# partuv is a cuda wheel (nvidia-only), so no macos build exists
+# must match the ai extra in engine/partuv/pyproject.toml
+TORCH_VERSION = "2.3.0"
+# pypi's windows torch wheel is cpu-only
+TORCH_CUDA_INDEX = "https://download.pytorch.org/whl/cu121"
+# without this page torch-scatter builds from source
+TORCH_SCATTER_FIND_LINKS = f"https://data.pyg.org/whl/torch-{TORCH_VERSION}+cu121.html"
+# partuv is an nvidia cuda wheel
 PARTUV_PLATFORMS = ("Windows", "Linux")
 GEOMETRIC_DOWNLOAD_SIZE = "200 MB"
 AI_DOWNLOAD_SIZE = "5 GB"
-# partuv runs in a managed 3.11 venv, decoupled from blender's python version
+# independent of blender's python version
 VENV_PYTHON = "3.11"
 PARTUV_PY_TAG = "cp311"
-# pinned so the venv is reproducible, the archive names are stable across releases
 UV_VERSION = "0.11.25"
 UV_ARCHIVES = {
     "Windows": "uv-x86_64-pc-windows-msvc.zip",
@@ -42,8 +43,8 @@ UV_ARCHIVES = {
 }
 
 
-# cached: the main panel's update notice calls this every redraw and the glob
-# scans the venv site-packages. cleared by invalidate_engine_caches
+# the panel calls this every redraw
+# cleared by invalidate_engine_caches
 @functools.cache
 def get_installed_partuv_version():
     """Version of the wheel in the venv, read from its dist-info, or None."""
@@ -69,8 +70,7 @@ def find_wheel_url():
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         release = json.load(response)
-    # the venv is 3.11 regardless of blender's python, and linux wheels ship as
-    # manylinux after auditwheel repair, so match the arch tail
+    # linux wheels ship as manylinux after auditwheel repair
     plat = "win_amd64" if platform.system() == "Windows" else "x86_64"
     for asset in release.get("assets", []):
         name = asset["name"]
@@ -106,7 +106,7 @@ def ensure_uv():
     tmp = uv.parent / archive_name
     task_state["phase"] = "Downloading uv"
     download_file(url, tmp, progress=report_progress)
-    # the archives nest the binary in a per-target folder, extract just uv
+    # the archives nest the binary in a per-target folder
     if archive_name.endswith(".zip"):
         with zipfile.ZipFile(tmp) as archive:
             member = next(n for n in archive.namelist() if n.endswith("uv.exe"))
@@ -124,14 +124,26 @@ def ensure_uv():
 
 def run_venv_install(wheel_url, ai):
     uv = ensure_uv()
-    # uv's subprocess output is opaque, so no byte progress here
+    # uv prints no byte counts
     task_state["phase"] = "Installing packages"
     task_state["bytes_total"] = None
     venv_python = get_partuv_venv_python()
     if not venv_python.is_file():
-        # uv fetches a managed cpython 3.11 if the system has none
         _run([str(uv), "venv", "--python", VENV_PYTHON, str(get_partuv_venv_path())])
     if ai:
+        # uv keeps this over the extra's cpu pin
+        _run(
+            [
+                str(uv),
+                "pip",
+                "install",
+                "--python",
+                str(venv_python),
+                "--index-url",
+                TORCH_CUDA_INDEX,
+                f"torch=={TORCH_VERSION}+cu121",
+            ]
+        )
         requirement = f"partuv[ai] @ {wheel_url}"
         extra_args = ["-f", TORCH_SCATTER_FIND_LINKS]
     else:
