@@ -896,10 +896,12 @@ static double importedMapMeasure(const uvgami::TriMesh &mesh) {
 // an edge with three or more faces joins no fans either, so a fin comes off
 // along it and the edge keeps the pair still connected around either end.
 // with triComponent given, a vertex whose fans span two components is left
-// alone and every split component is flagged
-static int splitBowtieVertices(Eigen::MatrixXd &V, Eigen::MatrixXi &F,
-                               const Eigen::VectorXi &triComponent,
-                               std::vector<bool> &bowtieComponent) {
+// alone and every split component is flagged. partedFacePairs, low index
+// first, are never joined
+static int splitBowtieVertices(
+    Eigen::MatrixXd &V, Eigen::MatrixXi &F, const Eigen::VectorXi &triComponent,
+    std::vector<bool> &bowtieComponent,
+    const std::set<std::pair<int, int>> &partedFacePairs = {}) {
     std::vector<std::vector<int>> vertTris(V.rows());
     for (int triI = 0; triI < F.rows(); ++triI) {
         for (int i = 0; i < 3; ++i) {
@@ -935,6 +937,11 @@ static int splitBowtieVertices(Eigen::MatrixXd &V, Eigen::MatrixXi &F,
                         continue;
                     }
                     if (edgeTris[u].size() != 2) {
+                        continue;
+                    }
+                    const int lowTriI = (std::min)(edgeTris[u][0], edgeTris[u][1]);
+                    const int highTriI = (std::max)(edgeTris[u][0], edgeTris[u][1]);
+                    if (partedFacePairs.count({lowTriI, highTriI})) {
                         continue;
                     }
                     for (const auto nbTriI : edgeTris[u]) {
@@ -975,6 +982,97 @@ static int splitBowtieVertices(Eigen::MatrixXd &V, Eigen::MatrixXi &F,
         }
     }
     return bowtieAmt;
+}
+
+// each pair low index first
+static std::set<std::pair<int, int>>
+sameDirectionFacePairs(const Eigen::MatrixXi &F) {
+    std::map<std::pair<int, int>, int> directedEdgeFace;
+    std::set<std::pair<int, int>> pairs;
+    for (int triI = 0; triI < F.rows(); ++triI) {
+        for (int i = 0; i < 3; ++i) {
+            const auto inserted = directedEdgeFace.emplace(
+                std::make_pair(F(triI, i), F(triI, (i + 1) % 3)), triI);
+            if (!inserted.second) {
+                pairs.emplace(inserted.first->second, triI);
+            }
+        }
+    }
+    return pairs;
+}
+
+// one cut round has cleared every twisted piece seen so far
+static const int WINDING_CUT_ROUNDS = 3;
+
+// wind each component alike, keeping the side most of its faces had. each
+// face is decided once: igl::bfs_orient re-flips visited faces and leaves a
+// twisted component with twice the contradicting edges
+static int orientComponents(Eigen::MatrixXi &F) {
+    std::map<std::pair<int, int>, std::vector<int>> edgeTris;
+    for (int triI = 0; triI < F.rows(); ++triI) {
+        for (int i = 0; i < 3; ++i) {
+            const int a = F(triI, i);
+            const int b = F(triI, (i + 1) % 3);
+            edgeTris[{(std::min)(a, b), (std::max)(a, b)}].emplace_back(triI);
+        }
+    }
+    const auto hasDirectedEdge = [&F](int triI, int a, int b) {
+        for (int i = 0; i < 3; ++i) {
+            if (F(triI, i) == a && F(triI, (i + 1) % 3) == b) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const int UNVISITED = -1;
+    std::vector<int> reversed(F.rows(), UNVISITED);
+    int reorientedAmt = 0;
+    for (int seed = 0; seed < F.rows(); ++seed) {
+        if (reversed[seed] != UNVISITED) {
+            continue;
+        }
+        reversed[seed] = 0;
+        std::vector<int> component{seed};
+        for (size_t queueI = 0; queueI < component.size(); ++queueI) {
+            const int triI = component[queueI];
+            for (int i = 0; i < 3; ++i) {
+                int a = F(triI, i);
+                int b = F(triI, (i + 1) % 3);
+                if (reversed[triI]) {
+                    std::swap(a, b);
+                }
+                const auto &tris =
+                    edgeTris[{(std::min)(a, b), (std::max)(a, b)}];
+                if (tris.size() != 2) {
+                    continue;
+                }
+                const int nbTriI = tris[0] == triI ? tris[1] : tris[0];
+                if (reversed[nbTriI] != UNVISITED) {
+                    continue;
+                }
+                reversed[nbTriI] = hasDirectedEdge(nbTriI, a, b);
+                component.emplace_back(nbTriI);
+            }
+        }
+        int reversedAmt = 0;
+        for (const auto triI : component) {
+            reversedAmt += reversed[triI];
+        }
+        const int size = static_cast<int>(component.size());
+        if (reversedAmt * 2 > size) {
+            for (const auto triI : component) {
+                reversed[triI] = !reversed[triI];
+            }
+            reversedAmt = size - reversedAmt;
+        }
+        reorientedAmt += reversedAmt;
+    }
+    for (int triI = 0; triI < F.rows(); ++triI) {
+        if (reversed[triI]) {
+            F.row(triI) = F.row(triI).reverse().eval();
+        }
+    }
+    return reorientedAmt;
 }
 
 // the path from a piece's boundary to its deepest vertex, empty when the
@@ -1276,18 +1374,32 @@ int main(int argc, char *argv[]) {
             std::cerr << "input mesh contains non-manifold edges" << std::endl;
             return UVGAMI_RC_NON_MANIFOLD_EDGES;
         }
+        const int reorientedAmt = orientComponents(F);
+        if (reorientedAmt) {
+            std::cerr << "flipped " << reorientedAmt
+                      << " faces to match their component" << std::endl;
+        }
+        // a sheet sewn to itself with a twist has no consistent winding, cut
+        // the edges where the twist shows and the pieces orient
+        std::set<std::pair<int, int>> partedFacePairs;
+        auto twisted = sameDirectionFacePairs(F);
+        for (int round = 0; round < WINDING_CUT_ROUNDS && !twisted.empty();
+             ++round) {
+            partedFacePairs.insert(twisted.begin(), twisted.end());
+            const int cutAmt = splitBowtieVertices(
+                V, F, Eigen::VectorXi(), noComponentFlags, partedFacePairs);
+            std::cerr << "cut " << twisted.size()
+                      << " edges whose faces cannot be wound alike, split "
+                      << cutAmt << " vertices" << std::endl;
+            orientComponents(F);
+            twisted = sameDirectionFacePairs(F);
+        }
         // igl's manifold checks ignore winding, and a repeated directed
         // edge corrupts the edge2Tri adjacency built on unique directions
-        std::set<std::pair<int, int>> directedEdges;
-        for (int triI = 0; triI < F.rows(); ++triI) {
-            for (int i = 0; i < 3; ++i) {
-                if (!directedEdges.emplace(F(triI, i), F(triI, (i + 1) % 3))
-                         .second) {
-                    std::cerr << "input mesh has inconsistently oriented faces"
-                              << std::endl;
-                    return UVGAMI_RC_FLIPPED_FACES;
-                }
-            }
+        if (!twisted.empty()) {
+            std::cerr << "input mesh has inconsistently oriented faces"
+                      << std::endl;
+            return UVGAMI_RC_FLIPPED_FACES;
         }
     }
 

@@ -323,13 +323,13 @@ void TriMesh::computeFeatures(bool multiComp, bool resetFixedV) {
                         (P3 - P2).squaredNorm()});
         zeroAreaAmt += triArea[triI] == 0.0;
     }
-    // a zero-area rest triangle has no shape to measure distortion against
-    double meanArea = 0.0;
-    if (zeroAreaAmt) {
-        if (zeroAreaAmt == F.rows())
-            throw std::runtime_error("every rest triangle has zero area");
-        meanArea = triArea.sum() / (F.rows() - zeroAreaAmt);
-    }
+    // a zero-area rest triangle has no shape to measure distortion against,
+    // and a local query mesh can be nothing but those
+    const double meanArea = zeroAreaAmt < F.rows()
+                                ? triArea.sum() / (F.rows() - zeroAreaAmt)
+                                : longestSq.mean();
+    if (zeroAreaAmt && meanArea == 0.0)
+        throw std::runtime_error("every rest triangle is a point");
     for (int triI = 0; triI < F.rows(); triI++) {
         const Eigen::Vector3i &triVInd = F.row(triI);
 
