@@ -13,6 +13,7 @@ from .ops.grid import add_grid, make_grid_img, make_grid_mat
 from .ops.uv import pack, show_seams
 from .progress_bar import progress_bar
 from .reroute_seams import reroute_seams
+from .uv_transfer import AMBIGUOUS_GEOMETRY
 from .similar import write_twin_output
 from .utils.geometry import set_origin
 from .utils.io import import_obj
@@ -569,6 +570,8 @@ class UnwrapManager:
                 input_mesh.hide_set(True)
             self.transfer_uv_failed = True
             self.transfer_uv_fail_detail = report.detail
+            if report.reason == AMBIGUOUS_GEOMETRY:
+                self.transfer_uv_reason_known = True
             logger.add_data(
                 "errors",
                 f"UV transfer failed ({report.detail}), keeping output",

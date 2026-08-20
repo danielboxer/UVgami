@@ -405,19 +405,79 @@ def test_conflicting_triangle_cannot_be_split():
     assert result.reason == "ambiguous_geometry"
 
 
-def test_coincident_input_faces_are_ambiguous():
+def test_coincident_input_faces_each_take_their_own_output():
     a, b, c = (0, 0, 0), (1, 0, 0), (0, 1, 0)
-    # two input triangles stacked on the exact same positions
+    # stacked input triangles, the engine returns one output face per input face
+    # at the input's own vertex indices
     in_pos = [a, b, c, a, b, c]
     in_faces = [[0, 1, 2], [3, 4, 5]]
-    out_faces = [[0, 1, 2]]
-    out_uvs = [[(0, 0), (1, 0), (0, 1)]]
+    out_faces = [[0, 1, 2], [3, 4, 5]]
+    out_uvs = [[(0, 0), (1, 0), (0, 1)], [(2, 0), (3, 0), (2, 1)]]
 
-    # single output triangle, but coincidence collapses both input faces
-    result = plan_transfer(in_pos, in_faces, [a, b, c], out_faces, out_uvs)
+    plan = plan_transfer(in_pos, in_faces, in_pos, out_faces, out_uvs)
+
+    assert plan.ok
+    assert plan.loop_uvs == {
+        0: (0.0, 0.0),
+        1: (1.0, 0.0),
+        2: (0.0, 1.0),
+        3: (2.0, 0.0),
+        4: (3.0, 0.0),
+        5: (2.0, 1.0),
+    }
+
+
+def test_cut_copy_near_a_second_vertex_is_ambiguous():
+    a, b, c = (0, 0, 0), (1, 0, 0), (0, 1, 0)
+    # vertex 3 is a needle away from vertex 0, so the cut copy at index 4 sits on
+    # both and nothing tells them apart
+    in_pos = [a, b, c, (0, 0, 1e-6)]
+    in_faces = [[0, 1, 2], [3, 1, 0]]
+    out_pos = [a, b, c, (0, 0, 1e-6), a]
+    out_faces = [[0, 1, 2], [3, 1, 4]]
+    out_uvs = [[(0, 0), (1, 0), (0, 1)], [(2, 0), (3, 0), (2, 1)]]
+
+    result = plan_transfer(in_pos, in_faces, out_pos, out_faces, out_uvs)
 
     assert not result.ok
     assert result.reason == "ambiguous_geometry"
+
+
+def test_merged_output_still_matches_by_position():
+    a, b, c, d = (0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0)
+    # two input triangles with their shared edge doubled, the engine merged
+    # the doubles so its indices no longer line up with the input
+    in_pos = [a, b, c, b, c, d]
+    in_faces = [[0, 1, 2], [3, 4, 5]]
+    out_pos = [a, b, c, d]
+    out_faces = [[0, 1, 2], [1, 2, 3]]
+    out_uvs = [[(0, 0), (1, 0), (0, 1)], [(1, 0), (0, 1), (1, 1)]]
+
+    plan = plan_transfer(in_pos, in_faces, out_pos, out_faces, out_uvs)
+
+    assert plan.ok
+    assert plan.loop_uvs == {
+        0: (0.0, 0.0),
+        1: (1.0, 0.0),
+        2: (0.0, 1.0),
+        3: (1.0, 0.0),
+        4: (0.0, 1.0),
+        5: (1.0, 1.0),
+    }
+
+
+def test_small_piece_far_from_the_origin_matches():
+    # a 0.1 wide triangle 138 units out, the engine's 7 digits move it further
+    # than the old piece-sized tolerance allowed
+    in_pos = [(138.0, 0, 0), (138.1, 0, 0), (138.0, 0.1, 0)]
+    out_pos = [tuple(float("%.6e" % (x + 3e-5)) for x in p) for p in in_pos]
+    out_faces = [[0, 1, 2]]
+    out_uvs = [[(0, 0), (1, 0), (0, 1)]]
+
+    plan = plan_transfer(in_pos, [[0, 1, 2]], out_pos, out_faces, out_uvs)
+
+    assert plan.ok
+    assert plan.loop_uvs == {0: (0.0, 0.0), 1: (1.0, 0.0), 2: (0.0, 1.0)}
 
 
 def test_unmatched_output_face_fails():

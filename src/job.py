@@ -49,7 +49,9 @@ from .utils.mesh import (
 )
 from .utils.task import BackgroundTask
 
-TransferReport = namedtuple("TransferReport", ["applied", "split_count", "detail"])
+TransferReport = namedtuple(
+    "TransferReport", ["applied", "split_count", "detail", "reason"], defaults=("",)
+)
 
 
 class Result(Enum):
@@ -265,7 +267,9 @@ class TransferUVs:
                 partial=self.allows_missing_pieces,
             )
             if not plan.ok:
-                return TransferReport(False, 0, f"{plan.reason}: {plan.detail}")
+                return TransferReport(
+                    False, 0, f"{plan.reason}: {plan.detail}", plan.reason
+                )
 
             self._apply(input_mesh, plan)
         finally:
