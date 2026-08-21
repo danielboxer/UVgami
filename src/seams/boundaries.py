@@ -87,7 +87,7 @@ def reroute_boundaries(verts, faces, areas, edges, label, relief, forced=None):
     """
     label = dict(label)
 
-    # so a reroute reads its two regions instead of every face in the mesh
+    # a reroute reads its two regions instead of every face in the mesh
     region_faces = collections.defaultdict(set)
     for f, r in label.items():
         region_faces[r].add(f)
@@ -213,7 +213,7 @@ def reroute_boundaries(verts, faces, areas, edges, label, relief, forced=None):
         for key in run:
             owners = edges[key]
             if {label[owners[0]], label[owners[1]]} != {ra, rb}:
-                return  # an earlier reroute moved this stretch, leave it
+                return  # an earlier reroute moved this stretch
         if forced and not forced.isdisjoint(run):
             return
         run_set = set(run)

@@ -11,9 +11,9 @@ permissions:
   contents: write
 
 env:
-  # every arch cuda 13 supports, sm_75 floor through blackwell
+  # every arch cuda 13 supports
   CUDAARCHS: "75-real;80-real;86-real;89-real;90-real;120"
-  # source of the bundled windows openmp runtime (see repair windows wheel)
+  # source of the bundled windows openmp runtime
   LLVM_VERSION: "22.1.8"
 
 jobs:
@@ -55,7 +55,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-22.04]
-        # the addon runs partuv in a managed 3.11 venv, decoupled from blender
+        # the addon runs partuv in its own 3.11 venv, not blender's python
         python: ["3.11"]
     runs-on: ${{ matrix.os }}
 
@@ -74,7 +74,7 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y libcgal-dev libyaml-cpp-dev libtbb-dev
 
-      # ninja needs cl.exe on PATH (the vs generator is not used, see pyproject)
+      # ninja needs cl.exe on PATH
       - name: Set up MSVC environment
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
@@ -87,9 +87,7 @@ jobs:
           echo "VCPKG_DEFAULT_BINARY_CACHE=${{ github.workspace }}/vcpkg-cache" >> $GITHUB_ENV
           mkdir -p vcpkg-cache
 
-      # the runner image's vcpkg tool and tree can lag the pinned
-      # builtin-baseline, check out the baseline and re-bootstrap so the
-      # tool and version database match
+      # the runner image's vcpkg tool and tree can lag the pinned builtin-baseline
       - name: Sync vcpkg to pinned baseline
         if: runner.os == 'Windows'
         shell: pwsh
@@ -112,10 +110,8 @@ jobs:
       - name: Build wheel
         run: uv build -p ${{ matrix.python }} --wheel engine/partuv -o dist
 
-      # bundle cgal/tbb/yaml-cpp/cudart into the wheel so it imports on a stock
-      # linux without the apt dev libs. cudart stays bundled (the geometric tier
-      # has no torch to supply it); the large cuda math/dnn libs are excluded,
-      # torch provides those for the ai tier
+      # cudart stays bundled, the geometric tier has no torch to supply it. the
+      # excluded math and dnn libs come from torch on the ai tier
       - name: Repair Linux wheel
         if: runner.os == 'Linux'
         run: |
@@ -132,9 +128,9 @@ jobs:
           mv wheelhouse/*.whl dist/
 
       # msvc's /openmp:llvm links against libomp140.x86_64.dll, which visual
-      # studio installs but the vc++ redistributable does not ship. bundle
-      # upstream llvm's libomp (apache-2.0 with llvm exception, same exports)
-      # under the import name; __init__.py already puts .libs on the dll path
+      # studio installs but the vc++ redistributable does not ship. upstream
+      # llvm's libomp exports the same symbols, apache-2.0 with llvm exception
+      # __init__.py puts .libs on the dll search path
       - name: Cache libomp
         if: runner.os == 'Windows'
         id: libomp-cache
@@ -158,7 +154,7 @@ jobs:
         shell: bash
         run: |
           uvx wheel unpack dist/*.whl -d unpacked
-          # a glob naming a not-yet-existing file doesn't expand, resolve the dir
+          # a glob naming a not-yet-existing file doesn't expand
           wheel_dir=$(echo unpacked/partuv-*)
           cp libomp/libomp.dll "$wheel_dir/partuv/.libs/libomp140.x86_64.dll"
           cp libomp/libomp140.x86_64.LICENSE.txt "$wheel_dir/partuv/.libs/"
@@ -166,7 +162,7 @@ jobs:
           uvx wheel pack "$wheel_dir" -d dist
 
       # visual studio puts libomp140 in system32 on the runner, which would
-      # hide a missing bundled copy from the import test below
+      # hide a missing bundled copy from the import test
       - name: Remove system libomp
         if: runner.os == 'Windows'
         shell: pwsh
@@ -178,8 +174,7 @@ jobs:
             Remove-Item $dll -Force
           }
 
-      # prove the dll/so closure is complete on a machine without the build
-      # environment; import loads _core and everything it links
+      # import loads _core and everything it links
       - name: Test wheel import
         shell: bash
         run: |

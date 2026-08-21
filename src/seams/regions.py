@@ -735,7 +735,7 @@ def unfold_hinges(verts, faces, weighted, edges, label, forced=None):
         return move, moved, box, apply_transform(move, inner)
 
     # pre-glue panels within a region across straight flat contacts: those
-    # folds are never cut, so their panels move as one rigid piece of the net
+    # folds are never cut
     cluster = {}
     placement = {}
     glue_adjacency = collections.defaultdict(list)

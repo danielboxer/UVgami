@@ -662,7 +662,7 @@ class UnwrapManager:
         prefs = get_preferences()
         msg = ""
 
-        # windows reports exit codes unsigned, convert back to signed
+        # windows reports exit codes unsigned
         if ret_code >= 2**31:
             ret_code -= 2**32
 

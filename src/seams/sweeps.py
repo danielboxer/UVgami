@@ -29,8 +29,7 @@ SWEEP_MIN_SHARE = 0.01
 # and enough faces that the normal fit means something
 SWEEP_MIN_FACES = 8
 # the wall must actually turn around the axis: its normals' resultant length
-# over its mass, 1 on a plate, 0 on a full wall, 0.7 asks for a half turn,
-# so a plate with tilted flanges keeps whole
+# over its mass, 1 on a plate, 0 on a full wall, 0.7 asks for a half turn
 WALL_ROUND = 0.7
 # two touching walls sweeping the same axis need no rim between them: a
 # grooved ring's bands unroll together
@@ -38,7 +37,7 @@ SHARED_AXIS_COS = 0.95
 # profile ridge cuts: a wall's cross-section reads as a mass histogram of
 # normal direction around the axis, where a flat side spikes and a round or
 # evenly faceted profile stays near uniform (wrench handle peaks 7.6x,
-# screwdriver grip 2.2x). only a spiky profile panels at its soft corners
+# screwdriver grip 2.2x)
 PROFILE_BINS = 60
 PROFILE_PEAK = 3.0
 PROFILE_FLAT = 2.0
@@ -47,8 +46,7 @@ PROFILE_FLAT = 2.0
 # ridge spreads mass across its arc
 PROFILE_CORNER = 0.02
 # and the flat sides it separates must face different ways: a multi-bump
-# shell whose flats sit a few degrees apart is one panel, only a real
-# quarter-turn corner is worth a seam
+# shell whose flats sit a few degrees apart is one panel
 PROFILE_TURN = 45
 # how finely a wall with a handle through it is trimmed back along its axis
 # while searching for the cut that leaves a flattenable surface
@@ -57,7 +55,6 @@ GENUS_TRIM_LEVELS = 24
 CAP_SPLIT = 0.5  # 45 degrees
 BAND_LO = 0.25  # 30 degrees
 BAND_HI = 0.75  # 60 degrees
-# alternating fit rounds for the sweep axis
 SWEEP_FIT_ROUNDS = 10
 # faces a run seed probes before the patch around it is shed, since no part of
 # a trumpet flare fits a straight run. counted in faces, not growth rings,
@@ -764,8 +761,7 @@ def straight_runs(group, entries, edges, fit_of=None, snap=None):
             if fit:
                 low, axis = span, fit
             else:
-                # nothing straight near this seed, so shed the probed patch
-                # and move on
+                # nothing straight near this seed
                 remaining.difference_update(flat[: ends[span - 1]])
                 seed = layers[span][0] if span < count else None
                 continue

@@ -262,9 +262,9 @@ class PartuvEngine(Engine):
         else:
             base = [str(get_partuv_venv_python()), "-m", "partuv"]
         # windows caps a command line near 32k chars, so a large batch of mesh
-        # paths as argv overflows CreateProcess. pass them in a file instead,
-        # named per invocation since solo mode spawns several over one session.
-        # it goes in the input dir so manager.finish cleans it up too
+        # paths as argv overflows CreateProcess. named per invocation since solo
+        # mode spawns several over one session, and it goes in the input dir so
+        # manager.finish cleans it up
         input_list = (
             get_extension_dir_path() / "input" / f"{input_paths[0].stem}_inputs.txt"
         )
@@ -288,8 +288,7 @@ class PartuvEngine(Engine):
     def build_env(self, ctx):
         env = os.environ.copy()
         # the checkpoint isn't shipped in the wheel, and the cli's source-tree
-        # default resolves relative to the installed package, so point at the
-        # repo copy in dev mode and the downloaded one in installed mode
+        # default resolves relative to the installed package
         if ctx.mode == "dev":
             checkpoint = ctx.path / "engine" / "partuv" / "model_objaverse.ckpt"
         else:
@@ -298,7 +297,6 @@ class PartuvEngine(Engine):
         return env
 
     def describe_failure(self, code):
-        # partuv cli exit codes
         return {
             2: ("Invalid input mesh", True),
             # missing module, config, checkpoint or cuda, stderr says which

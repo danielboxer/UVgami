@@ -1036,7 +1036,7 @@ def test_sheared_tube_splits_into_rings_not_slivers():
     groups = island_groups(faces, seams | extra, face_edges(faces))
     assert min(len(g) for g in groups) >= len(faces) // 4
 
-    # a clean ring: the cut never wanders more than a quad row
+    # a clean ring: the cut stays within two quad rows
     rows_cut = [row_of[v] for edge in extra for v in edge]
     assert max(rows_cut) - min(rows_cut) <= 2
 

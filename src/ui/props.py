@@ -227,9 +227,9 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
 
     @property
     def preserve_mesh(self):
-        return False
         # a transfer writes onto the original, which never lost its quads.
         # engines without preserve renumber verts, dissolving the wrong edges
+        return False
         # engine = ENGINES.get(self.engine)
         # return (
         #     self.untriangulate

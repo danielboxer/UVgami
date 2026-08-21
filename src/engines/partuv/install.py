@@ -43,8 +43,7 @@ UV_ARCHIVES = {
 }
 
 
-# the panel calls this every redraw
-# cleared by invalidate_engine_caches
+# the panel calls this every redraw, cleared by invalidate_engine_caches
 @functools.cache
 def get_installed_partuv_version():
     """Version of the wheel in the venv, read from its dist-info, or None."""

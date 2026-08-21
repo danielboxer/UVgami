@@ -55,7 +55,7 @@ from .guides import SEAM_RESTRICTIONS_GROUP
 
 Preseeding = namedtuple("Preseeding", ["task", "apply", "obj", "symmetrize_job"])
 
-# process objects for at most this long per tick before yielding to the event loop
+# seconds of work per tick before yielding to the event loop
 TICK_BUDGET = 0.033
 
 
@@ -142,7 +142,7 @@ def normalize_uvs(mesh):
     if all(a >= 0 for a in areas) and not islands_overlap(boxes):
         return
 
-    # nan marks an island that keeps its handedness, so it is left alone below
+    # nan marks an island that keeps its handedness
     flips = numpy.full(face_count, numpy.nan)
     offsets = numpy.empty((face_count, 2))
     for group, (flip, du, dv) in zip(groups, island_layout(boxes, areas)):
@@ -175,8 +175,7 @@ class InputExporter:
         if bpy.context.mode != "OBJECT":
             return 0.2
 
-        # the session we joined was cancelled mid-export (Cancel All), so drop the
-        # remaining pieces instead of exporting into a dead session
+        # the session we joined was cancelled mid-export (Cancel All)
         if self.pieces and not manager.is_active:
             # report it first so a failure below can't leave the count stuck
             manager.finished_adding()
@@ -192,7 +191,7 @@ class InputExporter:
             while self.remaining:
                 self._export_object(*self.remaining.popleft(), props)
                 if time.monotonic() - start >= TICK_BUDGET:
-                    # yield to the event loop, resume next pass
+                    # yield to the event loop
                     return 0.0
 
             self._finish()
@@ -295,7 +294,7 @@ class InputExporter:
 
         bpy.data.objects.remove(obj, do_unlink=True)
 
-        # the representative finished before this twin was ready, settle now
+        # the representative finished before this twin was ready
         if representative.result is Result.FINISHED:
             write_twin_output(
                 representative.output_path, unwrap.output_path, unwrap.copy_matrix
@@ -316,7 +315,6 @@ class InputExporter:
         for face_idx, face in enumerate(bm.faces):
             if len(face.edges) > 3:
                 must_triangulate = True
-                # n-gon vertices are only needed in full mode
                 # if props.maintain_mode == "PARTIAL":
                 #     break
 
@@ -350,8 +348,7 @@ class InputExporter:
                             > 0
                         ):
                             # both ends sit on the same ngon, so the edge is
-                            # inside it and must not dissolve, ngons aren't
-                            # rerouted
+                            # inside it and must not dissolve
                             continue
                         new_edges.append(edge)
                         f.write(f"{edge[0]} {edge[1]}\n")
@@ -408,7 +405,6 @@ class InputExporter:
             slot.material.name if slot.material else None for slot in obj.material_slots
         ]
 
-        # per-face indices, so they can be restored after import
         material_indices = numpy.empty(len(obj.data.polygons), dtype=numpy.int32)
         obj.data.polygons.foreach_get("material_index", material_indices)
 
@@ -607,8 +603,7 @@ class SessionBuilder:
         """Create the piece's session record before its input file exists, so
         cancels and the queue ui see the whole session upfront."""
         path = self.input_path / f"{engine_file_stem(piece_name)}.obj"
-        # names can repeat across pieces, and the output file is keyed by
-        # stem, so claim a stem no other unwrap holds
+        # names can repeat across pieces, and the output file is keyed by stem
         claimed = {u.path for u in manager.active}
         claimed.update(u.path for u, _ in manager.results)
         while path.is_file() or path in claimed:
@@ -690,7 +685,6 @@ class SessionBuilder:
                     twin.copy_reordered = not exact
                     representative.twins.append(twin)
         else:
-            # object didn't need to be separated
             unwrap_name = self.names[obj.name][0]
             hide_job, transfer_uvs_job = self._input_jobs(props, obj, proxied)
             jobs = (None, None, hide_job, symmetrize_job, transfer_uvs_job)
@@ -807,8 +801,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
         except Exception as e:
             handle_error(e, "START", objects=start_objects)
-            # once the builder is registered tick() removes the collection,
-            # so only remove it here if it never started ticking
+            # once the builder is registered tick() removes the collection
             if not builder_registered and self.temp_collection is not None:
                 bpy.data.collections.remove(self.temp_collection)
 
@@ -915,7 +908,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 make_proxy(copy_object, props.proxy_faces)
                 proxied_objects.add(copy_object)
 
-            # save name, format: input name, unwrap name
+            # format: input name, unwrap name
             names[copy_object.name] = [obj.name, obj.name]
             input_for[copy_object] = obj
             objects.append(copy_object)

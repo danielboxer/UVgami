@@ -36,8 +36,7 @@ def merge_obj_files(paths):
     off_v, off_vt, off_vn = _count_elements(paths[0])
     total_v, total_vt, total_vn = off_v, off_vt, off_vn
     with paths[0].open("a") as out:
-        # since multiple obj files are combined, the size of the previous ones
-        # must be added to the index numbers of the next
+        # the sizes of the previous files are added to the next file's indices
         for obj_path in paths[1:]:
             with obj_path.open() as f:
                 for line in f:
@@ -53,8 +52,7 @@ def merge_obj_files(paths):
                     elif line.startswith("f "):
                         out.write(_offset_face(line, off_v, off_vt, off_vn))
                     elif line.startswith(("o ", "g ")):
-                        # importer creates one object per o/g line, so drop these
-                        # from appended files to keep the merged file as one object
+                        # importer creates one object per o/g line
                         pass
                     else:
                         out.write(line)

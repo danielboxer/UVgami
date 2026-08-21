@@ -1,7 +1,6 @@
 name: Check engine version sync
 
-# the addon pins each engine version for its release download url. this fails
-# the build if a pin and that engine's VERSION ever disagree.
+# the addon pins each engine version for its release download url
 on:
   pull_request:
     paths:
