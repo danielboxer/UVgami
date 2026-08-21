@@ -73,7 +73,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y libcgal-dev libyaml-cpp-dev libtbb-dev patchelf
+          sudo apt-get install -y libcgal-dev libyaml-cpp-dev libtbb-dev
 
       # ninja needs cl.exe on PATH (the vs generator is not used, see pyproject)
       - name: Set up MSVC environment
@@ -120,7 +120,8 @@ jobs:
       - name: Repair Linux wheel
         if: runner.os == 'Linux'
         run: |
-          uvx auditwheel repair dist/*.whl -w wheelhouse \
+          # ubuntu 22.04's apt patchelf is too old for auditwheel
+          uvx --with patchelf auditwheel repair dist/*.whl -w wheelhouse \
             --exclude libcublas.so.12 \
             --exclude libcublasLt.so.12 \
             --exclude libcufft.so.11 \
