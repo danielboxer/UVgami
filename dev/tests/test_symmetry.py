@@ -59,7 +59,7 @@ def mirrored_quads():
 def apply_moves(uvs, moves):
     out = [list(face) for face in uvs]
     for target, corner, source, source_corner in moves:
-        out[target][corner] = uvs[source][source_corner]
+        out[target][corner] = out[source][source_corner]
     return out
 
 
