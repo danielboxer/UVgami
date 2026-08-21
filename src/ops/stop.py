@@ -104,7 +104,7 @@ class UVGAMI_OT_stop(bpy.types.Operator):
                 singles.extend(group)
                 continue
             self._import_merged_group(context, group)
-            # import already done above, so skip re-importing per member
+            # import already done above
             for unwrap in group:
                 drop_unwrap(context, unwrap, None, Result.STOPPED)
 

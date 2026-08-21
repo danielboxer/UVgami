@@ -16,38 +16,35 @@ from .mesh import build, face_edges, find, island_groups, pair, signed_area
 from .rectify import flatten_distortion
 
 
-# strip test: length squared over uv area, about length/width. a folded
-# strip is sliced into bins, anything else ruined is halved.
-# close_rings reuses SPLIT_ASPECT, a closed ring past it would unroll into a
-# strip the split would cut back up anyway
+# strip test: length squared over uv area, about length/width
+# close_rings reuses it: a closed ring past it unrolls into a strip
 SPLIT_ASPECT = 6.0
-# length alone must not drag texture use under this, so strips are cut to the
-# side of the square that would hold the scanned uv area at this use
+# length alone must not drag texture use under this
 SPLIT_TARGET = 0.5
 # a clean island is scanned for cuts once it passes this fraction of the cap
 SPLIT_NECK = 0.5
-# a crushed island: symmetric Dirichlet past this with no flipped face.
-# above the engine's loosest bound of 5.0, so its outputs never trip it
+# a crushed island: symmetric Dirichlet past this with no flipped face
+# above the engine's loosest bound of 5.0
 SPLIT_DISTORTION = 8.0
-# width ratio across a slab boundary that reads as a neck: a wide feature
-# turning into a strip, where an artist would put the seam
+# width ratio across a slab boundary that reads as a neck, a wide feature
+# turning into a strip
 SPLIT_STEP = 2.5
 # sweeps of sliding faces across a fresh bin cut while that shortens it,
 # capped so the cut cannot creep along a tapering strip
 STRAIGHTEN_SWEEPS = 4
 # centroids fitting a circle this much tighter than their principal axis
-# line read as an unrolled cone, and cuts go polar instead
+# line read as an unrolled cone
 SPLIT_ARC_BAND = 0.65
 # an island thinner than this fraction of its outer distance is a disk,
-# not a band, and slicing a disk into sectors helps nothing
+# not a band
 SPLIT_ARC_ANNULUS = 0.3
-# a split piece below this share of the whole mesh's 3d area is a boxed-in
-# fragment, not an island, and rejoins a neighbor. measured on pipe_wrench:
-# slice crumbs sit under 0.0004, the smallest kept pieces at 0.0037
+# a split piece below this share of the whole mesh's 3d area is a fragment,
+# not an island. measured on pipe_wrench: slice crumbs sit under 0.0004, the
+# smallest kept pieces at 0.0037
 FRAGMENT_SHARE = 0.002
 # how much a split piece shrinks towards its own centre. blender decides
 # islands from uv coordinates, so pieces sharing the cut line exactly stay
-# one island however they are seamed, and this is what parts them
+# one island however they are seamed
 SPLIT_GAP = 0.98
 
 
@@ -321,8 +318,7 @@ def straighten_cut(
             )
             straight = [pair(a, b) for a, b in zip(path, path[1:])]
             if all(d <= 2 for d in degree.values()):
-                # a simple chain orders, so both sides price their turns and
-                # a straight line beats a marginally shorter staircase
+                # a simple chain can be walked in order, so both sides price their turns
                 run_keys = set(run)
                 seq = [ends[0]]
                 walked = set()
@@ -589,8 +585,8 @@ def split_islands(
         relief_cache = []
 
     def cut_relief():
-        # most calls find nothing to cut, so build this only when one is
-        # needed. a caller scanning many pieces of one mesh shares the cache
+        # most calls find nothing to cut. a caller scanning many pieces of one
+        # mesh shares the cache
         if not relief_cache:
             weighted, _, _ = build(verts, faces)
             relief_cache.append(crease_relief(verts, faces, weighted, edges))
@@ -598,9 +594,8 @@ def split_islands(
 
     extra = set()
 
-    # uv lengths scaled by sqrt(3d area over uv area), so every length
-    # compares at even texel density. the engine packs each island at its own
-    # scale, and a long island exported small must not slip the gate
+    # uv lengths scaled by sqrt(3d area over uv area), so every length compares
+    # at even texel density. the engine packs each island at its own scale
     def measure(group):
         centroids = {}
         areas = {}
@@ -656,7 +651,7 @@ def split_islands(
         local_cap = cap / density
         ruined = not known_clean and island_ruined(group, faces, uvs, edges, seams)
         # a ruined island's uv bins still place a good cut, a crushed one's
-        # do not, so a flipped face takes the ruined path
+        # do not
         crushed = (
             not ruined
             and flatten_distortion(verts, faces, uvs, group) > SPLIT_DISTORTION
@@ -713,7 +708,7 @@ def split_islands(
             continue
         extra |= new
         # a bent island hides its next neck until each piece is measured on
-        # its own axis, so the pieces go back through the scan
+        # its own axis
         if clean and len(pieces) > 1:
             queue.extend((piece, False) for piece in pieces)
     return extra
@@ -754,8 +749,8 @@ def split_moves(verts, faces, uvs, starts, ranges=None):
             verts, faces, seams, uvs, None, groups, edges, groups_clean=True
         )
     else:
-        # one call per piece: each piece's engine output has its own uv scale,
-        # so its length cap has to come from its own area alone
+        # each piece's engine output has its own uv scale, so its length cap
+        # comes from its own area alone
         scanned = []
         extra = set()
         relief_cache = []

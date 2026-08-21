@@ -88,7 +88,7 @@ class EngineRelease:
 
         binary = install_dir / get_engine_binary_name(self.name)
         with zipfile.ZipFile(archive_path) as archive:
-            # the cpack zip nests the binary in a package folder, extract just it
+            # the cpack zip nests the binary in a package folder
             member = next(
                 (
                     name

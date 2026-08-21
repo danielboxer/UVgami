@@ -141,9 +141,8 @@ FREE_FRACTION = 0.5
 
 def _rank_normalize(weights):
     # a mostly-convex mesh gives a near-uniform high map, which slows the
-    # engine without expressing a preference. keep only the ordering and free
-    # the least exposed half so cost stays bounded on any shape. ties break by
-    # vertex index, measured faster than giving tied verts one shared weight
+    # engine without expressing a preference. ties break by vertex index,
+    # measured faster than giving tied verts one shared weight
     order = sorted(weights, key=weights.get)
     n = len(order)
     if n < 2:

@@ -82,13 +82,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      # no engine is bundled, the addon downloads each one from the engine
-      # release that the jobs above publish
+      # no engine is bundled, the addon downloads each one
       - name: Zip the addon
         run: zip -r ${ADDON_NAME}.zip $INCLUDED_FILES
 
       # partuv bundles PartField, whose license allows non-commercial use only.
-      # artifact rather than a release asset, only the zip above is public
+      # this stays an artifact, only the zip above is public
       - name: Zip the addon without partuv
         # the trailing * without a slash also drops the directory entry, which
         # python would otherwise import as an empty namespace package

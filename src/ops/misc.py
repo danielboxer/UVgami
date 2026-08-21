@@ -24,7 +24,7 @@ def reset_prop(group, prop):
 
 
 def reset_group(group):
-    # property_unset is a no-op on pointer props, recurse into nested groups
+    # property_unset is a no-op on pointer props
     for prop in group.__annotations__:
         value = getattr(group, prop)
         if isinstance(value, bpy.types.PropertyGroup):
@@ -70,8 +70,8 @@ class UVGAMI_OT_reset_setting(bpy.types.Operator):
             name, path = path.split(".", 1)
             group = getattr(group, name)
         reset_prop(group, path)
-        # unset skips the notifier a normal click sends, so the viewport
-        # wouldn't repaint the symmetry preview without this
+        # unset skips the notifier a normal click sends, so the symmetry
+        # preview wouldn't repaint
         tag_redraw()
         return {"FINISHED"}
 

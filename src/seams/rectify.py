@@ -26,14 +26,12 @@ CORNER_WINDOW = 0.02
 CORNER_TURN = 45
 # opposite sides of a real strip match in arc length, and the rectangle
 # the corners cut must hold about the island's own area. picks that break
-# either caught a tooth or a jag, not a corner, and the island falls back
-# to the nearest-to-box picking
+# either caught a tooth or a jag, not a corner
 CORNER_SIDE_RATIO = 2.0
 CORNER_FIT_AREA = 1.6
 # corner windows tried against the fit, so a jagged edge full of sharp
 # turns cannot crowd out a strip's real end corners
 CORNER_CANDIDATES = 12
-# spine samples for the interior placement of a curled strip
 SPINE_SAMPLES = 64
 # rings around a flipped face that move to the neighbor average, and the cap
 # on repeats
@@ -454,8 +452,8 @@ def _relax_flips(group, uvs, targets, inner):
     total = sum(signed_area(placed(fi)) for fi in group)
     orientation = 1.0 if total >= 0 else -1.0
     floor = FLIP_NOISE * abs(total)
-    # only a face touching a moved uv can change. still walked in group
-    # order, the sweep over free follows the order flipped was built in
+    # only a face touching a moved uv can change. iterating group, not the
+    # candidate set, keeps the order fixed
     candidates = set(group)
     for _ in range(RELAX_ROUNDS):
         flipped = [fi for fi in group if fi in candidates and flipped_face(fi)]

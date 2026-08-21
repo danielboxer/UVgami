@@ -1,6 +1,5 @@
 name: Release check
 
-# the smoke runners have none of the packages engine-build.yml installs
 on:
   workflow_dispatch:
   workflow_call:

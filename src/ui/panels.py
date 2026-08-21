@@ -312,7 +312,6 @@ def _draw_piece_buttons(row, item):
         _icon_button(
             row, _is_viewable(item), "uvgami.view_unwrap", "HIDE_OFF"
         ).stem = item.path.stem
-    # stop button, only on an engine that can finish early with a result
     if manager.engine.supports_early_stop:
         _icon_button(
             row, item.is_active, "uvgami.stop", "SNAP_FACE"

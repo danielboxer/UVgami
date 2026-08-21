@@ -91,7 +91,7 @@ jobs:
           echo "patch=$PATCH" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # optcuts links glfw/opengl; xatlas is dependency-free
+      # optcuts links glfw/opengl
       - name: Install Ubuntu dependencies
         if: startsWith(matrix.os, 'ubuntu') && inputs.engine == 'optcuts'
         run: |
@@ -124,7 +124,6 @@ jobs:
           name: ${{ inputs.engine }}-${{ matrix.pkg_name }}
           path: build/${{ env.PACKAGE_NAME }}.zip
 
-  # publish the engine release
   publish:
     needs: [prepare, build]
     if: needs.prepare.outputs.built == 'true'

@@ -642,8 +642,7 @@ class ProxyUVs:
         if target is input_mesh:
             input_mesh.hide_set(False)
         else:
-            # no HideInput job exists when a transfer job holds the slot, so
-            # hide the untouched original here like transfer off does elsewhere
+            # no HideInput job exists when a transfer job holds the slot
             input_mesh.hide_set(True)
             # renamed only now, the deleted output held this name
             target.name = f"{input_mesh.name}_unwrapped"
