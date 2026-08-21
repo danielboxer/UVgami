@@ -333,6 +333,8 @@ def test_windows_reinstall_hint_when_native_fails(triangle, tmp_path, monkeypatc
 
 
 def test_preprocess_module_imports():
+    # torch is the ai extra, not synced by default
+    pytest.importorskip("torch")
     from importlib import import_module
 
     assert callable(import_module("partuv.preprocess").preprocess)

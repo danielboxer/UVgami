@@ -11,6 +11,7 @@ import bpy
 
 from ...utils.download import download_file
 from ..install_task import InstallTask, report_progress, task_state
+from .venv_commands import VENV_PYTHON, build_install_commands
 from .paths import (
     get_partuv_checkpoint_path,
     get_partuv_venv_path,
@@ -23,18 +24,10 @@ PARTUV_VERSION = "0.1.4"
 PARTUV_RELEASE_API = f"https://api.github.com/repos/DanielBoxer/UVgami/releases/tags/partuv-v{PARTUV_VERSION}"
 # the hugging face original moves with its main branch
 CHECKPOINT_URL = "https://github.com/DanielBoxer/UVgami/releases/download/checkpoint/model_objaverse.ckpt"
-# must match the ai extra in engine/partuv/pyproject.toml
-TORCH_VERSION = "2.3.0"
-# pypi's windows torch wheel is cpu-only
-TORCH_CUDA_INDEX = "https://download.pytorch.org/whl/cu121"
-# without this page torch-scatter builds from source
-TORCH_SCATTER_FIND_LINKS = f"https://data.pyg.org/whl/torch-{TORCH_VERSION}+cu121.html"
 # partuv is an nvidia cuda wheel
 PARTUV_PLATFORMS = ("Windows", "Linux")
 GEOMETRIC_DOWNLOAD_SIZE = "200 MB"
 AI_DOWNLOAD_SIZE = "5 GB"
-# independent of blender's python version
-VENV_PYTHON = "3.11"
 PARTUV_PY_TAG = "cp311"
 UV_VERSION = "0.11.25"
 UV_ARCHIVES = {
@@ -127,39 +120,16 @@ def run_venv_install(wheel_url, ai):
     task_state["phase"] = "Installing packages"
     task_state["bytes_total"] = None
     venv_python = get_partuv_venv_python()
-    if not venv_python.is_file():
-        _run([str(uv), "venv", "--python", VENV_PYTHON, str(get_partuv_venv_path())])
-    if ai:
-        # uv keeps this over the extra's cpu pin
-        _run(
-            [
-                str(uv),
-                "pip",
-                "install",
-                "--python",
-                str(venv_python),
-                "--index-url",
-                TORCH_CUDA_INDEX,
-                f"torch=={TORCH_VERSION}+cu121",
-            ]
-        )
-        requirement = f"partuv[ai] @ {wheel_url}"
-        extra_args = ["-f", TORCH_SCATTER_FIND_LINKS]
-    else:
-        requirement = f"partuv @ {wheel_url}"
-        extra_args = []
-    _run(
-        [
-            str(uv),
-            "pip",
-            "install",
-            "--python",
-            str(venv_python),
-            "--upgrade",
-            *extra_args,
-            requirement,
-        ]
+    commands = build_install_commands(
+        str(uv),
+        str(venv_python),
+        str(get_partuv_venv_path()),
+        wheel_url,
+        ai,
+        create_venv=not venv_python.is_file(),
     )
+    for command in commands:
+        _run(command)
 
 
 def download_checkpoint():
