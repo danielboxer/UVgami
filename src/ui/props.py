@@ -297,19 +297,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
 
         box = layout.box()
         row = box.row()
-        row.label(text="Engines", icon="TOOL_SETTINGS")
-
-        for engine in ENGINES.values():
-            box = layout.box()
-            row = box.row()
-            row.label(text=engine.label, icon=engine.icon)
-            row = box.row()
-            row.active = False
-            row.label(text=engine.description)
-            engine.draw_prefs(box, self)
-
-        box = layout.box()
-        row = box.row()
         row.label(text="General", icon="PREFERENCES")
 
         grid = box.grid_flow(row_major=True, columns=3, even_columns=True)
@@ -340,3 +327,16 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         row.operator(
             "uvgami.reset_settings", text="Reset Settings", icon="FILE_REFRESH"
         )
+
+        box = layout.box()
+        row = box.row()
+        row.label(text="Engines", icon="TOOL_SETTINGS")
+
+        for engine in ENGINES.values():
+            engine_box = box.box()
+            row = engine_box.row()
+            row.label(text=engine.label, icon=engine.icon)
+            row = engine_box.row()
+            row.active = False
+            row.label(text=engine.description)
+            engine.draw_prefs(engine_box, self)

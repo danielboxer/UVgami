@@ -49,7 +49,8 @@ class EngineRelease:
         """Whether any version of this engine was downloaded, which is what the
         delete button clears. A local build or the engine path can be what
         actually runs while a download still sits there."""
-        return engine_install_root(self.name).is_dir()
+        root = engine_install_root(self.name)
+        return root.is_dir() and any(d.is_dir() for d in root.iterdir())
 
     def installed_path(self):
         path = self.install_dir() / get_engine_binary_name(self.name)
