@@ -35,14 +35,14 @@ _SEGMENTATION_ITEMS = (
     (
         "GEOMETRIC",
         "Geometric",
-        "Geometric clustering. Faster but more seams.",
+        "Geometric clustering. Faster but more seams",
         "",
         GEOMETRIC_SEGMENTATION,
     ),
     (
         "AI",
         "AI",
-        "AI segmentation. Better results than geometric.",
+        "AI segmentation. Better results than geometric",
         "",
         AI_SEGMENTATION,
     ),
@@ -166,7 +166,8 @@ class PartuvEngine(Engine):
                     "MOD_EXPLODE",
                     "Geometric Segmentation",
                     "partuv.segmentation",
-                    is_non_default(props, "partuv.segmentation"),
+                    partuv.segmentation == "GEOMETRIC"
+                    and is_ai_segmentation_available(),
                 ),
                 (
                     "MOD_LENGTH",

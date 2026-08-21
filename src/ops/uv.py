@@ -138,8 +138,7 @@ class UVGAMI_OT_transfer_seams(bpy.types.Operator):
     bl_idname = "uvgami.transfer_seams"
     bl_label = "Transfer Seams"
     bl_description = (
-        "Copy the seams of the other selected object onto the active object,"
-        " redrawn along its own edges"
+        "Copy the seams of the other selected object onto the active object"
     )
     bl_options = {"UNDO"}
 

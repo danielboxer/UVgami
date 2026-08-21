@@ -21,7 +21,7 @@ class UVGAMI_OT_install_xatlas(InstallEngineTask, bpy.types.Operator):
 class UVGAMI_PG_xatlas(bpy.types.PropertyGroup):
     max_cost: bpy.props.FloatProperty(
         name="",
-        description="Cost limit for growing a chart. Lower values cut the mesh into more UV islands",
+        description="Lower values cut the mesh into more UV islands",
         default=2.0,
         # above 10 the chart count stops dropping, xatlas' merge pass sets the floor
         min=0.1,
