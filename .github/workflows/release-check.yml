@@ -1,0 +1,79 @@
+name: Release check
+
+# the smoke runners have none of the packages engine-build.yml installs
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      - run: uv sync
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run pytest
+
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [optcuts, xatlas]
+        platform:
+          - os: ubuntu-latest
+            pkg_name: linux
+          - os: windows-latest
+            pkg_name: windows
+          - os: macos-26-intel
+            pkg_name: macos-x64
+          - os: macos-26
+            pkg_name: macos-arm64
+    runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 10
+    env:
+      ENGINE: ${{ matrix.engine }}
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # uv refuses macos (tool.uv.environments), and the cli has no dependencies
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Download the published zip
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(tr -d '[:space:]' < engine/$ENGINE/VERSION)
+          gh release download "$ENGINE-v$VERSION" --pattern "$ENGINE-engine-*-${{ matrix.platform.pkg_name }}.zip" --dir package
+
+      # same basename match as fetch_binary in the addon
+      - name: Extract the engine binary
+        shell: bash
+        run: |
+          BINARY=$ENGINE
+          if [ "$RUNNER_OS" = "Windows" ]; then BINARY=$ENGINE.exe; fi
+          unzip -q package/*.zip -d extracted
+          FOUND=$(find extracted -type f -name "$BINARY")
+          if [ "$(echo "$FOUND" | grep -c .)" != "1" ]; then
+            echo "::error::expected one $BINARY in the zip, found: $FOUND"
+            exit 1
+          fi
+          mkdir -p engines/${{ matrix.platform.pkg_name }}
+          cp "$FOUND" engines/${{ matrix.platform.pkg_name }}/
+          chmod +x engines/${{ matrix.platform.pkg_name }}/$BINARY
+
+      - name: Unwrap a cube
+        shell: bash
+        env:
+          PYTHONPATH: dev
+        run: |
+          OUTPUT=$RUNNER_TEMP/cube_uv.obj
+          EXTRA=""
+          if [ "$ENGINE" = "optcuts" ]; then EXTRA="--timeout 120"; fi
+          python -m uvgami_cli unwrap dev/tests/fixtures/cube.obj --engine $ENGINE -o "$OUTPUT" $EXTRA
+          grep -q '^vt ' "$OUTPUT"

@@ -10,7 +10,7 @@ jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Download checkpoint from Hugging Face
         run: |
@@ -24,8 +24,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NOTES: >-
-            PartField checkpoint from NVIDIA, licensed for non-commercial
-            research and educational use only. Terms in PartField-LICENSE.txt.
+            NVIDIA PartField checkpoint. Non-commercial use only, terms in
+            PartField-LICENSE.txt.
         run: |
           gh release view checkpoint -R ${{ github.repository }} >/dev/null 2>&1 \
             || gh release create checkpoint -R ${{ github.repository }} --latest=false --title checkpoint --notes ""

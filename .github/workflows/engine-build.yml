@@ -34,7 +34,7 @@ jobs:
     outputs:
       built: ${{ steps.release.outputs.built }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
 
@@ -43,6 +43,12 @@ jobs:
         shell: bash
         run: |
           VERSION=$(tr -d '[:space:]' < engine/$ENGINE/VERSION)
+          CONSTANT="${ENGINE^^}_VERSION"
+          PINNED=$(grep -rh -m1 "^$CONSTANT = " src/engines | sed -E 's/.*"(.*)"/\1/')
+          if [ "$VERSION" != "$PINNED" ]; then
+            echo "::error::$CONSTANT ($PINNED) != engine/$ENGINE/VERSION ($VERSION). Update the addon pin to match."
+            exit 1
+          fi
           TAG="$ENGINE-v$VERSION"
           if git rev-parse --quiet --verify "refs/tags/$TAG" >/dev/null; then
             if ! git diff --quiet "$TAG" HEAD -- engine/$ENGINE; then
@@ -58,6 +64,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.built == 'true'
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-22.04
@@ -71,7 +78,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Read engine version
         id: engine_version
@@ -112,7 +119,7 @@ jobs:
           cmake --build . --config $BUILD_TYPE --target package
 
       - name: Upload engine artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ inputs.engine }}-${{ matrix.pkg_name }}
           path: build/${{ env.PACKAGE_NAME }}.zip
@@ -126,7 +133,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Read engine version
         id: engine_version
@@ -134,7 +141,7 @@ jobs:
         run: echo "version=$(cat engine/$ENGINE/VERSION | tr -d '[:space:]')" >> $GITHUB_OUTPUT
 
       - name: Download all engine artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: ${{ inputs.engine }}-*
           merge-multiple: true
