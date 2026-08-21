@@ -65,7 +65,7 @@ jobs:
     permissions:
       contents: write
 
-  # the smoke downloads the zips the engine jobs publish
+  # the smoke downloads what the engine jobs publish
   check:
     needs: [optcuts, xatlas, partuv]
     uses: ./.github/workflows/release-check.yml

@@ -76,3 +76,43 @@ jobs:
           if [ "$ENGINE" = "optcuts" ]; then EXTRA="--timeout 120"; fi
           python -m uvgami_cli unwrap dev/tests/fixtures/cube.obj --engine $ENGINE -o "$OUTPUT" $EXTRA
           grep -q '^vt ' "$OUTPUT"
+
+  partuv:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            pattern: "*manylinux*.whl"
+          - os: windows-latest
+            pattern: "*win_amd64.whl"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # the wheels are cp311 only
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install the published wheel
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(grep -m1 '^version' engine/partuv/pyproject.toml | sed -E 's/version *= *"(.*)"/\1/')
+          gh release download "partuv-v$VERSION" --pattern "${{ matrix.pattern }}" --dir package
+          python -m pip install package/*.whl
+
+      # ai segmentation needs a gpu and the runners have none
+      - name: Unwrap a cube
+        shell: bash
+        env:
+          PYTHONPATH: dev
+        run: |
+          OUTPUT=$RUNNER_TEMP/cube_uv.obj
+          python -m uvgami_cli unwrap dev/tests/fixtures/cube.obj \
+            --engine partuv --segmentation geometric -o "$OUTPUT"
+          grep -q '^vt ' "$OUTPUT"
