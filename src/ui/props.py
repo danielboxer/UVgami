@@ -72,23 +72,14 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     # speed
     max_cores: bpy.props.IntProperty(
         name="",
-        description=(
-            "How many meshes to unwrap at the same time. Set to 1 to run them"
-            " one after another. This only has an effect with multiple meshes,"
-            " or a mesh made up of multiple joined meshes"
-        ),
+        description="How many meshes to unwrap at the same time",
         default=max(1, multiprocessing.cpu_count() // 2),
         max=multiprocessing.cpu_count(),
         min=1,
     )
     unwrap_timeout: bpy.props.IntProperty(
         name="",
-        description=(
-            "Maximum time in minutes for each unwrap."
-            " Stops with a partial result when the engine supports it,"
-            " otherwise the mesh is moved to the invalid collection."
-            " Set to 0 to disable"
-        ),
+        description="Maximum time in minutes for each unwrap. Set to 0 to disable",
         min=0,
         max=120,
         default=UNWRAP_TIMEOUT_DEFAULT_MINUTES,
@@ -104,9 +95,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     )
     stack_similar: bpy.props.BoolProperty(
         name="",
-        description=(
-            "Stack repeated mesh pieces by only unwrapping one and copying it."
-        ),
+        description="Stack repeated mesh pieces by only unwrapping one and copying it",
     )
     use_proxy: bpy.props.BoolProperty(
         name="",
@@ -134,8 +123,8 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
             (
                 "STRETCH",
                 "Reduce Stretching",
-                "Prioritize the painted faces to have less stretching."
-                " This also allows other faces to have more stretching.",
+                "Prioritize the painted faces to have less stretching"
+                " relative to the other faces",
             ),
         ),
         default="SEAMS",
@@ -155,7 +144,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         name="",
         description=(
             "Use this setting for symmetrical meshes only."
-            " This will result in a quicker unwrap with a symmetrical UV map"
+            " This will result in a symmetrical UV map"
         ),
     )
     sym_preview: bpy.props.BoolProperty(
@@ -166,7 +155,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     sym_axes: bpy.props.EnumProperty(
         name="Axes",
         description=(
-            "The axis or axes of symmetry of the input mesh."
+            "The axis of symmetry of the input mesh."
             " Hold down Shift to select or deselect multiple axes"
         ),
         items=(
@@ -231,13 +220,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     transfer_uvs: bpy.props.BoolProperty(
         name="",
         description=(
-            "Transfer the UV map from the output mesh to the original input mesh."
-            " Works when the output has the same topology as the input, or a"
-            " triangulated version of it. A face crossed by a UV cut is glued"
-            " back into one piece when it fits, and split otherwise."
-            " The original object must be unchanged since starting the unwrap."
-            " With Proxy, unchecking unwraps a duplicate and leaves the"
-            " original untouched"
+            "Transfer the UV map from the output mesh to the original input mesh"
         ),
         default=False,
     )
@@ -284,10 +267,7 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
     )
     show_popup: bpy.props.BoolProperty(
         name="Show Popup",
-        description=(
-            "Show a popup when all meshes are finished unwrapping. The same"
-            " summary is always shown in the panel and the status bar"
-        ),
+        description="Show a popup when all meshes are finished unwrapping",
         default=False,
     )
     engine_path: bpy.props.StringProperty(

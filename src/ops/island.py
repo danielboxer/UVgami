@@ -813,7 +813,7 @@ class UVGAMI_OT_relax_island(IslandOperator, bpy.types.Operator):
     bl_idname = "uvgami.relax_island"
     bl_label = "Relax Island"
     bl_description = (
-        "Relax the island under the selected face(s) to reduce stretching,"
+        "Relax the island under the selected faces to reduce stretching"
         " without changing its seams"
     )
     queue_target = staticmethod(queue_relax)
@@ -823,10 +823,7 @@ class UVGAMI_OT_relax_island(IslandOperator, bpy.types.Operator):
 class UVGAMI_OT_combine_islands(FixOperator, bpy.types.Operator):
     bl_idname = "uvgami.combine_islands"
     bl_label = "Combine Islands"
-    bl_description = (
-        "Select a face on two islands to unwrap them as one."
-        " The islands have to share a seam"
-    )
+    bl_description = "Select a face on two islands to re-unwrap them as one island"
 
     def queue_selection(self, obj, props, engine, engine_ctx):
         targets, error = target_islands(obj)

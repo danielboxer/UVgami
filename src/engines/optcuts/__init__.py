@@ -69,10 +69,7 @@ class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
 class UVGAMI_OT_quick_unwrap(bpy.types.Operator):
     bl_idname = "uvgami.quick_unwrap"
     bl_label = "Quick Unwrap"
-    bl_description = (
-        "Mark the hard surface seams and flatten them."
-        " Much faster than a full unwrap, lower quality"
-    )
+    bl_description = "Mark the hard surface seams and flatten them"
     bl_options = {"UNDO"}
 
     def execute(self, context):
