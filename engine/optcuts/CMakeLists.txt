@@ -71,8 +71,6 @@ if(UVGAMI_IS_X86_64 AND UVGAMI_ENABLE_AVX2)
 endif()
 
 include(GNUInstallDirs)
-set(UVGAMI_INSTALL_SUBDIR "uvgami-${UVGAMI_VERSION_MAJOR}.${UVGAMI_VERSION_MINOR}")
-set(UVGAMI_INSTALL_PACKAGE_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/${UVGAMI_INSTALL_SUBDIR}")
 if (APPLE)
 	list(APPEND UVGAMI_LIBRARY_PROPERTIES INSTALL_NAME_DIR "${CMAKE_INSTALL_FULL_LIBDIR}")
 endif()
@@ -99,6 +97,8 @@ file(GLOB SRCFILES
 )
 
 include_directories(
+  # uvgami_config.h is generated here
+  ${CMAKE_CURRENT_BINARY_DIR}
   ${CMAKE_CURRENT_BINARY_DIR}/_deps/eigen-src
   ${CMAKE_CURRENT_BINARY_DIR}/_deps/triangle-src
   ${CMAKE_CURRENT_SOURCE_DIR}/ext/libigl/include
@@ -129,7 +129,6 @@ if(WIN32 AND UVGAMI_USE_MIMALLOC AND TARGET mimalloc-obj)
 endif()
 
 install(TARGETS ${PROJECT_NAME}
-    EXPORT UvgamiTargets
     DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Applications
 )
 
@@ -140,4 +139,3 @@ configure_file(
  @ONLY)
 
 include (cmake/UvgamiCPack.cmake)
-install(EXPORT UvgamiTargets DESTINATION ${UVGAMI_INSTALL_PACKAGE_DIR})

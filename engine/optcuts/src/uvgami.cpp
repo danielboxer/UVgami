@@ -15,6 +15,7 @@
 #include <tbb/global_control.h>
 
 #include "uvgami.h"
+#include "uvgami_config.h"
 #include "Flatten.hpp"
 #include "IglUtils.hpp"
 #include "Optimizer.hpp"
@@ -1235,7 +1236,7 @@ int main(int argc, char *argv[]) {
     std::unique_ptr<tbb::global_control> threadCap;
 
     try {
-        TCLAP::CmdLine cmd("uvgami command line", ' ', "1.1.2");
+        TCLAP::CmdLine cmd("uvgami command line", ' ', UVGAMI_VERSION);
         TCLAP::ValueArg<std::string> inputArg("i", "input", "Input mesh", true,
                                               "", "string", cmd);
         TCLAP::ValueArg<std::string> outputArg(

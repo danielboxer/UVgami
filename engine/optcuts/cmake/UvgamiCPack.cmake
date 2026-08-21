@@ -1,12 +1,4 @@
 if(EXISTS "${CMAKE_ROOT}/Modules/CPack.cmake")
-  if(EXISTS "${CMAKE_ROOT}/Modules/InstallRequiredSystemLibraries.cmake")
-    set(CMAKE_INSTALL_DEBUG_LIBRARIES 0)
-    if(NOT DEFINED CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_NO_WARNINGS)
-      set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_NO_WARNINGS ON)
-    endif()
-    include(${CMAKE_ROOT}/Modules/InstallRequiredSystemLibraries.cmake)
-  endif()
-
   set(UVGAMI_PACKAGEDESCRIPTION_SUMMARY "UVgami")
   set(UVGAMI_PACKAGECONTACT "dani3lb0x3r@gmail.com")
 
