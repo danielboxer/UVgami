@@ -141,6 +141,7 @@ jobs:
           for ENGINE in optcuts xatlas; do
             VERSION=$(tr -d '[:space:]' < engine/$ENGINE/VERSION)
             gh release download "$ENGINE-v$VERSION" --pattern "$ENGINE-engine-*-$TAG.zip" --dir package/$ENGINE
+            mkdir -p extracted/$ENGINE
             unzip -q package/$ENGINE/*.zip -d extracted/$ENGINE
             cp "$(find extracted/$ENGINE -type f -name "$ENGINE$EXE")" engines/$TAG/
             chmod +x "engines/$TAG/$ENGINE$EXE"
