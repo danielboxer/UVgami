@@ -28,9 +28,24 @@ needs_xatlas = pytest.mark.skipif(
     addon.src.utils.paths.get_local_engine_path("xatlas") is None,
     reason="no local xatlas binary, and downloading one would need the network",
 )
+
+
+def _partuv_installed():
+    """The engine offers its dev route whenever dev/uvgami_cli, .venv and uv are
+    all present, which is true in CI, where the wheel itself is not."""
+    engine = addon.src.engines.get_engine("PARTUV")
+    ctx, error = engine.validate(get_preferences())
+    if error is not None:
+        return False
+    venv = ctx.path / ".venv" if ctx.mode == "dev" else ctx.path
+    return any(
+        next(venv.glob(pattern), None) is not None
+        for pattern in ("*/site-packages/partuv-*", "*/*/site-packages/partuv-*")
+    )
+
+
 needs_partuv = pytest.mark.skipif(
-    all(e.id != "PARTUV" for e in addon.src.engines.installed_engines()),
-    reason="the partuv wheel is not installed in this blender",
+    not _partuv_installed(), reason="partuv is not installed for this blender"
 )
 
 
