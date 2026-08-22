@@ -231,5 +231,8 @@ class UVGAMI_OT_cancel_all(bpy.types.Operator):
             entry.cancel()
         manager.stop_all()
         manager.finish()
+        manager.log_final_status()
+        manager.clear_summary()
+        tag_redraw()
         self.report({"INFO"}, "UV unwrap cancelled")
         return {"FINISHED"}
