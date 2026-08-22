@@ -917,7 +917,9 @@ class UVGAMI_OT_start(bpy.types.Operator):
         if skipped:
             reports.append(("WARNING", f"Input contains {', '.join(sorted(skipped))}"))
         if warn and applied_modifiers:
-            reports.append(("INFO", "Modifiers were applied to the unwrapped copy"))
+            reports.append(
+                ("WARNING", "Modifiers will be applied on the unwrapped copy")
+            )
 
         return objects, names, reports, proxied_objects, input_for
 

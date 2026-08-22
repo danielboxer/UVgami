@@ -259,10 +259,7 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
 
     autosave: bpy.props.BoolProperty(
         name="Autosave",
-        description=(
-            "Automatically save the Blender file before unwrapping "
-            "to avoid losing work. This is recommended"
-        ),
+        description=("Automatically save the Blender file before unwrapping"),
         default=False,
     )
     show_popup: bpy.props.BoolProperty(
@@ -275,11 +272,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         description="The path to the unwrapper application stored on your computer",
         subtype="FILE_PATH",
         update=lambda self, context: invalidate_engine_caches(),
-    )
-    invalid_collection: bpy.props.BoolProperty(
-        name="Not Unwrapped Collection",
-        description="Add meshes that failed to unwrap or were stopped to a collection",
-        default=True,
     )
     show_progress_bar: bpy.props.BoolProperty(
         name="Progress Bar",
@@ -312,10 +304,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         row = grid.row()
         row.label(icon="SORTTIME")
         row.prop(self, "show_progress_bar")
-
-        row = grid.row()
-        row.label(icon="OUTLINER_COLLECTION")
-        row.prop(self, "invalid_collection")
 
         row = grid.row()
         row.label(icon="INFO")
