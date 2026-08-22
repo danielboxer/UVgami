@@ -5,13 +5,13 @@ Blender addon that does automatic UV unwrapping. Three engines: optcuts (C++ bin
 ## Layout
 
 - `src/`: the addon. `manager.py` runs the unwrap queue, `src/engines/` is one module per engine, listed in `src/engines/__init__.py`.
-- `dev/`: everything that isn't shipped. `dev/uvgami_cli/`: dev-only CLI driving every engine via `--engine`. Tests live in two places, `dev/tests/` for the addon and CLI, `dev/bench/tests/` for the bench and the end-to-end unwraps, and one `pytest` run collects both.
+- `dev/`: everything that isn't shipped. `dev/uvgami_cli/`: dev-only CLI driving every engine via `--engine`. Tests live in two places, `dev/tests/` for the addon and CLI, `dev/bench/tests/` for the bench and the end-to-end unwraps, and one `pytest` run collects both. `dev/tests/blender/` runs inside a real Blender through its `run.py` and is skipped by the venv run.
 - `docs/docs.md` (user guide) and `README.md` are human only. Never edit them, propose the change instead. Anything an agent writes goes in the agent notes folder.
 - Keep this file and the agent notes short: only what an agent would get wrong without it.
 
 ## Commands
 
-- Test: `uv run --no-sync pytest` (no GPU or Blender needed)
+- Test: `uv run --no-sync pytest` (no GPU or Blender needed), then `uv run --no-sync python dev/tests/blender/run.py` for the bpy half
 - Lint: `uv run --no-sync ruff check --fix` then `uv run --no-sync ruff format`
 
 ## Gotchas
