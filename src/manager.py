@@ -659,7 +659,6 @@ class UnwrapManager:
                     new_group.add([v_idx], weight, "REPLACE")
 
     def _handle_failure(self, unwrap, ret_code):
-        prefs = get_preferences()
         msg = ""
 
         # windows reports exit codes unsigned
@@ -701,17 +700,15 @@ class UnwrapManager:
                         print(line)
 
         if move_to_invalid:
-            label = f"{unwrap.input_name}: {msg}"
-            if prefs.invalid_collection:
-                invalid_obj = import_obj(unwrap.path)
-                collection = check_collection(
-                    "UVgami Not Unwrapped", bpy.context.scene.collection
-                )
-                self.moved_to_invalid = True
-                move_to_collection(invalid_obj, collection)
-                label = f"{invalid_obj.name}: {msg}"
-                invalid_obj.name = label
-                invalid_obj.hide_set(True)
+            invalid_obj = import_obj(unwrap.path)
+            collection = check_collection(
+                "UVgami Not Unwrapped", bpy.context.scene.collection
+            )
+            self.moved_to_invalid = True
+            move_to_collection(invalid_obj, collection)
+            label = f"{invalid_obj.name}: {msg}"
+            invalid_obj.name = label
+            invalid_obj.hide_set(True)
             logger.add_data("errors", label)
 
         self.record_result(unwrap, Result.INVALID)
@@ -763,8 +760,6 @@ class UnwrapManager:
                 msg.append(f"{invalid} of {finished + invalid} parts failed")
             elif finished and stopped:
                 msg.append(f"{stopped} of {finished + stopped} parts stopped")
-            elif finished and cancelled:
-                msg.append(f"{cancelled} of {finished + cancelled} parts cancelled")
             elif finished and had_error:
                 msg.append("UV unwrap finished with errors")
             elif finished:
@@ -776,6 +771,9 @@ class UnwrapManager:
 
             if invalid:
                 logger.add_data("errors", "Some meshes were not able to be unwrapped")
+            if finished and cancelled:
+                objects = "object" if cancelled == 1 else "objects"
+                msg.append(f"{cancelled} {objects} cancelled")
             if self.moved_to_invalid:
                 msg.append("Check 'UVgami Not Unwrapped'.")
 

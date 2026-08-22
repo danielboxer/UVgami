@@ -1,3 +1,5 @@
+import contextlib
+
 import bmesh
 import bmesh.utils
 import bpy
@@ -178,6 +180,44 @@ def set_active_any():
     return None
 
 
+@contextlib.contextmanager
+def _shown(objects):
+    """A hidden object is left out of objects_in_mode even after mode_set
+    succeeds, so the uv operators return CANCELLED without a message."""
+    view_layer = bpy.context.view_layer
+    targets = set(objects)
+    restore = []
+
+    def clear(holder, attr):
+        if getattr(holder, attr):
+            restore.append((holder, attr, True))
+            setattr(holder, attr, False)
+
+    def walk(layer_collection):
+        if targets & set(layer_collection.collection.objects):
+            clear(layer_collection, "exclude")
+            clear(layer_collection, "hide_viewport")
+            clear(layer_collection.collection, "hide_viewport")
+        for child in layer_collection.children:
+            walk(child)
+
+    walk(view_layer.layer_collection)
+    for obj in targets:
+        clear(obj, "hide_viewport")
+        if obj.hide_get(view_layer=view_layer):
+            restore.append((obj, None, True))
+            obj.hide_set(False, view_layer=view_layer)
+
+    try:
+        yield
+    finally:
+        for holder, attr, value in reversed(restore):
+            if attr is None:
+                holder.hide_set(value, view_layer=view_layer)
+            else:
+                setattr(holder, attr, value)
+
+
 def edit_restore(input, func, *args, **kwargs):
     old_selection = bpy.context.selected_objects
     old_active = bpy.context.view_layer.objects.active
@@ -192,15 +232,16 @@ def edit_restore(input, func, *args, **kwargs):
     if old_active is not None:
         bpy.ops.object.mode_set(mode="OBJECT")
 
-    deselect_all()
-    for obj in input:
-        obj.select_set(True)
-    bpy.context.view_layer.objects.active = input[0]
-    bpy.ops.object.mode_set(mode="EDIT")
+    with _shown(input):
+        deselect_all()
+        for obj in input:
+            obj.select_set(True)
+        bpy.context.view_layer.objects.active = input[0]
+        bpy.ops.object.mode_set(mode="EDIT")
 
-    func(*args, **kwargs)
+        func(*args, **kwargs)
 
-    bpy.ops.object.mode_set(mode="OBJECT")
+        bpy.ops.object.mode_set(mode="OBJECT")
 
     deselect_all()
     for obj in old_selection:
