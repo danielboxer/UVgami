@@ -745,9 +745,9 @@ class UnwrapManager:
 
         counts = self._result_counts()
         self.finish()
+        self.log_final_status()
 
         if counts[Result.CANCELLED] != len(self.results):
-            logger.change_status("Complete")
             msg = []
 
             # problems that don't fail a mesh but shouldn't read as a clean run
@@ -809,7 +809,6 @@ class UnwrapManager:
             if get_preferences().show_popup:
                 popup(msg, "UVgami", "INFO")
         else:
-            logger.change_status("Cancelled")
             self.clear_summary()
 
         # the dispatch timer is gone, so repaint the queue ui and banner here
@@ -826,6 +825,11 @@ class UnwrapManager:
             bpy.app.timers.register(
                 functools.partial(set_status, None), first_interval=STATUS_SECONDS
             )
+
+    def log_final_status(self):
+        counts = self._result_counts()
+        cancelled = counts[Result.CANCELLED] == len(self.results)
+        logger.change_status("Cancelled" if cancelled else "Complete")
 
     def clear_summary(self):
         """Drop the banner and the status bar message."""

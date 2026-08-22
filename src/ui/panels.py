@@ -173,6 +173,10 @@ def draw_queue(box):
         viewer_ui.label(text="Press ESC to exit viewer")
 
     groups, active_groups = _build_unwrap_groups(active_unwraps)
+    rows = len(groups) + len(manager.preparing) + len(manager.pending_transfers)
+    if rows > 1:
+        box.row().operator("uvgami.cancel_all", icon="CANCEL")
+
     _draw_unwrap_groups(box, groups, active_groups)
 
     # objects still preseeding, their pieces don't exist yet
@@ -183,11 +187,6 @@ def draw_queue(box):
     for transfer in manager.pending_transfers:
         _draw_background_row(box, f"{transfer.name} (finishing)", transfer.name)
 
-    rows = len(groups) + len(manager.preparing) + len(manager.pending_transfers)
-    if rows > 1:
-        row = box.row()
-        row.scale_y = 1.5
-        row.operator("uvgami.cancel_all", icon="CANCEL")
     box.separator()
 
 
