@@ -263,7 +263,7 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
             "Automatically save the Blender file before unwrapping "
             "to avoid losing work. This is recommended"
         ),
-        default=True,
+        default=False,
     )
     show_popup: bpy.props.BoolProperty(
         name="Show Popup",
