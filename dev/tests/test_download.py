@@ -1,7 +1,5 @@
 import importlib.util
-import re
 import threading
-import tomllib
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -193,12 +191,3 @@ def test_with_retries_gives_up_on_a_404():
     with pytest.raises(download.DownloadError, match="404"):
         download.with_retries(API, missing, backoff=0)
     assert len(calls) == 1
-
-
-def test_partuv_version_matches_pyproject():
-    pyproject = REPO_ROOT / "engine" / "partuv" / "pyproject.toml"
-    version = tomllib.loads(pyproject.read_text())["project"]["version"]
-    install_src = (REPO_ROOT / "src" / "engines" / "partuv" / "install.py").read_text()
-    match = re.search(r'PARTUV_VERSION = "([^"]+)"', install_src)
-    assert match, "PARTUV_VERSION constant not found in install.py"
-    assert match.group(1) == version

@@ -22,3 +22,7 @@ build-perf/
 build-asan/
 
 private/
+
+.playwright-mcp/
+docs.pdf
+post/

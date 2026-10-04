@@ -40,34 +40,8 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-  optcuts:
-    needs: prepare
-    uses: ./.github/workflows/engine-build.yml
-    secrets: inherit
-    permissions:
-      contents: write
-    with:
-      engine: optcuts
-
-  xatlas:
-    needs: prepare
-    uses: ./.github/workflows/engine-build.yml
-    secrets: inherit
-    permissions:
-      contents: write
-    with:
-      engine: xatlas
-
-  partuv:
-    needs: prepare
-    uses: ./.github/workflows/partuv-build.yml
-    secrets: inherit
-    permissions:
-      contents: write
-
-  # the smoke downloads what the engine jobs publish
   check:
-    needs: [optcuts, xatlas, partuv]
+    needs: prepare
     uses: ./.github/workflows/release-check.yml
     secrets: inherit
 
@@ -85,17 +59,6 @@ jobs:
       # no engine is bundled, the addon downloads each one
       - name: Zip the addon
         run: zip -r ${ADDON_NAME}.zip $INCLUDED_FILES
-
-      # partuv bundles PartField, whose license allows non-commercial use only
-      - name: Zip the addon without partuv
-        # the trailing * without a slash also drops the directory entry
-        run: zip -r ${ADDON_NAME}-no-partuv.zip $INCLUDED_FILES -x 'src/engines/partuv*'
-
-      - name: Upload the addon without partuv
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{ env.ADDON_NAME }}-no-partuv
-          path: ${{ env.ADDON_NAME }}-no-partuv.zip
 
       - name: Determine TAG
         run: echo "TAG=${{ needs.prepare.outputs.tag }}" >> $GITHUB_ENV

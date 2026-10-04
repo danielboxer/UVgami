@@ -2,7 +2,7 @@ import bpy
 
 from ..binary_engine import EngineRelease, InstallEngineTask
 
-# must match engine/xatlas/VERSION (check-engine-versions.yml fails on drift)
+# must match the xatlas engine VERSION
 XATLAS_VERSION = "0.2.4"
 XATLAS_MINIMUM_VERSION = "0.2.0"
 XATLAS = EngineRelease(

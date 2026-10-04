@@ -130,7 +130,7 @@ def _add_partuv_args(group):
         "--checkpoint",
         type=Path,
         help="PartField model checkpoint, default: $UVGAMI_PARTUV_CHECKPOINT,"
-        " then the repo checkpoint at engine/partuv/model_objaverse.ckpt",
+        " then the local checkpoint at engine-builds/model_objaverse.ckpt",
     )
     group.add_argument("--config", type=Path, help="default: packaged config.yaml")
 
@@ -160,7 +160,7 @@ def run_partuv(args, pairs):
         raise UnwrapError(
             EXIT_MISSING_RUNTIME,
             f"the PartUV engine is not installed ({error});"
-            " install it with: uv sync --extra partuv",
+            " install it from the engine source",
         ) from error
     # partuv raises its own UnwrapError class
     try:
@@ -170,10 +170,7 @@ def run_partuv(args, pairs):
             if checkpoint is None and "UVGAMI_PARTUV_CHECKPOINT" not in os.environ:
                 # the editable install serves partuv from site-packages
                 repo_checkpoint = (
-                    Path(__file__).parents[2]
-                    / "engine"
-                    / "partuv"
-                    / "model_objaverse.ckpt"
+                    Path(__file__).parents[2] / "engine-builds" / "model_objaverse.ckpt"
                 )
                 if repo_checkpoint.is_file():
                     checkpoint = repo_checkpoint

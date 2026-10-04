@@ -294,7 +294,7 @@ class PartuvEngine(Engine):
         env = os.environ.copy()
         # the cli's source-tree default resolves relative to the installed package
         if ctx.mode == "dev":
-            checkpoint = ctx.path / "engine" / "partuv" / "model_objaverse.ckpt"
+            checkpoint = ctx.path / "engine-builds" / "model_objaverse.ckpt"
         else:
             checkpoint = get_partuv_checkpoint_path()
         env["UVGAMI_PARTUV_CHECKPOINT"] = str(checkpoint)

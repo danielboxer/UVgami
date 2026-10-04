@@ -30,7 +30,8 @@ def export_obj(obj, path, export_uv, flip_mirrored=False, matrix=None):
     vt_verts = None
 
     with path.open("w") as f:
-        f.write(f"o {obj.name}\n")
+        # optcuts' obj reader warns on o lines but skips g lines silently
+        f.write(f"g {obj.name}\n")
         # a single %-format over the whole array runs in C, f-strings are 10x slower
         f.write(("v %.9f %.9f %.9f\n" * len(co)) % tuple(co.ravel().tolist()))
 
@@ -159,8 +160,8 @@ def import_obj(path, name=""):
     text = path.read_text()
 
     if not name:
-        o_match = re.search(r"(?m)^o (.*)$", text)
-        name = o_match.group(1).strip() if o_match else path.stem
+        name_match = re.search(r"(?m)^[og] (.*)$", text)
+        name = name_match.group(1).strip() if name_match else path.stem
 
     verts = _numeric_columns(text, "v", 3)
     uvs = _numeric_columns(text, "vt", 2)

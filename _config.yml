@@ -10,7 +10,6 @@ github:
 
 exclude:
   - src
-  - engine
   - dev
   - __init__.py
   - pyproject.toml

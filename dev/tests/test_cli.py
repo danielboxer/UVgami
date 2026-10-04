@@ -1,5 +1,4 @@
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -174,31 +173,6 @@ def test_module_entry_point(triangle):
     assert "invalid int value" in result.stderr
 
 
-# the addon's partuv path runs the wheel as python -m partuv
-def test_partuv_module_entry_point(triangle):
-    env = os.environ.copy()
-    engine = str(REPO_ROOT / "engine" / "partuv")
-    env["PYTHONPATH"] = os.pathsep.join(
-        [engine, env["PYTHONPATH"]] if env.get("PYTHONPATH") else [engine]
-    )
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "partuv",
-            str(triangle),
-            "--threshold",
-            "not-a-number",
-        ],
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    # argparse rejects the threshold before the compiled core is touched
-    assert result.returncode == 2
-    assert "invalid float value" in result.stderr
-
-
 def test_engine_error_code_passthrough(triangle, monkeypatch):
     def fail(*args):
         raise UnwrapError(5, "no output")
@@ -355,7 +329,7 @@ def test_partuv_ai_resolves_checkpoint(triangle, tmp_path, monkeypatch, fake_par
 
 def test_partuv_resolves_repo_checkpoint(triangle, monkeypatch, fake_partuv):
     monkeypatch.delenv("UVGAMI_PARTUV_CHECKPOINT", raising=False)
-    repo_checkpoint = REPO_ROOT / "engine" / "partuv" / "model_objaverse.ckpt"
+    repo_checkpoint = REPO_ROOT / "engine-builds" / "model_objaverse.ckpt"
     original_is_file = Path.is_file
     monkeypatch.setattr(
         Path, "is_file", lambda self: self == repo_checkpoint or original_is_file(self)
