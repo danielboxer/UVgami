@@ -29,7 +29,7 @@ from .paths import (
 )
 from .venv_commands import VENV_PYTHON, build_install_commands
 
-# must match engine/partuv/pyproject.toml
+# must match partuv's pyproject.toml
 PARTUV_VERSION = "0.1.5"
 PARTUV_MINIMUM_VERSION = "0.1.0"
 PARTUV_RELEASE_API = f"https://api.github.com/repos/DanielBoxer/UVgami/releases/tags/partuv-v{PARTUV_VERSION}"

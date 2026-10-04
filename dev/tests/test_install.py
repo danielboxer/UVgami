@@ -1,4 +1,5 @@
 import importlib.util
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -58,3 +59,17 @@ def test_an_existing_venv_is_not_recreated():
 def test_every_command_ignores_user_config():
     for command in build(ai=True, create_venv=True):
         assert "--no-config" in command
+
+
+# a minimum above the pinned version refuses every download
+def test_minimum_version_is_not_above_the_pinned_version():
+    for engine in ("optcuts", "xatlas", "partuv"):
+        source = (REPO_ROOT / "src" / "engines" / engine / "install.py").read_text()
+        prefix = engine.upper()
+        pinned = re.search(rf'^{prefix}_VERSION = "([^"]+)"', source, re.M)[1]
+        minimum = re.search(rf'^{prefix}_MINIMUM_VERSION = "([^"]+)"', source, re.M)[1]
+        assert version_tuple(minimum) <= version_tuple(pinned), engine
+
+
+def version_tuple(version):
+    return tuple(int(part) for part in version.split("."))

@@ -1,4 +1,4 @@
-# must match the ai extra in engine/partuv/pyproject.toml
+# must match the ai extra in partuv's pyproject.toml
 TORCH_VERSION = "2.3.0"
 # pypi's windows torch wheel is cpu-only
 TORCH_CUDA_INDEX = "https://download.pytorch.org/whl/cu121"
