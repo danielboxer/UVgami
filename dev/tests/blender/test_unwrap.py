@@ -29,8 +29,7 @@ def test_unwrap_runs_to_completion(load_obj, unwrap, outputs):
         if piece.process is None:
             continue
         assert piece.process.returncode is not None
-        assert piece.process.stdout.closed
-        assert piece.process.stderr.closed
+        assert piece.process.stdin.closed
 
 
 def test_flipped_face_is_rewound_instead_of_refused(load_obj, unwrap, outputs):

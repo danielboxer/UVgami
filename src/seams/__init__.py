@@ -45,6 +45,8 @@ from .preseed import (
     FlattenEngine,
     FlattenError,
     check_manifold,
+    hard_faces,
+    preseed_job,
     preseed_uvs,
 )
 from .rectify import FLIP_NOISE, flatten_distortion, rectify_targets
@@ -114,6 +116,8 @@ __all__ = [
     "pair",
     "partition",
     "path_cost",
+    "hard_faces",
+    "preseed_job",
     "preseed_uvs",
     "rectify_targets",
     "region_topology",

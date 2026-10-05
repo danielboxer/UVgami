@@ -4,6 +4,8 @@ import time
 from collections import deque
 from pathlib import Path
 
+import pytest
+
 # loaded from file, the addon package imports bpy
 spec = importlib.util.spec_from_file_location(
     "addon_batch", Path(__file__).parents[2] / "src" / "batch.py"
@@ -12,8 +14,25 @@ addon_batch = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(addon_batch)
 
 
+started_processes = []
+
+
 def start(script, sinks=None):
-    return addon_batch.BatchProcess([sys.executable, "-c", script], sinks=sinks)
+    batch_process = addon_batch.BatchProcess(
+        [sys.executable, "-c", script], sinks=sinks
+    )
+    started_processes.append(batch_process)
+    return batch_process
+
+
+# an open process leaves its log folder in the temp dir
+@pytest.fixture(autouse=True)
+def close_started_processes():
+    yield
+    for batch_process in started_processes:
+        batch_process.process.kill()
+        batch_process.close()
+    started_processes.clear()
 
 
 class Sink:
@@ -110,7 +129,7 @@ def test_stderr_lines_do_not_wait_on_a_live_process():
     try:
         assert wait_result(batch_process, "a") == 101
         deadline = time.monotonic() + 10
-        while not batch_process.stderr_tail:
+        while not batch_process.stderr_lines():
             assert time.monotonic() < deadline, "stderr line never arrived"
             time.sleep(0.05)
         began = time.monotonic()
@@ -155,10 +174,7 @@ def test_pending_while_running():
 def wait_dead(batch_process, timeout=10):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if (
-            batch_process.process.poll() is not None
-            and not batch_process._reader.is_alive()
-        ):
+        if batch_process.process.poll() is not None:
             return
         time.sleep(0.05)
     raise AssertionError("process did not exit")

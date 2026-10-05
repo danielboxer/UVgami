@@ -1,3 +1,5 @@
+import time
+
 import bmesh
 import bpy
 import numpy
@@ -291,6 +293,36 @@ def face_locator(positions, faces):
         return found
 
     return nearest_faces
+
+
+# how many dense vertices are looked up between two looks at the clock
+LOOKUP_BATCH = 500
+
+
+# the lookup needs mathutils, which only exists inside blender
+class FaceLookup:
+    def __init__(self, dense, proxy):
+        self._positions, self._normals = proxy_transfer.proxy_space(dense, proxy)
+        self._nearest_faces = face_locator(proxy["positions"], proxy["faces"])
+        self.face_of_vertex = numpy.empty(len(self._positions), dtype=numpy.int64)
+        self._looked_up = 0
+
+    @property
+    def done(self):
+        return self._looked_up >= len(self._positions)
+
+    @property
+    def fraction(self):
+        return self._looked_up / max(len(self._positions), 1)
+
+    def advance(self, seconds):
+        deadline = time.monotonic() + seconds
+        while not self.done and time.monotonic() < deadline:
+            batch = slice(self._looked_up, self._looked_up + LOOKUP_BATCH)
+            self.face_of_vertex[batch] = self._nearest_faces(
+                self._positions[batch], self._normals[batch]
+            )
+            self._looked_up += LOOKUP_BATCH
 
 
 # the (dense, proxy) arrays the transfer pipeline reads

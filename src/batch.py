@@ -1,11 +1,53 @@
-import collections
 import subprocess
-import threading
+import tempfile
+import time
+from pathlib import Path
+
+STDERR_TAIL_LINES = 10
+
+# a killed engine keeps its log files locked a few milliseconds past its exit
+LOG_UNLOCK_SECONDS = 0.1
+LOG_UNLOCK_POLL_SECONDS = 0.001
 
 
-def read_stderr_tail(stderr, tail):
-    for line in iter(stderr.readline, ""):
-        tail.append(line.rstrip("\r\n"))
+# stdout and stderr go to files, a pipe needs a thread to keep it from filling
+class EngineProcess:
+    def __init__(self, args, env=None):
+        self._log_dir = tempfile.TemporaryDirectory(
+            prefix="uvgami-engine-", ignore_cleanup_errors=True
+        )
+        stdout_path = Path(self._log_dir.name) / "stdout"
+        self._stderr_path = Path(self._log_dir.name) / "stderr"
+        with stdout_path.open("wb") as stdout, self._stderr_path.open("wb") as stderr:
+            self.process = subprocess.Popen(
+                args,
+                stdout=stdout,
+                stdin=subprocess.PIPE,
+                stderr=stderr,
+                universal_newlines=True,
+                env=env,
+            )
+        self._stdout = stdout_path.open("rb")
+        self._unfinished_line = b""
+
+    # every whole stdout line written since the last call
+    def read_lines(self):
+        data = self._unfinished_line + self._stdout.read()
+        *lines, self._unfinished_line = data.split(b"\n")
+        return [line.decode(errors="replace").rstrip("\r") + "\n" for line in lines]
+
+    def stderr_tail(self):
+        text = self._stderr_path.read_text(errors="replace")
+        return text.splitlines()[-STDERR_TAIL_LINES:]
+
+    # windows can't delete a file the engine still holds open
+    def close(self):
+        self._stdout.close()
+        deadline = time.monotonic() + LOG_UNLOCK_SECONDS
+        self._log_dir.cleanup()
+        while Path(self._log_dir.name).exists() and time.monotonic() < deadline:
+            time.sleep(LOG_UNLOCK_POLL_SECONDS)
+            self._log_dir.cleanup()
 
 
 # tqdm and torch write carriage-return progress bars to stderr
@@ -49,37 +91,26 @@ class EngineOutput:
 
 class BatchProcess:
     def __init__(self, args, env=None, sinks=None):
-        # passed in rather than set later, the reader may see a start marker right away
         self.sinks = sinks or {}
-        self.process = subprocess.Popen(
-            args,
-            stdout=subprocess.PIPE,
-            stdin=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            env=env,
-        )
-        self.started = set()
+        self._engine_process = EngineProcess(args, env)
+        self.process = self._engine_process.process
+        self._started = set()
         self._results = {}
         # None for an argv batch
         self._sent = None
-        self._reader = threading.Thread(target=self._read_output, daemon=True)
-        self._reader.start()
-        # one tail shared by every mesh in the batch
-        self.stderr_tail = collections.deque(maxlen=10)
-        self._stderr_reader = threading.Thread(
-            target=read_stderr_tail,
-            args=(self.process.stderr, self.stderr_tail),
-            daemon=True,
-        )
-        self._stderr_reader.start()
+        self._parser = EngineOutput()
 
-    def _read_output(self):
-        parser = EngineOutput()
-        for line in iter(self.process.stdout.readline, ""):
+    @property
+    def started(self):
+        self.read_output()
+        return self._started
+
+    def read_output(self):
+        parser = self._parser
+        for line in self._engine_process.read_lines():
             if line.startswith("start: "):
                 stem = line[7:].strip()
-                self.started.add(stem)
+                self._started.add(stem)
                 parser.sink = self.sinks.get(stem)
             elif line.startswith("done: "):
                 self._results[line[6:].strip()] = 0
@@ -107,6 +138,7 @@ class BatchProcess:
     def is_idle(self):
         if self.process.poll() is not None:
             return False
+        self.read_output()
         return self._sent is None or self._sent in self._results
 
     # a closed stdin is the process's signal to exit
@@ -117,17 +149,11 @@ class BatchProcess:
             # a dead engine refuses the flush in close
             pass
         self.process.wait()
-        # closing a pipe a reader is blocked on waits for that read
-        for thread in (self._reader, self._stderr_reader):
-            thread.join(timeout=1)
-        for pipe in (self.process.stdout, self.process.stderr):
-            pipe.close()
+        self._engine_process.close()
 
-    # only a dead process's reader will drain
+    # one tail shared by every mesh in the batch
     def stderr_lines(self):
-        if self.process.poll() is not None:
-            self._stderr_reader.join(timeout=1)
-        return self.stderr_tail
+        return self._engine_process.stderr_tail()
 
     # len(started) keeps a startup crash from requeuing forever
     def should_retry(self, stem):
@@ -140,12 +166,13 @@ class BatchProcess:
 
     # None while pending, 0 when unwrapped, nonzero exit code on failure
     def poll_result(self, stem):
+        # a poll after the read can miss a dead process's last markers
+        ret = self.process.poll()
+        self.read_output()
         code = self._results.get(stem)
         if code is not None:
             return code
-        # a marker can still be in flight until stdout is drained
-        if self.process.poll() is None or self._reader.is_alive():
+        if ret is None:
             return None
-        ret = self.process.poll()
         # the process ended without reporting this mesh
         return ret if ret != 0 else 1

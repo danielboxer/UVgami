@@ -13,10 +13,11 @@ from .hard_surface import (
     apply_seams_except_faces,
     flatten_engine,
     marked_seams,
+    worker_python,
 )
 from .logger import logger
 from .objfile import merge_obj_files
-from .proxy import face_locator, transfer_inputs
+from .proxy import FaceLookup, transfer_inputs
 from .seams import (
     FlattenError,
     face_edges,
@@ -28,8 +29,14 @@ from .seams import (
     stack_mirrored,
     uv_area_fit,
 )
-from .seams.proxy_transfer import dense_subset, transfer_projected, uv_tears
+from .seams.proxy_transfer import (
+    LOOKUP_SHARE,
+    dense_subset,
+    transfer_from_lookup,
+    uv_tears,
+)
 from .seams.uv_transfer import transfer_exact
+from .seams.worker import WorkerProcess
 from .similar import mirror_permutations
 from .utils.geometry import cut_on_axes, set_origin
 from .utils.mesh import (
@@ -47,7 +54,6 @@ from .utils.mesh import (
     triangulate,
     vertex_positions,
 )
-from .utils.task import BackgroundTask
 
 TransferReport = namedtuple(
     "TransferReport", ["applied", "split_count", "detail", "reason"], defaults=("",)
@@ -232,13 +238,15 @@ class HideInput:
             input_mesh.hide_set(True)
 
 
-# the read is bpy-free and runs on a worker thread
+# the read is bpy-free and runs in a worker process
 class Transfer:
     # the manager repacks the input in place of the deleted output
     repack_input = True
     allows_missing_pieces = True
     # a copy of the input the result went onto, in place of the output
     replacement = None
+    # poll() does a slice of the work itself
+    works_in_poll = False
 
     def __init__(self):
         self.input_mesh = None
@@ -260,12 +268,12 @@ class Transfer:
         self.target = self._target(input_mesh)
         inputs = in_object_mode(self.target, self._extract, self.target, output)
         self.loop_count = len(self.target.data.loops)
-        self.task = BackgroundTask(lambda cancelled: self._compute(inputs, cancelled))
+        self._begin(inputs)
         return None
 
     # None while the worker runs, the final report once it is done
     def poll(self):
-        if not self.task.done():
+        if not self._work_done():
             return None
         result = self.task.result()
         if not check_exists(self.target) or not check_exists(self.output):
@@ -285,13 +293,14 @@ class Transfer:
     # the output only makes sense with its uvs applied, so it goes too
     def cancel(self):
         self.settled = True
-        self.task.cancel()
+        if self.task is not None:
+            self.task.close()
         self._discard()
         if check_exists(self.output):
             bpy.data.objects.remove(self.output, do_unlink=True)
 
-    def _report(self, fraction):
-        self.progress = fraction
+    def _work_done(self):
+        return self.task.done()
 
     def _fail(self, detail, reason=""):
         self._discard()
@@ -319,9 +328,13 @@ class TransferUVs(Transfer):
             output
         )
 
-    def _compute(self, inputs, cancelled):
-        return transfer_exact(
-            *inputs, repack=self.repack_input, partial=self.allows_missing_pieces
+    def _begin(self, inputs):
+        self.task = WorkerProcess(
+            worker_python(),
+            transfer_exact,
+            *inputs,
+            repack=self.repack_input,
+            partial=self.allows_missing_pieces,
         )
 
     def _failure(self, plan):
@@ -582,6 +595,10 @@ class AreaUVs(IslandUVs):
                 plan.loop_uvs[k] = old
 
 
+# the window is frozen for this long per poll
+LOOKUP_SLICE_SECONDS = 0.05
+
+
 # the original was never unwrapped itself, so it is cut where the map is torn
 class ProxyUVs(Transfer):
     # a missing piece is a hole in the proxy map
@@ -590,10 +607,29 @@ class ProxyUVs(Transfer):
     def _extract(self, target, output):
         return transfer_inputs(target, output)
 
-    def _compute(self, inputs, cancelled):
-        dense, proxy = inputs
-        nearest_faces = face_locator(proxy["positions"], proxy["faces"])
-        return transfer_projected(dense, proxy, nearest_faces, self._report, cancelled)
+    @property
+    def works_in_poll(self):
+        return self.task is None
+
+    def _begin(self, inputs):
+        self._inputs = inputs
+        self._lookup = FaceLookup(*inputs)
+
+    def _work_done(self):
+        if self.task is not None:
+            self.progress = max(self.progress, self.task.progress)
+            return self.task.done()
+        self._lookup.advance(LOOKUP_SLICE_SECONDS)
+        self.progress = LOOKUP_SHARE * self._lookup.fraction
+        if self._lookup.done:
+            self.task = WorkerProcess(
+                worker_python(),
+                transfer_from_lookup,
+                *self._inputs,
+                self._lookup.face_of_vertex,
+            )
+            self._inputs = self._lookup = None
+        return False
 
     def _apply(self, target, result):
         seams, uvs = result

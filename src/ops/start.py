@@ -52,7 +52,6 @@ from ..utils.paths import (
     get_io_dir_paths,
     get_preferences,
 )
-from ..utils.task import BackgroundTask
 from ..utils.ui import tag_redraw
 from .guides import SEAM_RESTRICTIONS_GROUP
 
@@ -446,7 +445,7 @@ class SessionBuilder:
         self.pieces = []
         self.piece_unwrap = {}
         self.pending = None
-        # cancelled mid preseed, dropped when the thread unwinds
+        # cancelled mid preseed, dropped when the worker exits
         self.cancelled = set()
         # queue ui placeholders until each object's pieces exist
         self.preparing = {
@@ -511,6 +510,7 @@ class SessionBuilder:
             if obj in self.cancelled:
                 # it may have finished before it saw the flag
                 self.cancelled.discard(obj)
+                task.close()
                 self._drop_object(obj)
                 return 0.0
             result = task.result()
@@ -555,8 +555,8 @@ class SessionBuilder:
                 symmetrize_job.cut(obj)
             self._separate(obj, has_uvs, symmetrize_job)
             return 0.0
-        compute, apply = work
-        self.pending = Preseeding(BackgroundTask(compute), apply, obj, symmetrize_job)
+        worker, apply = work
+        self.pending = Preseeding(worker, apply, obj, symmetrize_job)
         return 0.1
 
     def _input_jobs(self, props, obj, proxied):

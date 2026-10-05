@@ -61,7 +61,7 @@ class Engine:
     def prepare_uvs(self, obj, props):
         return self.uses_import_uvs(props)
 
-    # None means no slow work and prepare_uvs is used directly
+    # (running worker, apply), or None when prepare_uvs is used directly
     def preseed_work(self, obj, props, mirrors=None):
         return None
 
