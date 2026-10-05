@@ -1,5 +1,5 @@
 from ...utils.paths import get_extension_dir_path
-from ..binary_engine import BinaryEngine
+from ..binary_engine import BinaryEngine, UVGAMI_OT_delete_engine
 from .install import XATLAS, UVGAMI_OT_install_xatlas
 
 # above 4.0 the output is identical
@@ -12,7 +12,7 @@ class XatlasEngine(BinaryEngine):
     label = "xatlas"
     description = "Fast CPU engine for baking lightmaps and texture painting"
     icon = "MESH_GRID"
-    classes = (UVGAMI_OT_install_xatlas,)
+    classes = (UVGAMI_OT_install_xatlas, UVGAMI_OT_delete_engine)
     release = XATLAS
 
     def build_args(self, ctx, input_path, props):

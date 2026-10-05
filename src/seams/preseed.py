@@ -74,8 +74,8 @@ def _stderr_path(workdir):
 
 # the preview operator and a builder thread can flatten at once
 class FlattenEngine:
-    def __init__(self, engine_path, workdir):
-        self.engine_path = str(engine_path)
+    def __init__(self, engine_command, workdir):
+        self.engine_command = [str(part) for part in engine_command]
         self.workdir = Path(workdir)
 
     # with cancelled or progress the engine is polled instead of waited on
@@ -108,7 +108,14 @@ class FlattenEngine:
         if seams:
             seam_path.write_text("".join(f"{a} {b}\n" for a, b in sorted(seams)))
 
-        args = [self.engine_path, "-i", str(obj_path), "-o", str(out_dir), "-flatten"]
+        args = [
+            *self.engine_command,
+            "-i",
+            str(obj_path),
+            "-o",
+            str(out_dir),
+            "-flatten",
+        ]
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
             # a pipe needs a thread to keep it from filling
@@ -209,7 +216,7 @@ def hard_faces(verts, faces, marks, marked="NONE", cancelled=None):
 
 # preseed_uvs taking plain data for a worker process
 def preseed_job(
-    engine_path,
+    engine_command,
     workdir,
     python,
     verts,
@@ -230,7 +237,7 @@ def preseed_job(
         if len(only) == len(faces):
             only = None
     return preseed_uvs(
-        FlattenEngine(engine_path, workdir),
+        FlattenEngine(engine_command, workdir),
         verts,
         faces,
         angle,

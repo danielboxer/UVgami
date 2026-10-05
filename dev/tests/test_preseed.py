@@ -78,7 +78,7 @@ def test_read_uvs_rejects_face_mismatch(tmp_path):
 
 
 def test_engine_failure_raises(tmp_path):
-    engine = FlattenEngine(tmp_path / "missing.exe", tmp_path)
+    engine = FlattenEngine([tmp_path / "missing.exe"], tmp_path)
     with pytest.raises(FlattenError):
         engine.flatten(CUBE_VERTS, CUBE_FACES, set())
 
@@ -143,7 +143,7 @@ def test_preseed_all_parts_seamless_returns_none():
 @pytest.mark.smoke
 @pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled engine missing")
 def test_preseed_cube_with_real_engine(tmp_path):
-    engine = FlattenEngine(BUNDLED, tmp_path)
+    engine = FlattenEngine([BUNDLED], tmp_path)
     seams, uvs, _ = preseed_uvs(engine, CUBE_VERTS, CUBE_FACES)
     assert all(uv is not None and len(uv) == 4 for uv in uvs)
     flat = [p for face in uvs for p in face]
@@ -155,7 +155,7 @@ def test_preseed_cube_with_real_engine(tmp_path):
 @pytest.mark.smoke
 @pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled engine missing")
 def test_flatten_start_poll_matches_flatten(tmp_path):
-    engine = FlattenEngine(BUNDLED, tmp_path)
+    engine = FlattenEngine([BUNDLED], tmp_path)
     seams = {(0, 1), (1, 2), (2, 3), (0, 3)}
     run = engine.start(CUBE_VERTS, CUBE_FACES, seams)
     while run.poll() is None:

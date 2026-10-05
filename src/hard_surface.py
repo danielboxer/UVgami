@@ -27,10 +27,13 @@ def flatten_engine():
     from .engines import get_engine
     from .utils.paths import get_extension_dir_path, get_preferences
 
-    path, error = get_engine("OPTCUTS").validate(get_preferences())
+    engine = get_engine("OPTCUTS")
+    engine_ctx, error = engine.validate(get_preferences())
     if error is not None:
         raise FlattenError(error)
-    return FlattenEngine(path, get_extension_dir_path() / "preseed")
+    return FlattenEngine(
+        engine.command(engine_ctx), get_extension_dir_path() / "preseed"
+    )
 
 
 # python_args isolates the worker from the user's site and PYTHONPATH
@@ -141,7 +144,7 @@ def preseed_work(obj, angle, marked="NONE", weights=None, auto=False, mirrors=No
     worker = WorkerProcess(
         python,
         preseed_job,
-        engine.engine_path,
+        engine.engine_command,
         engine.workdir,
         python,
         verts,

@@ -1,12 +1,6 @@
 import bpy
 
 from ..engines import ENGINES, active_engine, get_engine, installed_engines
-from ..engines.install_task import (
-    UPDATE_ICON,
-    draw_online_access,
-    draw_progress,
-    task_state,
-)
 from ..job import Result
 from ..logger import logger
 from ..manager import manager
@@ -129,33 +123,6 @@ def optcuts_installed():
 
 # a wide button with a small icon button beside it
 ICON_BUTTON_SPLIT = 0.85
-
-
-# waiting_for is the engine that would fill the panel, None when any will do
-def draw_missing_engine(layout, waiting_for=None):
-    box = layout.box()
-    if task_state["running"] and waiting_for in (None, task_state["owner"]):
-        draw_progress(box, "Downloading engine")
-        return
-    # the button always downloads optcuts
-    outdated = get_engine("OPTCUTS").release.install_too_old()
-    row = box.row()
-    row.alignment = "CENTER"
-    if outdated:
-        row.label(text="Engine update required", icon="FILE_REFRESH")
-    else:
-        row.label(text="Engine not downloaded", icon="INFO")
-    if draw_online_access(box):
-        return
-    row = box.row()
-    row.scale_y = 1.5
-    # skip the confirmation, this is the only way to get an engine
-    row.operator_context = "EXEC_DEFAULT"
-    row.operator(
-        "uvgami.install_optcuts",
-        text="Update Engine" if outdated else "Download Engine",
-        icon=UPDATE_ICON if outdated else "IMPORT",
-    )
 
 
 SUCCESS_ICON = "COLORSET_03_VEC"
@@ -363,7 +330,8 @@ class UVGAMI_PT_main(bpy.types.Panel):
         props = context.scene.uvgami
         engine = active_engine(props.engine)
         if engine is None:
-            draw_missing_engine(self.layout)
+            # the button always downloads optcuts
+            get_engine("OPTCUTS").draw_not_installed(self.layout)
             return
 
         box = self.layout.box()
@@ -601,7 +569,7 @@ class UVGAMI_PT_island_uv(bpy.types.Panel):
     def draw(self, context):
         props = context.scene.uvgami
         if not optcuts_installed():
-            draw_missing_engine(self.layout, waiting_for="optcuts")
+            get_engine("OPTCUTS").draw_not_installed(self.layout, waiting_for="optcuts")
             return
 
         box = self.layout.box()
