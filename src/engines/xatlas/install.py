@@ -1,6 +1,11 @@
 import bpy
 
-from ..binary_engine import EngineRelease, InstallEngineTask
+from ..binary_engine import (
+    BinaryEngine,
+    EngineRelease,
+    InstallEngineTask,
+    UVGAMI_OT_delete_engine,
+)
 
 # must match the xatlas engine VERSION
 XATLAS_VERSION = "0.2.4"
@@ -15,3 +20,9 @@ class UVGAMI_OT_install_xatlas(InstallEngineTask, bpy.types.Operator):
     bl_label = "Download xatlas Engine"
     owner = "xatlas"
     release = XATLAS
+
+
+# how xatlas is found, downloaded and started
+class XatlasInstall(BinaryEngine):
+    release = XATLAS
+    classes = (UVGAMI_OT_install_xatlas, UVGAMI_OT_delete_engine)

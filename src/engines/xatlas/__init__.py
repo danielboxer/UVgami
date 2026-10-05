@@ -1,24 +1,21 @@
 from ...utils.paths import get_extension_dir_path
-from ..binary_engine import BinaryEngine, UVGAMI_OT_delete_engine
-from .install import XATLAS, UVGAMI_OT_install_xatlas
+from .install import XatlasInstall
 
 # above 4.0 the output is identical
 PRIORITY_VALUES = {"LESS_STRETCH": "0.1", "BALANCED": "2.0", "FEWER_SEAMS": "4.0"}
 
 
-class XatlasEngine(BinaryEngine):
+class XatlasEngine(XatlasInstall):
     id = "XATLAS"
     enum_value = 2
     label = "xatlas"
     description = "Fast CPU engine for baking lightmaps and texture painting"
     icon = "MESH_GRID"
-    classes = (UVGAMI_OT_install_xatlas, UVGAMI_OT_delete_engine)
-    release = XATLAS
 
     def build_args(self, ctx, input_path, props):
         output_path = get_extension_dir_path() / "output" / f"{input_path.stem}.obj"
         return [
-            str(ctx),
+            *self.command(ctx),
             "-i",
             str(input_path),
             "-o",
