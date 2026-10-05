@@ -5,8 +5,10 @@ import tempfile
 import time
 from pathlib import Path
 
+import numpy
+
 from .cancel import Cancelled, check_cancelled
-from .mesh import face_edges, vertex_components
+from .mesh import face_edges, faces_from_arrays, vertex_components
 from .parallel import seam_edges_parallel
 from .pipeline import is_hard_surface, seam_edges
 from .regions import CREASE_ANGLE
@@ -214,13 +216,14 @@ def hard_faces(verts, faces, marks, marked="NONE", cancelled=None):
     return hard
 
 
-# preseed_uvs taking plain data for a worker process
+# preseed_uvs with flat arrays in and out for a worker process
 def preseed_job(
     engine_command,
     workdir,
     python,
-    verts,
-    faces,
+    positions,
+    corners,
+    totals,
     angle,
     marked,
     weights,
@@ -229,6 +232,8 @@ def preseed_job(
     auto,
     cancelled=None,
 ):
+    verts = positions.tolist()
+    faces = faces_from_arrays(corners, totals)
     only = None
     if auto:
         only = hard_faces(verts, faces, marks, marked, cancelled)
@@ -236,7 +241,7 @@ def preseed_job(
             return None
         if len(only) == len(faces):
             only = None
-    return preseed_uvs(
+    result = preseed_uvs(
         FlattenEngine(engine_command, workdir),
         verts,
         faces,
@@ -249,6 +254,11 @@ def preseed_job(
         cancelled,
         python,
     )
+    if result is None:
+        return None
+    seams, uvs, flattened = result
+    loop_uvs = numpy.array([uv for f in flattened for uv in uvs[f]])
+    return seams, loop_uvs, numpy.array(flattened, dtype=numpy.int64)
 
 
 # a ruined island ships as-is, the engine's own cut search benches better

@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .mesh import faces_from_arrays
 from .proxy_transfer import uv_tears
 
 
@@ -443,3 +444,24 @@ def transfer_exact(
         [verts for verts, _ in faces], [uvs for _, uvs in faces], SEAM_TOLERANCE
     )
     return TransferPlan(loop_uvs, split_faces, seams, untouched)
+
+
+# transfer_exact taking flat arrays for a worker process
+def transfer_exact_job(
+    input_positions,
+    input_corners,
+    input_totals,
+    output_positions,
+    output_corners,
+    output_totals,
+    output_loop_uvs,
+    **options,
+):
+    return transfer_exact(
+        input_positions,
+        faces_from_arrays(input_corners, input_totals),
+        output_positions,
+        faces_from_arrays(output_corners, output_totals),
+        faces_from_arrays(output_loop_uvs, output_totals),
+        **options,
+    )

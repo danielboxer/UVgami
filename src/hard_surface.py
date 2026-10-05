@@ -14,10 +14,13 @@ from .seams import (
 )
 from .seams.worker import WorkerProcess
 from .utils.mesh import (
+    face_vertex_arrays,
     face_vertices,
     loop_starts,
+    loop_totals,
     loop_uvs,
     set_loop_uvs,
+    vertex_position_array,
     vertex_positions,
 )
 
@@ -133,11 +136,18 @@ def apply_face_uvs(mesh, uvs, only=None):
     set_loop_uvs(mesh, coords)
 
 
+# uvs holds the loops of these faces in face order
+def apply_loop_uvs(mesh, uvs, faces):
+    flattened = numpy.zeros(len(mesh.polygons), dtype=bool)
+    flattened[faces] = True
+    coords = loop_uvs(mesh)
+    coords[numpy.repeat(flattened, loop_totals(mesh))] = uvs
+    set_loop_uvs(mesh, coords)
+
+
 # compute is bpy-free so a worker thread can run it
 def preseed_work(obj, angle, marked="NONE", weights=None, auto=False, mirrors=None):
     mesh = obj.data
-    verts = vertex_positions(mesh)
-    faces = face_vertices(mesh)
     marks = marked_seams(mesh) if (marked != "NONE" or auto) else frozenset()
     engine = flatten_engine()
     python = worker_python()
@@ -147,8 +157,8 @@ def preseed_work(obj, angle, marked="NONE", weights=None, auto=False, mirrors=No
         engine.engine_command,
         engine.workdir,
         python,
-        verts,
-        faces,
+        vertex_position_array(mesh),
+        *face_vertex_arrays(mesh),
         angle,
         marked,
         weights,
@@ -164,7 +174,7 @@ def preseed_work(obj, angle, marked="NONE", weights=None, auto=False, mirrors=No
         apply_seams(mesh, seams)
         if not mesh.uv_layers:
             mesh.uv_layers.new()
-        apply_face_uvs(mesh, uvs, None if len(flattened) == len(uvs) else flattened)
+        apply_loop_uvs(mesh, uvs, flattened)
         return True
 
     return worker, apply
