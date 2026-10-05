@@ -1,20 +1,15 @@
 import collections
 import pathlib
-import subprocess
-import threading
 import time
 
 import mathutils
 
-from .batch import EngineOutput, read_stderr_tail
+from .batch import EngineOutput, EngineProcess
 from .logger import logger
 from .manager import manager
 from .ops.viewer import set_snapshot
 from .utils.paths import get_extension_dir_path
 from .utils.ui import tag_redraw
-
-# the readers finish with the process, so this only bounds a stuck one
-READER_JOIN_SECONDS = 5
 
 # healthy runs move progress every few seconds, minutes frozen is a hang
 PROGRESS_STALL_SECONDS = 120
@@ -92,10 +87,9 @@ class Unwrap:
         self.progress_changed_at = None
         self.started_at = None
         self.stop_requested_at = None
-        # bounded tail of the solo process's stderr, drained by a reader thread
-        self.stderr_tail = collections.deque(maxlen=10)
-        self._stderr_thread = None
-        self._output_thread = None
+        # None for a batch member
+        self._engine_process = None
+        self._output = EngineOutput(self)
 
     # the defaults cover a fix export, which carries no mesh metadata
     def set_export_data(
@@ -127,25 +121,10 @@ class Unwrap:
     def start_unwrap(self):
         args = manager.engine.build_args(manager.engine_ctx, self.path, manager.props)
 
-        self.process = subprocess.Popen(
-            args,
-            stdout=subprocess.PIPE,
-            stdin=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            env=manager.engine.build_env(manager.engine_ctx),
+        self._engine_process = EngineProcess(
+            args, manager.engine.build_env(manager.engine_ctx)
         )
-
-        self._output_thread = threading.Thread(target=self.get_output)
-        self._output_thread.start()
-
-        # drain stderr separately so it stays out of the stdout protocol
-        self._stderr_thread = threading.Thread(
-            target=read_stderr_tail,
-            args=(self.process.stderr, self.stderr_tail),
-            daemon=True,
-        )
-        self._stderr_thread.start()
+        self.process = self._engine_process.process
 
         self.is_active = True
         self.started_at = time.monotonic()
@@ -189,30 +168,25 @@ class Unwrap:
         if self.process is None:
             return
         # without this a model with many pieces runs out of open files
-        for thread in (self._output_thread, self._stderr_thread):
-            if thread is not None:
-                thread.join(timeout=READER_JOIN_SECONDS)
-        for pipe in (self.process.stdout, self.process.stderr, self.process.stdin):
-            if pipe is None:
-                continue
-            try:
-                pipe.close()
-            except OSError:
-                # close flushes stdin, which a dead engine refuses. it still closes
-                pass
+        try:
+            self.process.stdin.close()
+        except OSError:
+            # close flushes stdin, which a dead engine refuses. it still closes
+            pass
         self.process.wait()
+        self._engine_process.close()
 
     def get_stderr_tail(self):
         if self.batch_process is not None:
             return self.batch_process.stderr_lines()
-        if self._stderr_thread is not None:
-            self._stderr_thread.join(timeout=1)
-        return self.stderr_tail
+        return self._engine_process.stderr_tail()
 
-    def get_output(self):
-        parser = EngineOutput(self)
-        for line in iter(self.process.stdout.readline, ""):
-            parser.feed(line)
+    def read_output(self):
+        if self.batch_process is not None:
+            self.batch_process.read_output()
+            return
+        for line in self._engine_process.read_lines():
+            self._output.feed(line)
 
     def update_progress(self):
         if len(self.progress_data) > 0:

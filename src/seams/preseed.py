@@ -1,18 +1,17 @@
-import collections
 import functools
 import shutil
 import subprocess
 import tempfile
-import threading
 import time
 from pathlib import Path
 
 from .cancel import Cancelled, check_cancelled
-from .mesh import face_edges
+from .mesh import face_edges, vertex_components
 from .parallel import seam_edges_parallel
-from .pipeline import seam_edges
+from .pipeline import is_hard_surface, seam_edges
 from .regions import CREASE_ANGLE
 from .symmetry import mirror_seams
+from .worker import last_progress, remove_folder, stderr_tail
 
 
 class FlattenError(RuntimeError):
@@ -36,24 +35,10 @@ class FlattenRun:
         self.workdir = workdir
         self.out_path = out_path
         self.face_count = face_count
-        self.progress = 0.0
-        self.stderr_tail = collections.deque(maxlen=10)
-        self._stdout_thread = threading.Thread(target=self._read_stdout, daemon=True)
-        self._stdout_thread.start()
-        self._stderr_thread = threading.Thread(target=self._read_stderr, daemon=True)
-        self._stderr_thread.start()
 
-    def _read_stdout(self):
-        for line in iter(self.process.stdout.readline, ""):
-            if line.startswith("progress: "):
-                try:
-                    self.progress = float(line.split()[1])
-                except (IndexError, ValueError):
-                    pass
-
-    def _read_stderr(self):
-        for line in iter(self.process.stderr.readline, ""):
-            self.stderr_tail.append(line.rstrip("\r\n"))
+    @property
+    def progress(self):
+        return last_progress(_stdout_path(self.workdir))
 
     def poll(self):
         return self.process.poll()
@@ -64,10 +49,9 @@ class FlattenRun:
 
     def result(self):
         code = self.process.wait()
-        self._close()
         try:
             if code != 0:
-                detail = " ".join(self.stderr_tail).strip()
+                detail = stderr_tail(_stderr_path(self.workdir))
                 raise FlattenError(f"flatten engine exited {code}: {detail}")
             return _read_uvs(self.out_path, self.face_count)
         finally:
@@ -77,14 +61,15 @@ class FlattenRun:
         if self.process.poll() is None:
             self.process.kill()
             self.process.wait()
-        self._close()
-        shutil.rmtree(self.workdir, ignore_errors=True)
+        remove_folder(self.workdir)
 
-    def _close(self):
-        for thread in (self._stdout_thread, self._stderr_thread):
-            thread.join(timeout=5)
-        for pipe in (self.process.stdout, self.process.stderr):
-            pipe.close()
+
+def _stdout_path(workdir):
+    return workdir / "flatten_stdout"
+
+
+def _stderr_path(workdir):
+    return workdir / "flatten_stderr"
 
 
 # the preview operator and a builder thread can flatten at once
@@ -126,13 +111,14 @@ class FlattenEngine:
         args = [self.engine_path, "-i", str(obj_path), "-o", str(out_dir), "-flatten"]
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
-            process = subprocess.Popen(
-                args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                creationflags=creationflags,
-            )
+            # a pipe needs a thread to keep it from filling
+            with (
+                _stdout_path(workdir).open("wb") as stdout,
+                _stderr_path(workdir).open("wb") as stderr,
+            ):
+                process = subprocess.Popen(
+                    args, stdout=stdout, stderr=stderr, creationflags=creationflags
+                )
         except OSError as error:
             shutil.rmtree(workdir, ignore_errors=True)
             raise FlattenError(f"flatten engine failed to start: {error}") from error
@@ -206,6 +192,56 @@ def _flattenable(subset, edges, seams):
             keeps.add(inside[0])
     kept_roots = {find(f) for f in keeps}
     return [f for f in subset if find(f) in kept_roots]
+
+
+# a marked part is hard however its geometry reads
+def hard_faces(verts, faces, marks, marked="NONE", cancelled=None):
+    marked_verts = {v for edge in marks for v in edge} if marked != "NONE" else set()
+    hard = set()
+    for comp in vertex_components(faces):
+        check_cancelled(cancelled)
+        if (marked_verts and marked_verts & {v for fi in comp for v in faces[fi]}) or (
+            marked != "ONLY" and is_hard_surface(verts, [faces[fi] for fi in comp])
+        ):
+            hard.update(comp)
+    return hard
+
+
+# preseed_uvs taking plain data for a worker process
+def preseed_job(
+    engine_path,
+    workdir,
+    python,
+    verts,
+    faces,
+    angle,
+    marked,
+    weights,
+    marks,
+    mirrors,
+    auto,
+    cancelled=None,
+):
+    only = None
+    if auto:
+        only = hard_faces(verts, faces, marks, marked, cancelled)
+        if not only:
+            return None
+        if len(only) == len(faces):
+            only = None
+    return preseed_uvs(
+        FlattenEngine(engine_path, workdir),
+        verts,
+        faces,
+        angle,
+        marked,
+        weights,
+        only,
+        marks,
+        mirrors,
+        cancelled,
+        python,
+    )
 
 
 # a ruined island ships as-is, the engine's own cut search benches better

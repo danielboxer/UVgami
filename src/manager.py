@@ -35,6 +35,8 @@ SETTLE_TICK_SECONDS = 0.05
 DISPATCH_SECONDS = 0.1
 # a finished piece waits for the tick
 QUEUED_DISPATCH_SECONDS = 0.02
+# a transfer doing its lookup in poll() only stops for a redraw
+LOOKUP_DISPATCH_SECONDS = 0.0
 # held back from the start or the bar drops when the engine hands over
 TRANSFER_PROGRESS_SHARE = 0.4
 # a sidebar rebuild mid click drops the click
@@ -227,6 +229,7 @@ class UnwrapManager:
             requeued = []
 
             for unwrap in list(self._running):
+                unwrap.read_output()
                 unwrap.update_progress()
 
                 if unwrap.viewing:
@@ -323,6 +326,8 @@ class UnwrapManager:
             handle_error(e, "MIDDLE")
             return None
 
+        if any(entry.job.works_in_poll for entry in self.pending_transfers):
+            return LOOKUP_DISPATCH_SECONDS
         return QUEUED_DISPATCH_SECONDS if self._queue else DISPATCH_SECONDS
 
     def run_until_settled(self, unwraps):

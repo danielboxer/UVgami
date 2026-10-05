@@ -46,7 +46,7 @@ def snap_cuts(verts, edges, mapped, cuts):
 
 
 # dense positions and normals in the proxy's own space
-def _proxy_space(dense, proxy):
+def proxy_space(dense, proxy):
     matrix = numpy.linalg.inv(proxy["matrix"]) @ numpy.asarray(
         dense["matrix"], dtype=numpy.float64
     )
@@ -1104,6 +1104,21 @@ def dense_subset(dense, faces):
 
 # nearest_faces gives each dense vertex the proxy face whose map it reads
 def transfer_projected(dense, proxy, nearest_faces, progress=None, cancelled=None):
+    positions, normals = proxy_space(dense, proxy)
+    face_of_vertex = numpy.empty(len(positions), dtype=numpy.int64)
+    for start in range(0, len(positions), LOOKUP_CHUNK):
+        check_cancelled(cancelled)
+        stop = start + LOOKUP_CHUNK
+        face_of_vertex[start:stop] = nearest_faces(
+            positions[start:stop], normals[start:stop]
+        )
+        if progress is not None:
+            progress(LOOKUP_SHARE * min(stop, len(positions)) / max(len(positions), 1))
+    return transfer_from_lookup(dense, proxy, face_of_vertex, progress, cancelled)
+
+
+# the lookup is the only step that needs blender
+def transfer_from_lookup(dense, proxy, face_of_vertex, progress=None, cancelled=None):
     done = 0.0
 
     def report(fraction):
@@ -1115,17 +1130,8 @@ def transfer_projected(dense, proxy, nearest_faces, progress=None, cancelled=Non
         done += share
         report(done)
 
-    positions, normals = _proxy_space(dense, proxy)
+    positions, _ = proxy_space(dense, proxy)
     proxy_map = ProxyMap(proxy)
-
-    face_of_vertex = numpy.empty(len(positions), dtype=numpy.int64)
-    for start in range(0, len(positions), LOOKUP_CHUNK):
-        check_cancelled(cancelled)
-        stop = start + LOOKUP_CHUNK
-        face_of_vertex[start:stop] = nearest_faces(
-            positions[start:stop], normals[start:stop]
-        )
-        report(LOOKUP_SHARE * min(stop, len(positions)) / max(len(positions), 1))
     finished(LOOKUP_SHARE)
     # the map is affine in 3d, a triangle facing its proxy face cannot flip
     uvs = proxy_map.maps.uv(face_of_vertex, positions)

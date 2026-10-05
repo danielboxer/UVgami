@@ -8,11 +8,11 @@ from .seams import (
     CREASE_ANGLE,
     FlattenEngine,
     FlattenError,
-    check_cancelled,
-    is_hard_surface,
+    hard_faces,
+    preseed_job,
     preseed_uvs,
-    vertex_components,
 )
+from .seams.worker import WorkerProcess
 from .utils.mesh import (
     face_vertices,
     loop_starts,
@@ -34,7 +34,7 @@ def flatten_engine():
 
 
 # python_args isolates the worker from the user's site and PYTHONPATH
-def seam_workers():
+def worker_python():
     return sys.executable, list(bpy.app.python_args)
 
 
@@ -50,19 +50,6 @@ def seam_restrictions(obj):
                 weights[v.index] = g.weight
                 break
     return weights or None
-
-
-# a marked part is hard however its geometry reads
-def hard_faces(verts, faces, marks, marked="NONE", cancelled=None):
-    marked_verts = {v for edge in marks for v in edge} if marked != "NONE" else set()
-    hard = set()
-    for comp in vertex_components(faces):
-        check_cancelled(cancelled)
-        if (marked_verts and marked_verts & {v for fi in comp for v in faces[fi]}) or (
-            marked != "ONLY" and is_hard_surface(verts, [faces[fi] for fi in comp])
-        ):
-            hard.update(comp)
-    return hard
 
 
 def auto_hard_faces(obj, marked="NONE"):
@@ -150,29 +137,22 @@ def preseed_work(obj, angle, marked="NONE", weights=None, auto=False, mirrors=No
     faces = face_vertices(mesh)
     marks = marked_seams(mesh) if (marked != "NONE" or auto) else frozenset()
     engine = flatten_engine()
-    python = seam_workers()
-
-    def compute(cancelled=None):
-        only = None
-        if auto:
-            only = hard_faces(verts, faces, marks, marked, cancelled)
-            if not only:
-                return None
-            if len(only) == len(faces):
-                only = None
-        return preseed_uvs(
-            engine,
-            verts,
-            faces,
-            angle,
-            marked,
-            weights,
-            only,
-            marks,
-            mirrors,
-            cancelled,
-            python,
-        )
+    python = worker_python()
+    worker = WorkerProcess(
+        python,
+        preseed_job,
+        engine.engine_path,
+        engine.workdir,
+        python,
+        verts,
+        faces,
+        angle,
+        marked,
+        weights,
+        marks,
+        mirrors,
+        auto,
+    )
 
     def apply(result):
         if result is None:
@@ -184,7 +164,7 @@ def preseed_work(obj, angle, marked="NONE", weights=None, auto=False, mirrors=No
         apply_face_uvs(mesh, uvs, None if len(flattened) == len(uvs) else flattened)
         return True
 
-    return compute, apply
+    return worker, apply
 
 
 def build_seam_uvs(obj, angle=CREASE_ANGLE, marked="NONE", weights=None, only=None):
@@ -200,7 +180,7 @@ def build_seam_uvs(obj, angle=CREASE_ANGLE, marked="NONE", weights=None, only=No
         weights,
         only,
         marked_seams(mesh) if marked != "NONE" else frozenset(),
-        python=seam_workers(),
+        python=worker_python(),
     )
     if result is None:
         return False
