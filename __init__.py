@@ -17,7 +17,6 @@
 import bpy
 
 from .src.engines import ENGINES
-from .src.engines.binary_engine import UVGAMI_OT_delete_engine
 from .src.manager import manager
 from .src.ops.grid import (
     UVGAMI_OT_add_grid,
@@ -75,7 +74,10 @@ from .src.ui.props import (
 )
 
 # every bpy class each engine needs registered (property groups and operators)
-engine_classes = tuple(cls for engine in ENGINES.values() for cls in engine.classes)
+# two engines can list the same operator
+engine_classes = tuple(
+    dict.fromkeys(cls for engine in ENGINES.values() for cls in engine.classes)
+)
 
 
 classes = (
@@ -113,8 +115,6 @@ classes = (
     UVGAMI_PT_grid,
     UVGAMI_PT_pack,
     UVGAMI_PT_misc,
-    # shared by every binary engine, so it isn't in one engine's classes
-    UVGAMI_OT_delete_engine,
     # engine groups must register before the main group that points to them
     *engine_classes,
     UVGAMI_PG_properties,
@@ -144,7 +144,3 @@ def unregister():
     del bpy.types.Scene.uvgami
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-
-
-if __name__ == "__main__":
-    register()

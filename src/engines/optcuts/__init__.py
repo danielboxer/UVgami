@@ -11,8 +11,7 @@ from ...seams import uvs_collapsed
 from ...utils.io import print_stdin
 from ...utils.mesh import corner_uvs
 from ...utils.ui import is_non_default, only_active
-from ..binary_engine import BinaryEngine
-from .install import OPTCUTS, UVGAMI_OT_install_optcuts
+from .install import OptcutsInstall
 
 # degrees, what counts as a sharp feature
 HARD_SURFACE_ANGLE = 66
@@ -142,7 +141,7 @@ class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
 #         row.prop(optcuts, "hard_surface_angle", text="")
 
 
-class OptcutsEngine(BinaryEngine):
+class OptcutsEngine(OptcutsInstall):
     id = "OPTCUTS"
     enum_value = 0
     label = "Optcuts"
@@ -154,7 +153,7 @@ class OptcutsEngine(BinaryEngine):
     property_group = UVGAMI_PG_optcuts
     classes = (
         UVGAMI_PG_optcuts,
-        UVGAMI_OT_install_optcuts,
+        *OptcutsInstall.classes,
         # UVGAMI_OT_quick_unwrap,
         # UVGAMI_PT_hard_surface,
     )
@@ -164,7 +163,6 @@ class OptcutsEngine(BinaryEngine):
     supports_preserve = True
     supports_import_uvs = True
     supports_proxy = True
-    release = OPTCUTS
 
     def draw_settings(self, layout, props):
         split = layout.split(factor=0.7)
@@ -246,16 +244,23 @@ class OptcutsEngine(BinaryEngine):
         priority = props.priority
         if self._loose_bound_pinned(input_path, props):
             priority = "BALANCED"
-        return [str(ctx), "-i", str(input_path)] + self._bound_and_weight_args(
-            props, priority
-        )
+        return [
+            *self.command(ctx),
+            "-i",
+            str(input_path),
+            *self._bound_and_weight_args(props, priority),
+        ]
 
     def build_shared_args(self, ctx, input_path, props, threads):
         # the bound is fixed per process
         if self._loose_bound_pinned(input_path, props):
             return None
         cap = ["-t", str(threads)] if threads else []
-        return [str(ctx)] + self._bound_and_weight_args(props, props.priority) + cap
+        return [
+            *self.command(ctx),
+            *self._bound_and_weight_args(props, props.priority),
+            *cap,
+        ]
 
     def describe_failure(self, code):
         return {

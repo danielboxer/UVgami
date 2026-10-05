@@ -75,9 +75,17 @@ class Engine:
     def draw_update_notice(self, layout):
         pass
 
+    # waiting_for is the engine that would fill the panel, None when any will do
+    def draw_not_installed(self, layout, waiting_for=None):
+        pass
+
     # batching and running several processes at once are mutually exclusive
     def batches_queue(self, props):
         return False
+
+    # the argv in front of the engine's flags
+    def command(self, ctx):
+        return [str(ctx)]
 
     def build_args(self, ctx, input_path, props):
         raise NotImplementedError
@@ -118,16 +126,15 @@ class Engine:
 
 
 # imported after Engine because each module subclasses it
-from . import optcuts, xatlas  # noqa: E402
+from . import optcuts  # noqa: E402
 
 # order sets the enum and ui order
-_engines = [optcuts.ENGINE, xatlas.ENGINE]
+_engines = [optcuts.ENGINE]
 
-# partuv is optional, some builds ship without its folder
-if importlib.util.find_spec(f"{__name__}.partuv") is not None:
-    from . import partuv  # noqa: E402
-
-    _engines.append(partuv.ENGINE)
+# some builds ship without these folders
+for optional in ("xatlas", "partuv"):
+    if importlib.util.find_spec(f"{__name__}.{optional}") is not None:
+        _engines.append(importlib.import_module(f"{__name__}.{optional}").ENGINE)
 
 ENGINES = {e.id: e for e in _engines}
 
