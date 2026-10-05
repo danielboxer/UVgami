@@ -38,6 +38,11 @@ def split_per_face(values, totals):
     return faces
 
 
+# arrays pickle far faster than the per-face lists
+def faces_from_arrays(values, totals):
+    return split_per_face(values.tolist(), totals.tolist())
+
+
 # parent maps each element to its parent, itself for a root
 def find(parent, x):
     while parent[x] != x:

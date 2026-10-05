@@ -22,15 +22,27 @@ def loop_totals(mesh):
 
 
 def face_vertices(mesh):
+    corners, totals = face_vertex_arrays(mesh)
+    return split_per_face(corners.tolist(), totals.tolist())
+
+
+# face_vertices as (vertex of each loop, loops per face)
+def face_vertex_arrays(mesh):
     corners = numpy.empty(len(mesh.loops), dtype=numpy.int64)
     mesh.loops.foreach_get("vertex_index", corners)
-    return split_per_face(corners.tolist(), loop_totals(mesh))
+    totals = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
+    mesh.polygons.foreach_get("loop_total", totals)
+    return corners, totals
 
 
 def vertex_positions(mesh):
+    return vertex_position_array(mesh).tolist()
+
+
+def vertex_position_array(mesh):
     flat = numpy.empty(len(mesh.vertices) * 3)
     mesh.vertices.foreach_get("co", flat)
-    return flat.reshape(-1, 3).tolist()
+    return flat.reshape(-1, 3)
 
 
 def loop_starts(mesh):

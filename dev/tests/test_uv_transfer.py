@@ -3,6 +3,7 @@ import math
 import sys
 from pathlib import Path
 
+import numpy
 import pytest
 
 # loaded from file, the addon package imports bpy
@@ -12,7 +13,7 @@ spec = importlib.util.spec_from_file_location(
 )
 sys.modules["seams"] = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sys.modules["seams"])
-from seams.uv_transfer import transfer_exact  # noqa: E402
+from seams.uv_transfer import transfer_exact, transfer_exact_job  # noqa: E402
 
 # unit square as two triangles sharing edge v0-v2
 SQUARE_POS = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
@@ -505,3 +506,22 @@ def test_partial_with_nothing_covered_fails():
 
     assert not result.ok
     assert result.reason == "incomplete_coverage"
+
+
+def test_job_splits_flat_arrays_per_face():
+    # a quad and a triangle
+    positions = numpy.array(
+        [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (2, 0, 0)], dtype=float
+    )
+    faces = [[0, 1, 2, 3], [1, 4, 2]]
+    uvs = [[(0, 0), (1, 0), (1, 1), (0, 1)], [(1, 0), (2, 0), (1, 1)]]
+    corners = numpy.array([v for face in faces for v in face], dtype=numpy.int64)
+    totals = numpy.array([4, 3], dtype=numpy.int64)
+    loop_uvs = numpy.array([uv for face in uvs for uv in face], dtype=float)
+
+    plan = transfer_exact_job(
+        positions, corners, totals, positions, corners, totals, loop_uvs
+    )
+
+    assert plan == transfer_exact(positions, faces, positions, faces, uvs)
+    assert plan.loop_uvs[6] == (1.0, 1.0)

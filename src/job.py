@@ -35,22 +35,21 @@ from .seams.proxy_transfer import (
     transfer_from_lookup,
     uv_tears,
 )
-from .seams.uv_transfer import transfer_exact
+from .seams.uv_transfer import transfer_exact_job
 from .seams.worker import WorkerProcess
 from .similar import mirror_permutations
 from .utils.geometry import cut_on_axes, set_origin
 from .utils.mesh import (
     check_exists,
     face_uvs,
+    face_vertex_arrays,
     face_vertices,
     in_object_mode,
     loop_starts,
-    loop_totals,
     loop_uvs,
     new_bmesh,
     set_bmesh,
     set_loop_uvs,
-    split_per_face,
     triangulate,
     vertex_positions,
 )
@@ -75,21 +74,16 @@ def world_positions(obj):
     return flat.reshape(-1, 3) @ matrix[:3, :3].T + matrix[:3, 3]
 
 
-# in the plain form transfer_exact takes
+# in the flat form transfer_exact_job takes
 def output_mesh_data(output):
     output_data = output.data
-    output_uv = output_data.uv_layers.active
-
-    output_positions = world_positions(output)
-    output_polygons = face_vertices(output_data)
-
     coords = numpy.empty(len(output_data.loops) * 2)
-    output_uv.uv.foreach_get("vector", coords)
-    output_uvs = split_per_face(
-        coords.reshape(-1, 2).tolist(), loop_totals(output_data)
+    output_data.uv_layers.active.uv.foreach_get("vector", coords)
+    return (
+        world_positions(output),
+        *face_vertex_arrays(output_data),
+        coords.reshape(-1, 2),
     )
-
-    return output_positions, output_polygons, output_uvs
 
 
 class Preserve:
@@ -324,14 +318,16 @@ class Transfer:
 # the output has the input's own vertices, its unwrap triangulated
 class TransferUVs(Transfer):
     def _extract(self, target, output):
-        return (world_positions(target), face_vertices(target.data)) + output_mesh_data(
-            output
+        return (
+            world_positions(target),
+            *face_vertex_arrays(target.data),
+            *output_mesh_data(output),
         )
 
     def _begin(self, inputs):
         self.task = WorkerProcess(
             worker_python(),
-            transfer_exact,
+            transfer_exact_job,
             *inputs,
             repack=self.repack_input,
             partial=self.allows_missing_pieces,
@@ -452,7 +448,7 @@ class IslandUVs(TransferUVs):
         local = {v: i for i, v in enumerate(used)}
 
         positions = [tuple(matrix @ data.vertices[v].co) for v in used]
-        polygons = []
+        corners = []
         self.loop_counts = []
         base = 0
         for fi in self.faces:
@@ -460,9 +456,14 @@ class IslandUVs(TransferUVs):
             self.loop_base[fi] = base
             self.loop_counts.append(poly.loop_total)
             base += poly.loop_total
-            polygons.append([local[v] for v in poly.vertices])
+            corners.extend(local[v] for v in poly.vertices)
 
-        return (positions, polygons) + output_mesh_data(output)
+        return (
+            positions,
+            numpy.array(corners, dtype=numpy.int64),
+            numpy.array(self.loop_counts, dtype=numpy.int64),
+            *output_mesh_data(output),
+        )
 
     # the loops a split face came from are dead
     def _fit(self, plan):
