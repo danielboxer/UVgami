@@ -152,13 +152,21 @@ def draw_summary(layout):
         row.label(text=note)
 
 
+def _clock_text(seconds):
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minutes:02}:{seconds:02}"
+    return f"{minutes}:{seconds:02}"
+
+
 def draw_queue(box):
     active_unwraps = manager.active
     if not active_unwraps and not manager.preparing and not manager.pending_transfers:
         return
     row = box.box().row()
     row.alignment = "CENTER"
-    row.label(text="UV unwrap in progress")
+    row.label(text=f"UV unwrap in progress {_clock_text(manager.elapsed_seconds)}")
 
     if manager.is_viewer_active:
         viewer_ui = box.box().row()
