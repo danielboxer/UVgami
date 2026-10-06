@@ -2,6 +2,11 @@
 
 ## 2.2.0
 
+**New:**
+
+- [UVgami web unwrapper](https://uvgami.com)
+- [UVgami desktop app](https://uvgami.com/downloads)
+
 **Improvements:**
 
 - Proxy and hard surface small speedups

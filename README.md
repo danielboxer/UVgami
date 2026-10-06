@@ -5,7 +5,7 @@
 ## Quickstart
 
 > [!NOTE]
-> Check the [user guide](docs/docs.md) for more detailed documentation.
+> Check the [user guide](https://uvgami.com/docs/) for more detailed documentation.
 
 1. Download the latest `UVgami.zip` release [here](https://github.com/danielboxer/UVgami/releases/latest)
 2. Drag and drop the zip file into Blender
@@ -15,7 +15,7 @@ There are [three](#engines) supported engines.
 
 ### Automatic Updates
 
-Add this repository URL: `https://uvgami.danielboxer.dev/index.json` in Blender
+Add this repository URL: `https://uvgami.com/index.json` in Blender
 
 ![Elephant](docs/img/readme/elephant.jpg)
 
@@ -29,7 +29,7 @@ Add this repository URL: `https://uvgami.danielboxer.dev/index.json` in Blender
 
 ## Engines
 
-UVgami has three unwrapping engines, see the [docs](docs/docs.md) for more info:
+UVgami has three unwrapping engines, see the [docs](https://uvgami.com/docs/) for more info:
 
 - OptCuts (CPU): [OptCuts](https://github.com/liminchen/OptCuts) by Minchen Li et al. ([paper](https://www.cs.ubc.ca/labs/imager/tr/2018/OptCuts/))
 - xatlas (CPU): [xatlas](https://github.com/jpcy/xatlas) by Jonathan Young
