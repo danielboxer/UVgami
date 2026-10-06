@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.2.0
+
+**Improvements:**
+
+- Proxy and hard surface small speedups
+- Engine improvements on some meshes
+- Better preferences UI for engines
+
+**Bug Fixes:**
+- Fix Blender crash when opening from file browser
+
 ## 2.1.0
 
 **Improvements:**
