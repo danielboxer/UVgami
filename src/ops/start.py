@@ -7,7 +7,7 @@ import bmesh
 import bpy
 import numpy
 
-from ..engines import active_engine
+from ..engines import active_engine, get_engine
 from ..handler import handle_error
 from ..job import (
     HideInput,
@@ -724,7 +724,8 @@ class UVGAMI_OT_start(bpy.types.Operator):
             info = logger.new_info()
             self.engine = active_engine(context.scene.uvgami.engine)
             if self.engine is None:
-                self.report({"ERROR"}, "No engine installed")
+                _, error = get_engine("OPTCUTS").validate(get_preferences())
+                self.report({"ERROR"}, error)
                 logger.discard_info()
                 return {"CANCELLED"}
             info.engine = self.engine.describe()

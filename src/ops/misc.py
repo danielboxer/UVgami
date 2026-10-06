@@ -4,6 +4,7 @@ from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
 from ..utils.geometry import calc_center
+from ..utils.paths import get_addon_id, get_addon_name
 from ..utils.ui import tag_redraw
 from .stop import group_targets
 
@@ -93,8 +94,8 @@ class UVGAMI_OT_open_preferences(bpy.types.Operator):
     def execute(self, context):
         bpy.ops.screen.userpref_show()
         context.preferences.active_section = "ADDONS"
-        bpy.data.window_managers["WinMan"].addon_search = "UVgami"
-        bpy.ops.preferences.addon_show(module="UVgami")
+        context.window_manager.addon_search = get_addon_name()
+        bpy.ops.preferences.addon_show(module=get_addon_id())
         return {"FINISHED"}
 
 
