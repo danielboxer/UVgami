@@ -269,6 +269,10 @@ def following_corners(face_sizes):
     return starts[face_of] + (local + 1) % sizes[face_of]
 
 
+# a sliver's uv sign is rounding noise
+SLIVER_SHARE = 0.01
+
+
 # each corner's face, the next corner around it, and the twin across the edge
 class DenseMesh:
     def __init__(self, corners, face_sizes, positions):
@@ -284,6 +288,11 @@ class DenseMesh:
         self.lengths = numpy.linalg.norm(
             positions[self.corners] - positions[self.corners[self.following]], axis=1
         )
+        crosses = numpy.cross(
+            positions[self.corners], positions[self.corners[self.following]]
+        )
+        areas = numpy.linalg.norm(numpy.add.reduceat(crosses, self.starts), axis=1)
+        self.sliver = areas < SLIVER_SHARE * numpy.median(areas)
         self._ring_order = numpy.argsort(self.corners, kind="stable")
         self._ring_sorted = self.corners[self._ring_order]
         self._one_corner = numpy.zeros(len(positions), dtype=numpy.int64)
@@ -533,6 +542,11 @@ def _face_areas(corner_uvs, mesh, faces):
     return numpy.add.reduceat(cross, starts) * mesh.orientation[faces]
 
 
+def _flip_count(corner_uvs, mesh, faces):
+    faces = faces[~mesh.sliver[faces]]
+    return int((_face_areas(corner_uvs, mesh, faces) < 0).sum())
+
+
 RELAX_RING = 2
 # rounds past 10 remove almost nothing more
 RELAX_ROUNDS = 10
@@ -746,7 +760,7 @@ def _absorb_stray_faces(corner_uvs, drawn_by, proxy_map, mesh):
         checked, checked_corners = _guarded_faces(mesh, numpy.unique(corners[ring]))
         held_uvs = corner_uvs[checked_corners].copy()
         held_drawn = drawn_by[checked_corners].copy()
-        flips = int((_face_areas(corner_uvs, mesh, checked) < 0).sum())
+        flips = _flip_count(corner_uvs, mesh, checked)
         at = _face_map(corner_uvs, mesh, int(mesh.face_of[twin[anchor]]))
         for c in ring:
             if c not in target:
@@ -755,7 +769,7 @@ def _absorb_stray_faces(corner_uvs, drawn_by, proxy_map, mesh):
             corner_uvs[corner] = uv
             drawn_by[corner] = face
         _weld_vertices(corner_uvs, drawn_by, proxy_map, mesh, corners[ring])
-        if int((_face_areas(corner_uvs, mesh, checked) < 0).sum()) > flips:
+        if _flip_count(corner_uvs, mesh, checked) > flips:
             corner_uvs[checked_corners] = held_uvs
             drawn_by[checked_corners] = held_drawn
             return False
@@ -1022,7 +1036,7 @@ def _straighten_seams(corner_uvs, drawn_by, proxy_map, mesh):
         )
         held_uvs = corner_uvs[checked_corners].copy()
         held_drawn = drawn_by[checked_corners].copy()
-        flips = int((_face_areas(corner_uvs, mesh, checked) < 0).sum())
+        flips = _flip_count(corner_uvs, mesh, checked)
         # drawn like a neighbour already on the new side, outermost first
         same_side = {
             f: [g for g in band.neighbours(f).tolist() if g >= 0 and now[g] == now[f]]
@@ -1057,7 +1071,7 @@ def _straighten_seams(corner_uvs, drawn_by, proxy_map, mesh):
         _weld_vertices(
             corner_uvs, drawn_by, proxy_map, mesh, numpy.unique(corners[moved_corners])
         )
-        if int((_face_areas(corner_uvs, mesh, checked) < 0).sum()) > flips:
+        if _flip_count(corner_uvs, mesh, checked) > flips:
             corner_uvs[checked_corners] = held_uvs
             drawn_by[checked_corners] = held_drawn
         # the band's edges are the only ones whose seam state can have changed
