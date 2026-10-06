@@ -13,7 +13,6 @@ from .logger import logger
 from .ops.grid import add_grid, make_grid_img, make_grid_mat
 from .ops.uv import pack_objects, show_seams
 from .progress_bar import progress_bar
-from .reroute_seams import reroute_seams
 from .seams.uv_transfer import AMBIGUOUS_GEOMETRY
 from .similar import write_twin_output
 from .utils.geometry import set_origin
@@ -124,6 +123,7 @@ class UnwrapManager:
         self._pack_topology = {}
         self._drawn_panel_state = None
         self._panel_drawn_at = 0.0
+        self.session_started_at = time.monotonic()
 
     @property
     def active(self):
@@ -370,9 +370,14 @@ class UnwrapManager:
             self._panel_drawn_at = now
             tag_redraw(("UI",))
 
+    @property
+    def elapsed_seconds(self):
+        return int(time.monotonic() - self.session_started_at)
+
     # everything the queue ui draws, as a comparable value
     def _panel_state(self):
         return (
+            self.elapsed_seconds,
             len(self.results),
             self.is_viewer_active,
             tuple(p.name for p in self.preparing),
@@ -472,8 +477,9 @@ class UnwrapManager:
     def _import_and_finalize(self, unwrap, path, edge_path, added_edges):
         props = self.props
 
-        if unwrap.preserve_job is not None and unwrap.maintain_mode == "FULL":
-            reroute_seams(path, edge_path)
+        # from .reroute_seams import reroute_seams
+        # if unwrap.preserve_job is not None and unwrap.maintain_mode == "FULL":
+        #     reroute_seams(path, edge_path)
 
         output = import_obj(path, f"{unwrap.input_name}_unwrapped")
 
