@@ -206,6 +206,7 @@ class InstallEngineTask(InstallTask):
 
 class BinaryEngine(Engine):
     release = None
+    has_install_controls = True
 
     def validate(self, prefs):
         # a local build wins over the download

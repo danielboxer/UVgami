@@ -12,9 +12,17 @@ def get_dir_path():
 
 
 @functools.cache
-def get_addon_version():
+def read_manifest():
     with (get_dir_path() / "blender_manifest.toml").open("rb") as file:
-        return tomllib.load(file)["version"]
+        return tomllib.load(file)
+
+
+def get_addon_version():
+    return read_manifest()["version"]
+
+
+def get_addon_name():
+    return read_manifest()["name"]
 
 
 def get_root_package():

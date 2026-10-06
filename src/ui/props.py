@@ -334,11 +334,15 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
             "uvgami.reset_settings", text="Reset Settings", icon="FILE_REFRESH"
         )
 
+        installable = [e for e in ENGINES.values() if e.has_install_controls]
+        if not installable:
+            return
+
         box = layout.box()
         row = box.row()
         row.label(text="Engines", icon="TOOL_SETTINGS")
 
-        for engine in ENGINES.values():
+        for engine in installable:
             engine_box = box.box()
             row = engine_box.row()
             row.label(text=engine.label, icon=engine.icon)

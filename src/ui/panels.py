@@ -4,6 +4,7 @@ from ..engines import ENGINES, active_engine, get_engine, installed_engines
 from ..job import Result
 from ..logger import logger
 from ..manager import manager
+from ..utils.paths import get_addon_name
 from ..utils.ui import (
     draw_active,
     header_icon_limit,
@@ -321,7 +322,7 @@ class UVGAMI_PT_main(bpy.types.Panel):
 
     def draw_header(self, context):
         props = context.scene.uvgami
-        self.layout.label(text="UVgami")
+        self.layout.label(text=get_addon_name())
         if active_engine(props.engine) is None:
             return
         draw_active(self.layout, unwrap_settings(props), header_icon_limit(context))
@@ -557,7 +558,7 @@ class UVGAMI_PT_island_uv(bpy.types.Panel):
     bl_category = "UVgami"
 
     def draw_header(self, context):
-        self.layout.label(text="UVgami")
+        self.layout.label(text=get_addon_name())
         if not optcuts_installed():
             return
         draw_active(
