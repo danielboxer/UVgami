@@ -52,6 +52,16 @@ jobs:
           VERSION=$(grep -m1 "^$CONSTANT = " src/engines/$ENGINE/install.py | cut -d'"' -f2)
           gh release download "$ENGINE-v$VERSION" --pattern "$ENGINE-engine-*-${{ matrix.platform.pkg_name }}.zip" --dir package
 
+      - name: Check the zip against the pinned sha256
+        shell: bash
+        run: |
+          # the macos runners have shasum, not sha256sum
+          HASH=$(shasum -a 256 package/*.zip | cut -d' ' -f1)
+          if ! grep -q "\"${{ matrix.platform.pkg_name }}\": \"$HASH\"" src/engines/$ENGINE/install.py; then
+            echo "::error::$ENGINE ${{ matrix.platform.pkg_name }} zip sha256 $HASH is not pinned in install.py"
+            exit 1
+          fi
+
       # same basename match as fetch_binary in the addon
       - name: Extract the engine binary
         shell: bash

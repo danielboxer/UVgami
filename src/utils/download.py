@@ -1,3 +1,4 @@
+import hashlib
 import http.client
 import time
 import urllib.error
@@ -80,3 +81,10 @@ def _fetch(url, part, timeout, progress=None):
     written = part.stat().st_size
     if expected is not None and written != expected:
         raise DownloadError(f"expected {expected} bytes from {url}, got {written}")
+
+
+def verify_sha256(path, expected):
+    with open(path, "rb") as file:
+        actual = hashlib.file_digest(file, "sha256").hexdigest()
+    if actual != expected:
+        raise DownloadError(f"{Path(path).name} does not match its sha256")

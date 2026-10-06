@@ -16,8 +16,19 @@ from ..install_task import (
 # must match the optcuts engine VERSION
 OPTCUTS_VERSION = "1.21.10"
 OPTCUTS_MINIMUM_VERSION = "1.21.0"
+OPTCUTS_ARCHIVE_SHA256S = {
+    "windows": "072dee9d46e3f7426b14efb81cd66b2264ca76f61dd711f871f08b4756f49d92",
+    "linux": "6ceb5414da0943fbf85a6e5cd9a7bf90130ecb13b77e57c4f4ae9d228d75d9a7",
+    "macos-x64": "77c9aacbefeb19638dcbfa8e99ef2bb133cd444aead7a6a7cc4e203ba0d03215",
+    "macos-arm64": "4fc181b2e67141826e41f56492659e14da92a2dde1a7c0eef54c34ec6103c6d1",
+}
 OPTCUTS = EngineRelease(
-    "optcuts", "Optcuts", OPTCUTS_VERSION, OPTCUTS_MINIMUM_VERSION, "2 MB"
+    "optcuts",
+    "Optcuts",
+    OPTCUTS_VERSION,
+    OPTCUTS_MINIMUM_VERSION,
+    "2 MB",
+    OPTCUTS_ARCHIVE_SHA256S,
 )
 
 

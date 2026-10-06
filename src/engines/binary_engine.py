@@ -3,7 +3,7 @@ import zipfile
 
 import bpy
 
-from ..utils.download import download_file
+from ..utils.download import download_file, verify_sha256
 from ..utils.paths import (
     get_engine_binary_name,
     get_extension_dir_path,
@@ -50,12 +50,15 @@ def license_target(install_dir, member):
 
 
 class EngineRelease:
-    def __init__(self, name, label, version, minimum_version, download_size):
+    def __init__(
+        self, name, label, version, minimum_version, download_size, archive_sha256s
+    ):
         self.name = name
         self.label = label
         self.version = version
         self.minimum_version = minimum_version
         self.download_size = download_size
+        self.archive_sha256s = archive_sha256s
         self.install_op = f"uvgami.install_{name}"
 
     def install_dir(self):
@@ -114,11 +117,13 @@ class EngineRelease:
                 shutil.rmtree(old)
 
     def fetch_binary(self, install_dir):
-        asset = f"{self.name}-engine-{self.version}-{get_platform_tag()}.zip"
+        platform_tag = get_platform_tag()
+        asset = f"{self.name}-engine-{self.version}-{platform_tag}.zip"
         url = f"{RELEASES_URL}/download/{self.name}-v{self.version}/{asset}"
         archive_path = install_dir / asset
         task_state["phase"] = DOWNLOAD_PHASE
         download_file(url, archive_path, progress=report_progress)
+        verify_sha256(archive_path, self.archive_sha256s[platform_tag])
 
         binary = install_dir / get_engine_binary_name(self.name)
         with zipfile.ZipFile(archive_path) as archive:

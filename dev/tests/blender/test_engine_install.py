@@ -1,3 +1,5 @@
+import hashlib
+import io
 import zipfile
 
 import pytest
@@ -7,7 +9,11 @@ from bl_ext.user_default.UVgami.src.engines.binary_engine import (
     EngineRelease,
     parse_version,
 )
-from bl_ext.user_default.UVgami.src.utils.paths import get_engine_binary_name
+from bl_ext.user_default.UVgami.src.utils.download import DownloadError
+from bl_ext.user_default.UVgami.src.utils.paths import (
+    get_engine_binary_name,
+    get_platform_tag,
+)
 
 VERSION = "1.20.2"
 MINIMUM_VERSION = "1.20.0"
@@ -16,7 +22,7 @@ MINIMUM_VERSION = "1.20.0"
 @pytest.fixture
 def release(tmp_path, monkeypatch):
     monkeypatch.setattr(binary_engine, "get_extension_dir_path", lambda: tmp_path)
-    return EngineRelease("optcuts", "Optcuts", VERSION, MINIMUM_VERSION, "2 MB")
+    return EngineRelease("optcuts", "Optcuts", VERSION, MINIMUM_VERSION, "2 MB", {})
 
 
 @pytest.fixture
@@ -103,19 +109,39 @@ def test_local_build_never_asks_for_an_update(release, install, monkeypatch):
     assert not engine.update_pending()
 
 
+def engine_zip(package=""):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(f"{package}bin/{get_engine_binary_name('optcuts')}", "engine")
+        archive.writestr(f"{package}LICENSE.txt", "engine license")
+        archive.writestr(f"{package}licenses/OptCuts-LICENSE-MIT.txt", "mit")
+    return buffer.getvalue()
+
+
+def serve(monkeypatch, content):
+    def fake_download(url, path, progress):
+        path.write_bytes(content)
+
+    monkeypatch.setattr(binary_engine, "download_file", fake_download)
+
+
 @pytest.mark.parametrize("package", ["", "xatlas-engine-0.2.5-windows/"])
 def test_download_keeps_the_licenses_next_to_the_binary(release, monkeypatch, package):
     binary_name = get_engine_binary_name("optcuts")
-
-    def fake_download(url, path, progress):
-        with zipfile.ZipFile(path, "w") as archive:
-            archive.writestr(f"{package}bin/{binary_name}", "engine")
-            archive.writestr(f"{package}LICENSE.txt", "engine license")
-            archive.writestr(f"{package}licenses/OptCuts-LICENSE-MIT.txt", "mit")
-
-    monkeypatch.setattr(binary_engine, "download_file", fake_download)
+    content = engine_zip(package)
+    release.archive_sha256s = {get_platform_tag(): hashlib.sha256(content).hexdigest()}
+    serve(monkeypatch, content)
     release.install()
     install_dir = release.install_dir()
     assert (install_dir / binary_name).read_text() == "engine"
     assert (install_dir / "LICENSE.txt").read_text() == "engine license"
     assert (install_dir / "licenses" / "OptCuts-LICENSE-MIT.txt").read_text() == "mit"
+
+
+def test_a_zip_that_does_not_match_its_hash_is_never_installed(release, monkeypatch):
+    release.archive_sha256s = {get_platform_tag(): hashlib.sha256(b"other").hexdigest()}
+    serve(monkeypatch, engine_zip())
+    with pytest.raises(DownloadError):
+        release.install()
+    assert release.installed_version() is None
+    assert not release.install_dir().exists()
