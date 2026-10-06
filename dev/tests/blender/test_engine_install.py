@@ -1,3 +1,5 @@
+import zipfile
+
 import pytest
 from bl_ext.user_default.UVgami.src.engines import binary_engine
 from bl_ext.user_default.UVgami.src.engines.binary_engine import (
@@ -99,3 +101,21 @@ def test_local_build_never_asks_for_an_update(release, install, monkeypatch):
     # this checkout has its own build
     monkeypatch.setattr(binary_engine, "get_local_engine_path", lambda name: "engine")
     assert not engine.update_pending()
+
+
+@pytest.mark.parametrize("package", ["", "xatlas-engine-0.2.5-windows/"])
+def test_download_keeps_the_licenses_next_to_the_binary(release, monkeypatch, package):
+    binary_name = get_engine_binary_name("optcuts")
+
+    def fake_download(url, path, progress):
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(f"{package}bin/{binary_name}", "engine")
+            archive.writestr(f"{package}LICENSE.txt", "engine license")
+            archive.writestr(f"{package}licenses/OptCuts-LICENSE-MIT.txt", "mit")
+
+    monkeypatch.setattr(binary_engine, "download_file", fake_download)
+    release.install()
+    install_dir = release.install_dir()
+    assert (install_dir / binary_name).read_text() == "engine"
+    assert (install_dir / "LICENSE.txt").read_text() == "engine license"
+    assert (install_dir / "licenses" / "OptCuts-LICENSE-MIT.txt").read_text() == "mit"

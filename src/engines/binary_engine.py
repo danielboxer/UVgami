@@ -31,10 +31,22 @@ from .install_task import (
 RELEASES_URL = "https://github.com/DanielBoxer/UVgami/releases"
 
 DOWNLOAD_PHASE = "Downloading engine"
+LICENSE_FILE = "LICENSE.txt"
+LICENSES_FOLDER = "licenses"
 
 
 def engine_install_root(name):
     return get_extension_dir_path() / name
+
+
+# the engine zips nest the licenses at different depths
+def license_target(install_dir, member):
+    parts = member.split("/")
+    if parts[-1] == LICENSE_FILE:
+        return install_dir / LICENSE_FILE
+    if LICENSES_FOLDER in parts[:-1] and parts[-1]:
+        return install_dir / LICENSES_FOLDER / parts[-1]
+    return None
 
 
 class EngineRelease:
@@ -123,6 +135,13 @@ class EngineRelease:
                 raise RuntimeError(f"{asset} has no {binary.name}")
             with archive.open(member) as src, open(binary, "wb") as dst:
                 shutil.copyfileobj(src, dst)
+            for name in archive.namelist():
+                target = license_target(install_dir, name)
+                if target is None:
+                    continue
+                target.parent.mkdir(exist_ok=True)
+                with archive.open(name) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
         archive_path.unlink()
         binary.chmod(0o755)
 
