@@ -88,6 +88,9 @@ def _draw_status(header, context):
 def set_status(text, icon="CHECKMARK"):
     global _status
     _status = (text, icon) if text else None
+    # status_text_set crashes blender when no window is active
+    if bpy.context.screen is None:
+        return
     for wm in bpy.data.window_managers:
         for window in wm.windows:
             window.workspace.status_text_set(_draw_status if text else None)
