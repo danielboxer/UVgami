@@ -4,7 +4,7 @@
   "data": [
     {
       "schema_version": "1.0.0",
-      "maintainer": "Daniel Boxer <uvgami@danielboxer.dev>",
+      "maintainer": "Daniel Boxer <daniel@uvgami.com>",
       "type": "add-on",
       "license": [
         "SPDX:GPL-3.0-or-later"
@@ -14,7 +14,7 @@
       ],
       "id": "uvgami",
       "name": "UVgami",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "blender_version_min": "4.3.0",
       "tagline": "Automatic UV unwrapping",
       "website": "https://github.com/DanielBoxer/UVgami",
@@ -25,9 +25,9 @@
         "files": "Import/export OBJ",
         "network": "Download the unwrapping engines from GitHub releases"
       },
-      "archive_url": "https://github.com/danielboxer/UVgami/releases/download/v2.1.0/UVgami.zip",
-      "archive_size": 200107,
-      "archive_hash": "sha256:fda57a911863dc3e7e959502842af86ad296306cea7d2d30239ea3de8eafe0bc"
+      "archive_url": "https://github.com/danielboxer/UVgami/releases/download/v2.2.0/UVgami.zip",
+      "archive_size": 202649,
+      "archive_hash": "sha256:8342de2fa99d86a26f6a1fc0a5a90cf848eb424ed44796f5e31a1b7b1f041f74"
     }
   ]
 }
