@@ -6,7 +6,7 @@ Blender addon that does automatic UV unwrapping. Three engines: optcuts (C++ bin
 
 - `src/` is the addon, `src/engines/__init__.py` lists the engines. `dev/` is not part of the addon.
 - `dev/tests/` is the addon and CLI tests. `dev/tests/blender/` runs inside a real Blender through its `run.py` and is skipped by the venv run.
-- `docs/docs.md` (user guide) and `README.md` are human only. Never edit them, propose the change instead. Anything an agent writes goes in the agent notes folder.
+- `README.md` is human only. Never edit it, propose the change instead. Anything an agent writes goes in the agent notes folder.
 - Keep this file and the agent notes short: only what an agent would get wrong without it.
 
 ## Commands

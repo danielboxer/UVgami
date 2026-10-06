@@ -11,7 +11,7 @@ name = "UVgami"
 version = "2.2.0"
 blender_version_min = "4.3.0"
 tagline = "Automatic UV unwrapping"
-website = "https://github.com/DanielBoxer/UVgami"
+website = "https://uvgami.com"
 
 # https://docs.blender.org/manual/en/dev/advanced/extensions/tags.html
 tags = ["UV"]
