@@ -14,7 +14,7 @@ from ..install_task import (
 )
 
 # must match the optcuts engine VERSION
-OPTCUTS_VERSION = "1.21.9"
+OPTCUTS_VERSION = "1.21.10"
 OPTCUTS_MINIMUM_VERSION = "1.21.0"
 OPTCUTS = EngineRelease(
     "optcuts", "Optcuts", OPTCUTS_VERSION, OPTCUTS_MINIMUM_VERSION, "2 MB"

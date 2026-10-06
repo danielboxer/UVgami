@@ -8,7 +8,7 @@ from ..binary_engine import (
 )
 
 # must match the xatlas engine VERSION
-XATLAS_VERSION = "0.2.4"
+XATLAS_VERSION = "0.2.5"
 XATLAS_MINIMUM_VERSION = "0.2.0"
 XATLAS = EngineRelease(
     "xatlas", "xatlas", XATLAS_VERSION, XATLAS_MINIMUM_VERSION, "300 KB"
