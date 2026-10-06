@@ -42,6 +42,7 @@ def fake_xatlas(monkeypatch):
 
 @pytest.fixture
 def fake_partuv(monkeypatch):
+    pytest.importorskip("partuv")
     import partuv.cli
 
     calls = {}
@@ -411,6 +412,7 @@ def test_checkpoint_rejected_for_geometric(triangle, tmp_path, capsys):
 
 
 def test_partuv_error_maps_exit_code(triangle, monkeypatch, capsys):
+    pytest.importorskip("partuv")
     import partuv.cli
     from partuv.common import UnwrapError as PartuvError
 
