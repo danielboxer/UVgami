@@ -20,6 +20,7 @@ class Engine:
     supports_import_uvs = False
     # the proxy finish flattens with optcuts
     supports_proxy = False
+    has_install_controls = False
 
     def describe(self):
         return self.label

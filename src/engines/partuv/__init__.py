@@ -130,6 +130,7 @@ class PartuvEngine(Engine):
     description = "GPU engine. Fewer islands and can be faster on dense meshes"
     icon = "MOD_EXPLODE"
     property_group = UVGAMI_PG_partuv
+    has_install_controls = True
     classes = (UVGAMI_PG_partuv, UVGAMI_OT_install_partuv, UVGAMI_OT_uninstall_partuv)
 
     def is_available(self):
