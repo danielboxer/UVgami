@@ -1,6 +1,3 @@
-import sys
-
-import bpy
 import numpy
 
 from .ops.guides import SEAM_RESTRICTIONS_GROUP
@@ -35,13 +32,10 @@ def flatten_engine():
     if error is not None:
         raise FlattenError(error)
     return FlattenEngine(
-        engine.command(engine_ctx), get_extension_dir_path() / "preseed"
+        engine.command(engine_ctx),
+        get_extension_dir_path() / "preseed",
+        engine.build_env(engine_ctx),
     )
-
-
-# python_args isolates the worker from the user's site and PYTHONPATH
-def worker_python():
-    return sys.executable, list(bpy.app.python_args)
 
 
 # the same group the engine reads, higher repels seams
@@ -150,13 +144,11 @@ def preseed_work(obj, angle, marked="NONE", weights=None, auto=False, mirrors=No
     mesh = obj.data
     marks = marked_seams(mesh) if (marked != "NONE" or auto) else frozenset()
     engine = flatten_engine()
-    python = worker_python()
     worker = WorkerProcess(
-        python,
         preseed_job,
         engine.engine_command,
         engine.workdir,
-        python,
+        engine.env,
         vertex_position_array(mesh),
         *face_vertex_arrays(mesh),
         angle,
@@ -193,7 +185,7 @@ def build_seam_uvs(obj, angle=CREASE_ANGLE, marked="NONE", weights=None, only=No
         weights,
         only,
         marked_seams(mesh) if marked != "NONE" else frozenset(),
-        python=worker_python(),
+        parallel=True,
     )
     if result is None:
         return False

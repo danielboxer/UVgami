@@ -13,7 +13,6 @@ from .hard_surface import (
     apply_seams_except_faces,
     flatten_engine,
     marked_seams,
-    worker_python,
 )
 from .logger import logger
 from .objfile import merge_obj_files
@@ -326,7 +325,6 @@ class TransferUVs(Transfer):
 
     def _begin(self, inputs):
         self.task = WorkerProcess(
-            worker_python(),
             transfer_exact_job,
             *inputs,
             repack=self.repack_input,
@@ -624,7 +622,6 @@ class ProxyUVs(Transfer):
         self.progress = LOOKUP_SHARE * self._lookup.fraction
         if self._lookup.done:
             self.task = WorkerProcess(
-                worker_python(),
                 transfer_from_lookup,
                 *self._inputs,
                 self._lookup.face_of_vertex,
