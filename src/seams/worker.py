@@ -1,8 +1,10 @@
 import importlib
 import inspect
+import os
 import pickle
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import traceback
@@ -24,13 +26,6 @@ LOG_UNLOCK_POLL_SECONDS = 0.001
 
 SEAMS_PACKAGE = "seams"
 SOURCE_FOLDER = Path(__file__).parents[1]
-# the bare interpreter can't import the addon package
-BOOTSTRAP = (
-    "import sys;"
-    "sys.path.insert(0, sys.argv[1]);"
-    "from seams.worker import run_in_worker;"
-    "run_in_worker(sys.argv[2])"
-)
 
 
 class WorkerError(RuntimeError):
@@ -70,25 +65,25 @@ class _ResultUnpickler(pickle.Unpickler):
         return super().find_class(module, name)
 
 
+def python_process(import_folders):
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(map(str, import_folders))}
+    # blender's -I minus -E, which ignores PYTHONPATH
+    return [sys.executable, "-s", "-P"], env
+
+
 # runs a seams function in its own python process
 class WorkerProcess:
     # args and kwargs cross to the worker pickled
-    def __init__(self, python, function, *args, **kwargs):
+    def __init__(self, function, *args, **kwargs):
         self._folder = Path(tempfile.mkdtemp(prefix="uvgami-worker-"))
         module = SEAMS_PACKAGE + function.__module__[len(__package__) :]
         call = (module, function.__name__, args, kwargs)
         (self._folder / INPUT_NAME).write_bytes(
             pickle.dumps(call, pickle.HIGHEST_PROTOCOL)
         )
-        executable, python_arguments = python
-        command = [
-            executable,
-            *python_arguments,
-            "-c",
-            BOOTSTRAP,
-            str(SOURCE_FOLDER),
-            str(self._folder),
-        ]
+        python_command, env = python_process([SOURCE_FOLDER])
+        run_worker = "import sys; from seams.worker import run_in_worker; run_in_worker(sys.argv[1])"
+        command = [*python_command, "-c", run_worker, str(self._folder)]
         try:
             with (
                 (self._folder / STDOUT_NAME).open("wb") as stdout,
@@ -99,6 +94,7 @@ class WorkerProcess:
                     stdin=subprocess.DEVNULL,
                     stdout=stdout,
                     stderr=stderr,
+                    env=env,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
         except OSError:

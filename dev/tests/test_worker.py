@@ -20,34 +20,31 @@ from seams import (  # noqa: E402
 )
 from seams.worker import WorkerProcess, last_progress  # noqa: E402
 
-# the venv interpreter stands in for blender's bundled one
-PYTHON = (sys.executable, ())
-
 TWO_TRIANGLES = [(0, 1, 2), (1, 3, 2)]
 THREE_FACES_ON_ONE_EDGE = [(0, 1, 2), (0, 1, 3), (0, 1, 4)]
 
 
 def test_result_comes_back():
-    worker = WorkerProcess(PYTHON, face_edges, TWO_TRIANGLES)
+    worker = WorkerProcess(face_edges, TWO_TRIANGLES)
     assert worker.result() == face_edges(TWO_TRIANGLES)
     assert worker.done()
 
 
 def test_error_is_raised_as_the_class_the_function_raised():
-    worker = WorkerProcess(PYTHON, check_manifold, THREE_FACES_ON_ONE_EDGE)
+    worker = WorkerProcess(check_manifold, THREE_FACES_ON_ONE_EDGE)
     with pytest.raises(FlattenError, match="Non Manifold"):
         worker.result()
 
 
 def test_the_function_sees_the_cancel():
-    worker = WorkerProcess(PYTHON, check_cancelled)
+    worker = WorkerProcess(check_cancelled)
     worker.cancel()
     with pytest.raises(Cancelled):
         worker.result()
 
 
 def test_result_removes_the_worker_folder():
-    worker = WorkerProcess(PYTHON, face_edges, TWO_TRIANGLES)
+    worker = WorkerProcess(face_edges, TWO_TRIANGLES)
     folder = worker._folder
     assert folder.is_dir()
     worker.result()

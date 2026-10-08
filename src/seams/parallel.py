@@ -34,7 +34,6 @@ def chunk_seams(verts, chunk, job):
 
 # the parts keep the mesh's vertex ids, reindexing would move the tie breaks
 def seam_edges_parallel(
-    python,
     verts,
     faces,
     angle=CREASE_ANGLE,
@@ -61,9 +60,7 @@ def seam_edges_parallel(
         [(part, [faces[i] for i in part]) for part in chunk]
         for chunk in balanced_chunks(parts, count)
     ]
-    workers = [
-        WorkerProcess(python, chunk_seams, verts, chunk, job) for chunk in chunks
-    ]
+    workers = [WorkerProcess(chunk_seams, verts, chunk, job) for chunk in chunks]
     seams = set()
     closed = True
     try:
@@ -84,6 +81,6 @@ def seam_edges_parallel(
             worker.close()
     if not seams and angle > CREASE_ANGLE and closed:
         return seam_edges_parallel(
-            python, verts, faces, CREASE_ANGLE, rims, weights, forced, cancelled
+            verts, faces, CREASE_ANGLE, rims, weights, forced, cancelled
         )
     return seams

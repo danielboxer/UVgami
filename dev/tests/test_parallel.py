@@ -20,8 +20,6 @@ from seams import (  # noqa: E402
 from seams.parallel import balanced_chunks  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
-# the venv interpreter stands in for blender's bundled one
-PYTHON = (sys.executable, ())
 
 
 def read_obj(path):
@@ -49,7 +47,7 @@ def test_parts_match_the_whole_run():
     assert len(vertex_components(faces)) == 3
     whole = seam_edges(verts, faces)
     assert whole
-    assert seam_edges_parallel(PYTHON, verts, faces) == whole
+    assert seam_edges_parallel(verts, faces) == whole
 
 
 def test_forced_and_weights_reach_the_workers():
@@ -57,7 +55,7 @@ def test_forced_and_weights_reach_the_workers():
     forced = {tuple(sorted(faces[0][:2]))}
     weights = {v: 1.0 for v in faces[-1]}
     whole = seam_edges(verts, faces, weights=weights, forced=forced)
-    parallel = seam_edges_parallel(PYTHON, verts, faces, weights=weights, forced=forced)
+    parallel = seam_edges_parallel(verts, faces, weights=weights, forced=forced)
     assert parallel == whole
     assert forced <= parallel
 
@@ -65,15 +63,15 @@ def test_forced_and_weights_reach_the_workers():
 def test_cancel_before_the_workers_start():
     verts, faces = parts_mesh()
     with pytest.raises(Cancelled):
-        seam_edges_parallel(PYTHON, verts, faces, cancelled=lambda: True)
+        seam_edges_parallel(verts, faces, cancelled=lambda: True)
 
 
-def test_worker_failure_is_reported():
+def test_worker_failure_is_reported(monkeypatch):
     verts, faces = parts_mesh()
+    # python exits at startup without its standard library
+    monkeypatch.setenv("PYTHONHOME", "missing")
     with pytest.raises(RuntimeError, match="seam worker failed"):
-        seam_edges_parallel(
-            (sys.executable, ("-c", "raise SystemExit(3)")), verts, faces
-        )
+        seam_edges_parallel(verts, faces)
 
 
 def test_balanced_chunks_level_the_face_counts():

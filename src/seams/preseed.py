@@ -1,4 +1,3 @@
-import functools
 import shutil
 import subprocess
 import tempfile
@@ -76,9 +75,10 @@ def _stderr_path(workdir):
 
 # the preview operator and a builder thread can flatten at once
 class FlattenEngine:
-    def __init__(self, engine_command, workdir):
+    def __init__(self, engine_command, workdir, env=None):
         self.engine_command = [str(part) for part in engine_command]
         self.workdir = Path(workdir)
+        self.env = env
 
     # with cancelled or progress the engine is polled instead of waited on
     def flatten(self, verts, faces, seams, cancelled=None, progress=None):
@@ -126,7 +126,11 @@ class FlattenEngine:
                 _stderr_path(workdir).open("wb") as stderr,
             ):
                 process = subprocess.Popen(
-                    args, stdout=stdout, stderr=stderr, creationflags=creationflags
+                    args,
+                    stdout=stdout,
+                    stderr=stderr,
+                    env=self.env,
+                    creationflags=creationflags,
                 )
         except OSError as error:
             shutil.rmtree(workdir, ignore_errors=True)
@@ -220,7 +224,7 @@ def hard_faces(verts, faces, marks, marked="NONE", cancelled=None):
 def preseed_job(
     engine_command,
     workdir,
-    python,
+    engine_env,
     positions,
     corners,
     totals,
@@ -242,7 +246,7 @@ def preseed_job(
         if len(only) == len(faces):
             only = None
     result = preseed_uvs(
-        FlattenEngine(engine_command, workdir),
+        FlattenEngine(engine_command, workdir, engine_env),
         verts,
         faces,
         angle,
@@ -252,7 +256,7 @@ def preseed_job(
         marks,
         mirrors,
         cancelled,
-        python,
+        parallel=True,
     )
     if result is None:
         return None
@@ -273,7 +277,7 @@ def preseed_uvs(
     marked_seams=frozenset(),
     mirrors=None,
     cancelled=None,
-    python=None,
+    parallel=False,
 ):
     subset = list(range(len(faces))) if only is None else sorted(only)
     edges = face_edges(faces)
@@ -282,11 +286,7 @@ def preseed_uvs(
     else:
         forced = set(marked_seams) if marked == "ADD" else None
         detect = faces if only is None else [faces[i] for i in subset]
-        run = (
-            seam_edges
-            if python is None
-            else functools.partial(seam_edges_parallel, python)
-        )
+        run = seam_edges_parallel if parallel else seam_edges
         seams = run(
             verts, detect, angle, weights=weights, forced=forced, cancelled=cancelled
         )
