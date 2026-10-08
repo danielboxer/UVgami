@@ -69,8 +69,8 @@ jobs:
       - name: Check the zip against the pinned sha256
         shell: bash
         run: |
-          # the macos runners have shasum, not sha256sum
-          HASH=$(shasum -a 256 package/*.zip | cut -d' ' -f1)
+          # windows git bash has no shasum, macos has no sha256sum
+          HASH=$(python -c "import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], 'rb').read()).hexdigest())" package/*.zip)
           if ! grep -q "\"${{ matrix.platform.pkg_name }}\": \"$HASH\"" src/engines/$ENGINE/install.py; then
             echo "::error::$ENGINE ${{ matrix.platform.pkg_name }} zip sha256 $HASH is not pinned in install.py"
             exit 1
