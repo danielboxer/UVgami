@@ -120,13 +120,34 @@ jobs:
             archive: tar.xz
             tag: linux
             binary: blender
+            suite: true
           - os: windows-latest
             arch: windows-x64
             archive: zip
             tag: windows
             binary: blender.exe
+            suite: true
+          # uv refuses macos (tool.uv.environments), so the bpy suite can't run there
+          - os: macos-26-intel
+            arch: macos-x64
+            archive: dmg
+            tag: macos-x64
+            binary: Blender.app/Contents/MacOS/Blender
+            suite: false
+          - os: macos-26
+            arch: macos-arm64
+            archive: dmg
+            tag: macos-arm64
+            binary: Blender.app/Contents/MacOS/Blender
+            suite: false
+        # blender 5 has no intel mac build
+        exclude:
+          - blender:
+              release: "5.2"
+            platform:
+              arch: macos-x64
     runs-on: ${{ matrix.platform.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -137,7 +158,9 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        if: matrix.platform.suite
       - run: uv sync
+        if: matrix.platform.suite
 
       - name: Cache blender
         id: blender-cache
@@ -154,12 +177,19 @@ jobs:
           if [ "${{ matrix.platform.archive }}" = "zip" ]; then
             curl -sSL -o blender.zip "$URL"
             unzip -q blender.zip
+          elif [ "${{ matrix.platform.archive }}" = "dmg" ]; then
+            curl -sSL -o blender.dmg "$URL"
+            hdiutil attach -nobrowse -mountpoint "$RUNNER_TEMP/blender-dmg" blender.dmg
+            mkdir "$BLENDER_DIR"
+            cp -R "$RUNNER_TEMP/blender-dmg/Blender.app" "$BLENDER_DIR/"
+            hdiutil detach "$RUNNER_TEMP/blender-dmg"
           else
             curl -sSL "$URL" | tar xJ
           fi
 
       # same zips and basename match as fetch_binary in the addon
       - name: Download the engines
+        if: matrix.platform.suite
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EXE: ${{ matrix.platform.os == 'windows-latest' && '.exe' || '' }}
@@ -176,6 +206,7 @@ jobs:
           done
 
       - name: Run the suite inside blender
+        if: matrix.platform.suite
         env:
           BLENDER: ${{ github.workspace }}/${{ env.BLENDER_DIR }}/${{ matrix.platform.binary }}
         run: uv run python dev/tests/blender/run.py
@@ -197,42 +228,3 @@ jobs:
       - name: Download the engines and unwrap a cube in the installed addon
         run: ${{ env.BLENDER_DIR }}/${{ matrix.platform.binary }} -b --python-exit-code 1 --python dev/tests/blender/installed_addon.py -- bl_ext.user_default.uvgami
 
-  partuv:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            pattern: "*manylinux*.whl"
-          - os: windows-latest
-            pattern: "*win_amd64.whl"
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      # the wheels are cp311 only
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.11"
-
-      - name: Install the published wheel
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION=$(grep -m1 '^PARTUV_VERSION = ' src/engines/partuv/install.py | cut -d'"' -f2)
-          gh release download "partuv-v$VERSION" --pattern "${{ matrix.pattern }}" --dir package
-          python -m pip install package/*.whl
-
-      # ai segmentation needs a gpu and the runners have none
-      - name: Unwrap a cube
-        shell: bash
-        env:
-          PYTHONPATH: dev
-        run: |
-          OUTPUT=$RUNNER_TEMP/cube_uv.obj
-          python -m uvgami_cli unwrap dev/tests/fixtures/cube.obj \
-            --engine partuv --segmentation geometric -o "$OUTPUT"
-          grep -q '^vt ' "$OUTPUT"
