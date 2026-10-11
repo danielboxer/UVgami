@@ -2,9 +2,8 @@ import bisect
 import collections
 import math
 
-from .islands import SPLIT_ASPECT
 from .mesh import build, cross, face_keys, find, norm
-from .regions import CREASE_ANGLE, partition
+from .regions import CREASE_ANGLE, SPLIT_ASPECT, partition
 
 # a measured elbow fills 0.31 of the middle band, a screwdriver handle 0.07
 SWEEP_BAND = 0.1

@@ -3,9 +3,10 @@ import functools
 import heapq
 import math
 
-from .islands import SPLIT_ASPECT
 from .mesh import LOW_ANGLE, cross, find, norm, pair, turn_angle
 
+# length squared over uv area, about length/width
+SPLIT_ASPECT = 6.0
 # a fraction of the diagonal, so a beveled cube can't get an oversized width
 WIDTH_CAP = 0.05
 # no clean gap separates real surfaces from narrow bands

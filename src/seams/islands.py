@@ -16,9 +16,8 @@ from .mesh import (
     weighted_normals,
 )
 from .rectify import flatten_distortion
+from .regions import SPLIT_ASPECT
 
-# length squared over uv area, about length/width
-SPLIT_ASPECT = 6.0
 # length alone must not drag texture use under this
 SPLIT_TARGET = 0.5
 # a clean island is scanned for cuts once it passes this fraction of the cap
