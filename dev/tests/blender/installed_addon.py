@@ -8,7 +8,6 @@ sys.path.append(str(Path(__file__).parent))
 import timer_pump  # noqa: E402
 
 CUBE = Path(__file__).parents[1] / "fixtures" / "cube.obj"
-ENGINE_NAMES = ("OPTCUTS", "XATLAS")
 START_TIMEOUT_SECONDS = 60
 UNWRAP_TIMEOUT_SECONDS = 300
 
@@ -31,6 +30,10 @@ def unwrap_cube(module, engine_name):
     return None
 
 
+def engines_to_check(engines):
+    return [engine for engine in engines.ENGINES.values() if engine.is_available()]
+
+
 def check_installed_addon(module, prepare_engines):
     bpy.ops.preferences.addon_enable(module=module)
     paths = importlib.import_module(module + ".src.utils.paths")
@@ -41,12 +44,12 @@ def check_installed_addon(module, prepare_engines):
     engines.invalidate_engine_caches()
 
     failures = []
-    for name in ENGINE_NAMES:
-        error = engines.get_engine(name).validate(prefs)[1] or unwrap_cube(module, name)
+    for engine in engines_to_check(engines):
+        error = engine.validate(prefs)[1] or unwrap_cube(module, engine.id)
         if error:
-            failures.append(f"{name}: {error}")
+            failures.append(f"{engine.id}: {error}")
         else:
-            print(f"{name}: unwrapped")
+            print(f"{engine.id}: unwrapped")
 
     bpy.ops.preferences.addon_disable(module=module)
     bpy.ops.preferences.addon_enable(module=module)
@@ -54,10 +57,15 @@ def check_installed_addon(module, prepare_engines):
         raise AssertionError("\n".join(failures))
 
 
-# the same download the preferences button runs, minus its thread
+# the same downloads the preferences buttons run, minus their thread
 def download_engines(engines):
-    for name in ENGINE_NAMES:
-        engines.get_engine(name).release.install()
+    for engine in engines_to_check(engines):
+        if engine.id == "PARTUV":
+            install = importlib.import_module(engines.__name__ + ".partuv.install")
+            # ai segmentation needs a gpu and the runners have none
+            install.install_partuv(ai=False)
+        else:
+            engine.release.install()
 
 
 if __name__ == "__main__":
