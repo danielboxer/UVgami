@@ -32,7 +32,7 @@ STRAIGHTEN_SWEEPS = 4
 SPLIT_ARC_BAND = 0.65
 # an island thinner than this fraction of its outer distance is a disk
 SPLIT_ARC_ANNULUS = 0.3
-# measured on pipe_wrench: slice crumbs under 0.0004, kept pieces from 0.0037
+# slice crumbs measure under 0.0004, kept pieces from 0.0037
 FRAGMENT_SHARE = 0.002
 # blender decides islands from uv coordinates, an exact shared line stays one
 SPLIT_GAP = 0.98

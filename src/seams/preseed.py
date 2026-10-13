@@ -7,9 +7,10 @@ from pathlib import Path
 import numpy
 
 from .cancel import Cancelled, check_cancelled
+from .islands import polygon_area
 from .mesh import face_edges, faces_from_arrays, vertex_components
 from .parallel import seam_edges_parallel
-from .pipeline import is_hard_surface, seam_edges
+from .pipeline import WholeMesh, is_hard_surface, seam_edges, whole_mesh_inputs
 from .regions import CREASE_ANGLE
 from .symmetry import mirror_seams
 from .worker import last_progress, remove_folder, stderr_tail
@@ -210,11 +211,13 @@ def _flattenable(subset, edges, seams):
 # a marked part is hard however its geometry reads
 def hard_faces(verts, faces, marks, marked="NONE", cancelled=None):
     marked_verts = {v for edge in marks for v in edge} if marked != "NONE" else set()
+    model_area = sum(polygon_area(verts, face) for face in faces)
     hard = set()
     for comp in vertex_components(faces):
         check_cancelled(cancelled)
         if (marked_verts and marked_verts & {v for fi in comp for v in faces[fi]}) or (
-            marked != "ONLY" and is_hard_surface(verts, [faces[fi] for fi in comp])
+            marked != "ONLY"
+            and is_hard_surface(verts, [faces[fi] for fi in comp], model_area)
         ):
             hard.update(comp)
     return hard
@@ -285,10 +288,21 @@ def preseed_uvs(
         seams = set(marked_seams)
     else:
         forced = set(marked_seams) if marked == "ADD" else None
-        detect = faces if only is None else [faces[i] for i in subset]
+        detect = faces
+        whole = None
+        if only is not None:
+            # region widths and tie breaks come off the whole model, skipped parts included
+            detect = [faces[i] for i in subset]
+            whole = WholeMesh(*whole_mesh_inputs(verts, faces, forced=forced), subset)
         run = seam_edges_parallel if parallel else seam_edges
         seams = run(
-            verts, detect, angle, weights=weights, forced=forced, cancelled=cancelled
+            verts,
+            detect,
+            angle,
+            weights=weights,
+            forced=forced,
+            cancelled=cancelled,
+            whole=whole,
         )
     if mirrors:
         allowed = edges if only is None else face_edges([faces[i] for i in subset])

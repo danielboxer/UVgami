@@ -24,12 +24,17 @@ def balanced_chunks(parts, count):
 # what one worker runs
 def chunk_seams(verts, chunk, job):
     whole = WholeMesh(job.pop("min_width"), job.pop("model_area"), None)
-    return [
-        seams_at_angle(
-            verts, faces, cancelled=None, whole=whole._replace(face_ids=ids), **job
+    mesh_ids = job.pop("face_ids")
+    results = []
+    for ids, faces in chunk:
+        if mesh_ids is not None:
+            ids = [mesh_ids[i] for i in ids]
+        results.append(
+            seams_at_angle(
+                verts, faces, cancelled=None, whole=whole._replace(face_ids=ids), **job
+            )
         )
-        for ids, faces in chunk
-    ]
+    return results
 
 
 # the parts keep the mesh's vertex ids, reindexing would move the tie breaks
@@ -41,12 +46,16 @@ def seam_edges_parallel(
     weights=None,
     forced=None,
     cancelled=None,
+    whole=None,
 ):
     parts = vertex_components(faces)
     count = min(os.cpu_count() or 1, len(parts))
     if count < 2:
-        return seam_edges(verts, faces, angle, rims, weights, forced, cancelled)
-    min_width, model_area = whole_mesh_inputs(verts, faces, rims, forced)
+        return seam_edges(verts, faces, angle, rims, weights, forced, cancelled, whole)
+    if whole is None:
+        min_width, model_area = whole_mesh_inputs(verts, faces, rims, forced)
+    else:
+        min_width, model_area = whole.min_width, whole.model_area
     check_cancelled(cancelled)
     job = {
         "angle": angle,
@@ -55,6 +64,7 @@ def seam_edges_parallel(
         "forced": forced,
         "min_width": min_width,
         "model_area": model_area,
+        "face_ids": None if whole is None else whole.face_ids,
     }
     chunks = [
         [(part, [faces[i] for i in part]) for part in chunk]
@@ -81,6 +91,6 @@ def seam_edges_parallel(
             worker.close()
     if not seams and angle > CREASE_ANGLE and closed:
         return seam_edges_parallel(
-            verts, faces, CREASE_ANGLE, rims, weights, forced, cancelled
+            verts, faces, CREASE_ANGLE, rims, weights, forced, cancelled, whole
         )
     return seams

@@ -523,7 +523,7 @@ class UVGAMI_PT_symmetry(EnginePanel, bpy.types.Panel):
 
         # only the hard surface preseed can mirror seams on the whole mesh
         engine = active_engine(props.engine)
-        if engine is not get_engine("OPTCUTS") or not props.optcuts.use_hard_surface:
+        if engine is not get_engine("OPTCUTS") or props.optcuts.surface_mode != "HARD":
             row = box.row()
             row.label(text="Mesh will be cut and mirrored", icon="ERROR")
 
