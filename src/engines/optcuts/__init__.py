@@ -19,31 +19,29 @@ HARD_SURFACE_ANGLE = 66
 PRIORITY_VALUES = {"LESS_STRETCH": "4.05", "BALANCED": "4.2", "FEWER_SEAMS": "5.0"}
 
 
+SURFACE_MODES = [
+    ("ORGANIC", "Organic", "Let the engine place every seam"),
+    ("HARD", "Hard Surface", "Cut seams on sharp features before the engine runs"),
+    ("AUTO", "Auto", "Unwrap each loose part as hard surface or organic by its shape"),
+]
+SURFACE_MODE_LABELS = {mode: label for mode, label, _ in SURFACE_MODES}
+
+
 class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
-    use_hard_surface: bpy.props.BoolProperty(
-        name="",
-        description="Cut seams on sharp features. Good for mechanical shapes",
+    surface_mode: bpy.props.EnumProperty(
+        name="Mode",
+        description="Whether seams follow sharp features or the engine places them",
+        items=SURFACE_MODES,
+        default="AUTO",
     )
-    # hard_surface_auto: bpy.props.BoolProperty(
-    #     name="Auto",
-    #     description=(
-    #         "Automatically unwrap sharp objects in hard surface mode and"
-    #         " otherwise in normal mode"
-    #     ),
-    # )
-    # hard_surface_angle: bpy.props.FloatProperty(
-    #     name="Angle",
-    #     description="What counts as a sharp feature. Lower keeps more seams",
-    #     subtype="ANGLE",
-    #     default=math.radians(66),
-    #     min=math.radians(1),
-    #     max=math.radians(180),
-    # )
 
     @property
     def is_auto(self):
-        # return self.use_hard_surface and self.hard_surface_auto
-        return False
+        return self.surface_mode == "AUTO"
+
+    @property
+    def cuts_sharp_features(self):
+        return self.surface_mode != "ORGANIC"
 
 
 # class UVGAMI_OT_quick_unwrap(bpy.types.Operator):
@@ -105,42 +103,6 @@ class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
 #         return {"FINISHED"}
 
 
-# class UVGAMI_PT_hard_surface(bpy.types.Panel):
-#     bl_label = "Hard Surface"
-#     bl_space_type = "VIEW_3D"
-#     bl_region_type = "UI"
-#     bl_category = "UVgami"
-#     bl_parent_id = "UVGAMI_PT_main"
-#     bl_options = {"DEFAULT_CLOSED"}
-#     bl_order = 0
-#
-#     @classmethod
-#     def poll(cls, context):
-#         # imported here: engines imports this module back
-#         from .. import active_engine
-#
-#         return active_engine(context.scene.uvgami.engine) is ENGINE
-#
-#     def draw_header(self, context):
-#         self.layout.prop(context.scene.uvgami.optcuts, "use_hard_surface")
-#
-#     def draw(self, context):
-#         optcuts = context.scene.uvgami.optcuts
-#         layout = self.layout
-#         layout.active = optcuts.use_hard_surface
-#         box = layout.box()
-#
-#         row = box.row()
-#         row.alignment = "CENTER"
-#         row.label(text="Hard Surface", icon="MOD_BEVEL")
-#
-#         box.prop(optcuts, "hard_surface_auto")
-#
-#         row = box.row()
-#         row.label(icon="DRIVER_ROTATIONAL_DIFFERENCE", text="Angle")
-#         row.prop(optcuts, "hard_surface_angle", text="")
-
-
 class OptcutsEngine(OptcutsInstall):
     id = "OPTCUTS"
     enum_value = 0
@@ -155,7 +117,6 @@ class OptcutsEngine(OptcutsInstall):
         UVGAMI_PG_optcuts,
         *OptcutsInstall.classes,
         # UVGAMI_OT_quick_unwrap,
-        # UVGAMI_PT_hard_surface,
     )
     supports_guided = True
     supports_viewer = True
@@ -165,34 +126,29 @@ class OptcutsEngine(OptcutsInstall):
     supports_proxy = True
 
     def draw_settings(self, layout, props):
-        split = layout.split(factor=0.7)
-        split.label(icon="MOD_BEVEL", text="Hard Surface")
-        split.prop(props.optcuts, "use_hard_surface")
+        row = layout.row()
+        row.label(icon="MOD_BEVEL", text="Mode")
+        row.prop(props.optcuts, "surface_mode", text="")
 
     def active_settings(self, props):
         return only_active(
             (
                 (
                     "MOD_BEVEL",
-                    "Hard Surface",
-                    "optcuts.use_hard_surface",
-                    is_non_default(props, "optcuts.use_hard_surface"),
+                    SURFACE_MODE_LABELS[props.optcuts.surface_mode],
+                    "optcuts.surface_mode",
+                    is_non_default(props, "optcuts.surface_mode"),
                 ),
-                # (
-                #     "AUTO",
-                #     "Hard Surface Auto",
-                #     "optcuts.hard_surface_auto",
-                #     optcuts.is_auto,
-                # ),
             )
         )
 
+    # the auto preseed leaves the organic parts' uvs for the engine to import
     def import_uvs_ignored(self, props):
-        return props.optcuts.use_hard_surface
+        return props.optcuts.surface_mode == "HARD"
 
     def prepare_uvs(self, obj, props):
         optcuts = props.optcuts
-        if not optcuts.use_hard_surface:
+        if not optcuts.cuts_sharp_features:
             return props.import_uvs
         only = None
         if optcuts.is_auto:
@@ -211,7 +167,7 @@ class OptcutsEngine(OptcutsInstall):
 
     def preseed_work(self, obj, props, mirrors=None):
         optcuts = props.optcuts
-        if not optcuts.use_hard_surface:
+        if not optcuts.cuts_sharp_features:
             return None
         return preseed_work(
             obj,

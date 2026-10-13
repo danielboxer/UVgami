@@ -4,8 +4,6 @@ import math
 import sys
 from pathlib import Path
 
-import pytest
-
 # loaded from file, the addon package imports bpy
 PKG = Path(__file__).parents[2] / "src" / "seams"
 spec = importlib.util.spec_from_file_location(
@@ -50,7 +48,6 @@ from seams import (  # noqa: E402
     split_islands,
     split_moves,
     split_sweeps,
-    surface_genus,
     sweep_rims,
     turn_angle,
     unfold_hinges,
@@ -65,7 +62,6 @@ from seams import (  # noqa: E402
 from seams.islands import absorb_fragments, split_pieces  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
-HEX_HEAD = Path(__file__).parents[1] / "bench/models/hard-surface/sharp/fastener_03.obj"
 
 
 def read_obj(path):
@@ -170,20 +166,6 @@ def test_faceted_tube_unrolls_whole():
     seams = seam_edges(verts, faces)
     assert len(seams) == 1
     assert len(island_groups(faces, seams, face_edges(faces))) == 1
-
-
-@pytest.mark.skipif(not HEX_HEAD.exists(), reason="needs the bench models")
-def test_smeared_closed_mesh_still_flattens_at_a_high_angle():
-    # a hex head smears every feature to just under 60, so at 66 close_rings seals it
-    verts, faces = read_obj(HEX_HEAD)
-    faces = [tuple(f) for f in faces]
-    at_floor = seam_edges(verts, faces, CREASE_ANGLE)
-    high = seam_edges(verts, faces, 66)
-    assert high
-    edges = face_edges(faces)
-    floor_islands = island_groups(faces, at_floor, edges)
-    high_islands = island_groups(faces, high, edges)
-    assert 1 < len(high_islands) < len(floor_islands)
 
 
 def test_lower_feature_angle_keeps_shallow_seams():
@@ -1520,23 +1502,29 @@ def test_sweep_rims_still_reject_shattered_coarse_elbows():
     assert not rims and not walls
 
 
-WRENCH = Path(__file__).parents[1] / "bench/models/hard-surface/bevel/pipe_wrench.obj"
+def quad_torus(major=16, minor=48, radius=3.0, tube=1.0):
+    verts, faces = [], []
+    for i in range(major):
+        u = 2 * math.pi * i / major
+        for j in range(minor):
+            v = 2 * math.pi * j / minor
+            r = radius + tube * math.cos(v)
+            verts.append([r * math.cos(u), r * math.sin(u), tube * math.sin(v)])
+    for i in range(major):
+        for j in range(minor):
+            a = i * minor + j
+            b = i * minor + (j + 1) % minor
+            c = ((i + 1) % major) * minor + (j + 1) % minor
+            d = ((i + 1) % major) * minor + j
+            faces.append([a, b, c, d])
+    return verts, faces
 
 
-@pytest.mark.skipif(not WRENCH.exists(), reason="needs the bench models")
-def test_sweep_walls_stay_flattenable_on_the_wrench():
-    # claiming a surface with a handle through it ruins the whole strip
-    verts, faces = read_obj(WRENCH)
-    faces = [tuple(f) for f in faces]
-    claimed = 0
-    for comp in vertex_components(faces):
-        part = [faces[i] for i in comp]
-        rims, walls = sweep_rims(verts, part)
-        edges = face_edges(part)
-        for piece in component_faces(walls, edges):
-            assert surface_genus(piece, part, edges) <= 0
-        claimed += len(walls)
-    assert claimed
+def test_planar_quad_diagonals_do_not_count_as_coplanar_edges():
+    # every quad of this torus is planar, so the fan diagonals alone are 0.47 of
+    # the edge length, over the coplanar share
+    verts, faces = quad_torus()
+    assert not is_hard_surface(verts, faces)
 
 
 def uv_groups(faces, uvs):

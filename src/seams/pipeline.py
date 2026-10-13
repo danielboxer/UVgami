@@ -3,7 +3,7 @@ import collections
 from .boundaries import boundary_edges, flatten_teeth, reroute_boundaries
 from .cancel import check_cancelled
 from .cuts import crease_relief, disk_cuts
-from .mesh import LOW_ANGLE, build, diagonal, norm, pair, turn_angle
+from .mesh import LOW_ANGLE, build, diagonal, face_keys, norm, pair, turn_angle
 from .regions import (
     CREASE_ANGLE,
     PANEL_SHARE,
@@ -122,10 +122,21 @@ SPREAD_SHARE = 0.21
 # the boundaries must mostly be creased or a rim split_sweeps placed
 BOUNDARY_ANGLE = 20
 BOUNDARY_CREASED = 0.6
+# boundaries this creased make a part hard however soft the surface between them
+BOUNDARY_CREASED_ALONE = 0.8
+# but only on a part under this share of the model, a big part reads organic
+ASSEMBLY_PIECE_SHARE = 0.5
+# this much edge length between exactly coplanar faces means a cad mesh
+COPLANAR_ANGLE = 0.01
+COPLANAR_SHARE = 0.4
 
 
 # ties fall organic, seams on sculpt ridges cost more than a slow unwrap
-def is_hard_surface(verts, faces):
+def is_hard_surface(verts, faces, model_area=None):
+    # a planar quad's diagonal is coplanar too
+    polygon_edges = {key for f in faces for key in face_keys(f)}
+    # the thresholds were tuned on triangles, quad diagonals change every share
+    faces = [[f[0], f[i], f[i + 1]] for f in faces for i in range(1, len(f) - 1)]
     # verts can be the whole mesh with faces one loose part
     used = {v for face in faces for v in face}
     part_scale = diagonal([verts[v] for v in used])
@@ -174,11 +185,16 @@ def is_hard_surface(verts, faces):
         near = grown
 
     spread = interior = boundary = boundary_creased = 0.0
+    modeled = coplanar = 0.0
     for (a, b), owners in edges.items():
         if len(owners) != 2:
             continue
         length = norm([verts[a][i] - verts[b][i] for i in range(3)])
         turn = turn_angle(weighted, owners)
+        if (a, b) in polygon_edges:
+            modeled += length
+            if turn < COPLANAR_ANGLE:
+                coplanar += length
         if label[owners[0]] != label[owners[1]]:
             boundary += length
             if turn >= BOUNDARY_ANGLE or presweep[owners[0]] == presweep[owners[1]]:
@@ -190,11 +206,17 @@ def is_hard_surface(verts, faces):
             interior += length
             if LOW_ANGLE < turn < SPREAD_ANGLE:
                 spread += length
+    if modeled and coplanar / modeled >= COPLANAR_SHARE:
+        return True
     if not boundary:
         return False
+    creased = boundary_creased / boundary
+    piece = model_area is not None and total / model_area < ASSEMBLY_PIECE_SHARE
+    if piece and creased >= BOUNDARY_CREASED_ALONE:
+        return True
     return (
         not interior or spread / interior < SPREAD_SHARE
-    ) and boundary_creased / boundary >= BOUNDARY_CREASED
+    ) and creased >= BOUNDARY_CREASED
 
 
 # a closed mesh with every feature under the angle reruns at the CREASE_ANGLE floor
