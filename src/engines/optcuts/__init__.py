@@ -32,7 +32,7 @@ class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
         name="Mode",
         description="Whether seams follow sharp features or the engine places them",
         items=SURFACE_MODES,
-        default="AUTO",
+        default="ORGANIC",
     )
 
     @property
