@@ -107,9 +107,11 @@ def popup(msg, title, icon):
     bpy.context.window_manager.popup_menu(draw, title=title, icon=icon)
 
 
-def switch_shading(type):
+# solid texture mode skips the shader compile that hides objects in material preview
+def switch_solid_color(color_type):
     for area in bpy.context.screen.areas:
         for space in area.spaces:
             if space.type == "VIEW_3D":
-                space.shading.type = type
+                space.shading.type = "SOLID"
+                space.shading.color_type = color_type
                 break

@@ -1,7 +1,7 @@
 import bpy
 
 from ..utils.mesh import validate_obj
-from ..utils.ui import switch_shading
+from ..utils.ui import switch_solid_color
 
 
 def make_grid_img():
@@ -38,6 +38,8 @@ def make_grid_mat(grid_img):
         tree_nodes.get("Material Output"),
     )
     nodes[0].image = grid_img
+    # solid texture mode draws the active image node
+    tree_nodes.active = nodes[0]
     nodes[0].location = (-300, 300)
     grid_mat.node_tree.links.new(nodes[0].outputs[0], nodes[1].inputs[0])
     for node in nodes:
@@ -99,7 +101,7 @@ class UVGAMI_OT_add_grid(bpy.types.Operator):
                 valid_count += 1
 
         if valid_count > 0:
-            switch_shading("MATERIAL")
+            switch_solid_color("TEXTURE")
 
         self.report({"INFO"}, "Added UV grid")
         return {"FINISHED"}
@@ -116,6 +118,6 @@ class UVGAMI_OT_remove_grid(bpy.types.Operator):
             if validate_obj(self, obj):
                 remove_grid(obj)
 
-        switch_shading("SOLID")
+        switch_solid_color("MATERIAL")
 
         return {"FINISHED"}

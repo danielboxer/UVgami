@@ -26,7 +26,7 @@ from .utils.mesh import (
     move_to_collection,
 )
 from .utils.paths import clear_io_dir, get_io_dir_paths, get_preferences
-from .utils.ui import popup, set_status, switch_shading, tag_redraw
+from .utils.ui import popup, set_status, switch_solid_color, tag_redraw
 
 # how long a clean run's status bar message stays up
 STATUS_SECONDS = 5
@@ -662,6 +662,7 @@ class UnwrapManager:
     def _add_auto_grid(self, props, obj):
         if props.auto_grid:
             add_grid(obj, make_grid_mat(make_grid_img()))
+            switch_solid_color("TEXTURE")
 
     # in piece order when the mesh was separated
     def _restore_face_data(self, unwrap, output, attribute, field):
@@ -798,9 +799,6 @@ class UnwrapManager:
         bpy.ops.ed.undo_push(message="UVgami Unwrap")
         self.end_session()
         self.log_final_status()
-
-        if counts[Result.FINISHED] > 0 and props.auto_grid:
-            switch_shading("MATERIAL")
 
         if counts[Result.CANCELLED] != len(self.results):
             msg = []
