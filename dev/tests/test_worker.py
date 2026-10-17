@@ -13,15 +13,14 @@ sys.modules["seams"] = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sys.modules["seams"])
 from seams import (  # noqa: E402
     Cancelled,
-    FlattenError,
+    EngineError,
     check_cancelled,
-    check_manifold,
     face_edges,
 )
+from seams.preseed import _read_hardsurface  # noqa: E402
 from seams.worker import WorkerProcess, last_progress  # noqa: E402
 
 TWO_TRIANGLES = [(0, 1, 2), (1, 3, 2)]
-THREE_FACES_ON_ONE_EDGE = [(0, 1, 2), (0, 1, 3), (0, 1, 4)]
 
 
 def test_result_comes_back():
@@ -30,9 +29,12 @@ def test_result_comes_back():
     assert worker.done()
 
 
-def test_error_is_raised_as_the_class_the_function_raised():
-    worker = WorkerProcess(check_manifold, THREE_FACES_ON_ONE_EDGE)
-    with pytest.raises(FlattenError, match="Non Manifold"):
+def test_error_is_raised_as_the_class_the_function_raised(tmp_path):
+    (tmp_path / "seams.txt").write_text("")
+    uvs = tmp_path / "uvs.txt"
+    uvs.write_text("5 0 0 1 0 0 1\n")
+    worker = WorkerProcess(_read_hardsurface, uvs, 2)
+    with pytest.raises(EngineError, match="flattened face 5"):
         worker.result()
 
 

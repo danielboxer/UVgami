@@ -90,10 +90,25 @@ def weighted_normals(verts, faces):
     return weighted
 
 
+# by fan, the same fan the flatten solves
+def polygon_area(verts, face):
+    x0, y0, z0 = verts[face[0]]
+    total = 0.0
+    for i in range(1, len(face) - 1):
+        ax, ay, az = verts[face[i]]
+        bx, by, bz = verts[face[i + 1]]
+        ux, uy, uz = ax - x0, ay - y0, az - z0
+        vx, vy, vz = bx - x0, by - y0, bz - z0
+        cx, cy, cz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+        total += math.sqrt(cx * cx + cy * cy + cz * cz) / 2.0
+    return total
+
+
 # per-face weighted normals and areas, plus edge -> owning faces
 def build(verts, faces):
     weighted = weighted_normals(verts, faces)
-    return weighted, [norm(n) / 2 for n in weighted], face_edges(faces)
+    areas = [polygon_area(verts, face) for face in faces]
+    return weighted, areas, face_edges(faces)
 
 
 def signed_area(pts):
@@ -129,7 +144,7 @@ def island_groups(faces, seams, edges):
     return list(members.values())
 
 
-# edges whose faces don't share their corner uvs. a boundary edge is never one
+# edges whose faces don't share their corner uvs, boundary edges never count
 def uv_seams(faces, uvs, edges):
     seams = set()
     for (u, v), owners in edges.items():

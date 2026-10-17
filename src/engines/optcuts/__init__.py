@@ -1,106 +1,35 @@
 import bpy
+import numpy
 
-from ...hard_surface import (
-    auto_hard_faces,
-    build_seam_uvs,
-    preseed_work,
-    seam_flags,
-    seam_restrictions,
-)
-from ...seams import uvs_collapsed
+from ...hard_surface import preseed_work, seam_flags, seam_restrictions
+from ...seams import SURFACE_MODE_CODES, uvs_collapsed
 from ...utils.io import print_stdin
 from ...utils.mesh import corner_uvs
 from ...utils.ui import is_non_default, only_active
 from .install import OptcutsInstall
 
-# degrees, what counts as a sharp feature
-HARD_SURFACE_ANGLE = 66
-
 PRIORITY_VALUES = {"LESS_STRETCH": "4.05", "BALANCED": "4.2", "FEWER_SEAMS": "5.0"}
+# degrees a region border must turn to stay a seam, a duller border is merged away
+HARD_SURFACE_ANGLES = {"LESS_STRETCH": 45, "BALANCED": 66, "FEWER_SEAMS": 75}
+# the preseed's length cap target per priority, texture use a strip may drag down to
+SPLIT_TARGETS = {"LESS_STRETCH": 0.6, "BALANCED": 0.5, "FEWER_SEAMS": 0.4}
 
 
 SURFACE_MODES = [
+    ("AUTO", "Auto", "Pick Organic or Hard Surface for each loose part by its shape"),
     ("ORGANIC", "Organic", "Let the engine place every seam"),
     ("HARD", "Hard Surface", "Cut seams on sharp features before the engine runs"),
-    ("AUTO", "Auto", "Unwrap each loose part as hard surface or organic by its shape"),
 ]
 SURFACE_MODE_LABELS = {mode: label for mode, label, _ in SURFACE_MODES}
 
 
 class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
-    surface_mode: bpy.props.EnumProperty(
+    mode: bpy.props.EnumProperty(
         name="Mode",
-        description="Whether seams follow sharp features or the engine places them",
+        description="Whether seams are cut on sharp features or all placed by the engine",
         items=SURFACE_MODES,
-        default="ORGANIC",
+        default="AUTO",
     )
-
-    @property
-    def is_auto(self):
-        return self.surface_mode == "AUTO"
-
-    @property
-    def cuts_sharp_features(self):
-        return self.surface_mode != "ORGANIC"
-
-
-# class UVGAMI_OT_quick_unwrap(bpy.types.Operator):
-#     bl_idname = "uvgami.quick_unwrap"
-#     bl_label = "Quick Unwrap"
-#     bl_description = "Mark the hard surface seams and flatten them"
-#     bl_options = {"UNDO"}
-#
-#     def execute(self, context):
-#         props = context.scene.uvgami
-#         optcuts = props.optcuts
-#         angle = HARD_SURFACE_ANGLE
-#         guided = props.avoid_seams
-#         selected = list(context.selected_objects)
-#         active = context.view_layer.objects.active
-#         mode = active.mode if active is not None else "OBJECT"
-#         if mode != "OBJECT":
-#             bpy.ops.object.mode_set(mode="OBJECT")
-#
-#         counts = []
-#         flatten_error = None
-#         for obj in selected:
-#             if not validate_obj(self, obj):
-#                 continue
-#             only = None
-#             if optcuts.is_auto:
-#                 only = auto_hard_faces(obj)
-#                 if not only:
-#                     counts.append("organic")
-#                     continue
-#                 if len(only) == len(obj.data.polygons):
-#                     only = None
-#             weights = seam_restrictions(obj) if guided else None
-#             try:
-#                 applied = build_seam_uvs(obj, angle, weights=weights, only=only)
-#             except FlattenError as error:
-#                 flatten_error = str(error)
-#                 break
-#             if not applied:
-#                 counts.append("no seams")
-#                 continue
-#             counts.append(str(int(seam_flags(obj.data).sum())))
-#
-#         deselect_all()
-#         for obj in selected:
-#             obj.select_set(True)
-#         context.view_layer.objects.active = active
-#         if active is not None and mode != "OBJECT":
-#             bpy.ops.object.mode_set(mode=mode)
-#
-#         if flatten_error is not None:
-#             self.report({"ERROR"}, flatten_error)
-#             # FINISHED so the undo step covers meshes already written
-#             return {"FINISHED"}
-#         if not counts:
-#             self.report({"ERROR"}, "Select a mesh with faces")
-#             return {"CANCELLED"}
-#         self.report({"INFO"}, f"Seams: {', '.join(counts)}")
-#         return {"FINISHED"}
 
 
 class OptcutsEngine(OptcutsInstall):
@@ -116,7 +45,6 @@ class OptcutsEngine(OptcutsInstall):
     classes = (
         UVGAMI_PG_optcuts,
         *OptcutsInstall.classes,
-        # UVGAMI_OT_quick_unwrap,
     )
     supports_guided = True
     supports_viewer = True
@@ -128,58 +56,45 @@ class OptcutsEngine(OptcutsInstall):
     def draw_settings(self, layout, props):
         row = layout.row()
         row.label(icon="MOD_BEVEL", text="Mode")
-        row.prop(props.optcuts, "surface_mode", text="")
+        row.prop(props.optcuts, "mode", expand=True)
 
     def active_settings(self, props):
         return only_active(
             (
                 (
                     "MOD_BEVEL",
-                    SURFACE_MODE_LABELS[props.optcuts.surface_mode],
-                    "optcuts.surface_mode",
-                    is_non_default(props, "optcuts.surface_mode"),
+                    SURFACE_MODE_LABELS[props.optcuts.mode],
+                    "optcuts.mode",
+                    is_non_default(props, "optcuts.mode"),
                 ),
             )
         )
 
-    # the auto preseed leaves the organic parts' uvs for the engine to import
+    # the preseed uvs replace the imported ones
     def import_uvs_ignored(self, props):
-        return props.optcuts.surface_mode == "HARD"
+        return props.optcuts.mode == "HARD"
 
-    def prepare_uvs(self, obj, props):
-        optcuts = props.optcuts
-        if not optcuts.cuts_sharp_features:
-            return props.import_uvs
-        only = None
-        if optcuts.is_auto:
-            only = auto_hard_faces(obj)
-            if not only:
-                return False
-            if len(only) == len(obj.data.polygons):
-                only = None
-        applied = build_seam_uvs(
-            obj,
-            HARD_SURFACE_ANGLE,
-            weights=seam_restrictions(obj) if props.avoid_seams else None,
-            only=only,
-        )
-        return applied
+    def unset_surface_mode(self, props):
+        return props.optcuts.mode
 
-    def preseed_work(self, obj, props, mirrors=None):
-        optcuts = props.optcuts
-        if not optcuts.cuts_sharp_features:
+    def preseed_work(self, obj, props):
+        mode = self.unset_surface_mode(props)
+        if mode == "ORGANIC":
             return None
+        surface_modes = numpy.full(
+            len(obj.data.polygons), SURFACE_MODE_CODES[mode], dtype=numpy.int32
+        )
         return preseed_work(
             obj,
-            HARD_SURFACE_ANGLE,
-            weights=seam_restrictions(obj) if props.avoid_seams else None,
-            auto=optcuts.is_auto,
-            mirrors=mirrors,
+            HARD_SURFACE_ANGLES[props.priority],
+            SPLIT_TARGETS[props.priority],
+            seam_restrictions(obj) if props.avoid_seams else None,
+            surface_modes,
         )
 
     def piece_uses_uvs(self, obj, props, has_uvs):
         # a piece the preseed skipped has no seams and goes to the engine bare
-        if props.optcuts.is_auto and not props.import_uvs:
+        if not self.uses_import_uvs(props):
             has_uvs = has_uvs and bool(seam_flags(obj.data).any())
         if not has_uvs or obj.data.uv_layers.active is None:
             return has_uvs
@@ -228,7 +143,6 @@ class OptcutsEngine(OptcutsInstall):
             108: ("Unsupported Mesh Topology", True),
             109: ("Initial Cut Failed", True),
             110: ("Area UVs Too Broken To Pin", True),
-            111: ("Island UVs Too Broken To Combine", True),
             113: ("Invalid Coordinates", True),
             114: ("Island UVs Too Broken To Relax", True),
             115: ("Inconsistent Face Orientation", True),

@@ -58,15 +58,14 @@ class Engine:
     def uses_proxy(self, props):
         return props.use_proxy and self.supports_proxy
 
-    # obj is a temp copy, safe to edit
-    def prepare_uvs(self, obj, props):
-        return self.uses_import_uvs(props)
+    def unset_surface_mode(self, props):
+        return "AUTO"
 
-    # (running worker, apply), or None when prepare_uvs is used directly
-    def preseed_work(self, obj, props, mirrors=None):
+    # (running worker, apply), or None when nothing is preseeded
+    def preseed_work(self, obj, props):
         return None
 
-    # has_uvs is what prepare_uvs returned for the whole object
+    # has_uvs is true for a preseeded object or one with imported uvs
     def piece_uses_uvs(self, obj, props, has_uvs):
         return has_uvs
 

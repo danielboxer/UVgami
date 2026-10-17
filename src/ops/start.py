@@ -16,25 +16,21 @@ from ..job import (
     ProxyCopyUVs,
     ProxyUVs,
     Result,
-    # Symmetrise,
     TransferUVs,
 )
 from ..logger import logger
 from ..manager import Preparing, manager
 from ..proxy import make_proxy, needs_proxy, triangle_count
 from ..seams import (
+    EngineError,
     face_edges,
     island_layout,
     islands_overlap,
     uv_island_groups,
 )
 from ..similar import find_twins, write_twin_output
-
-# from ..similar import mirror_matches
 from ..ui.panels import describe_settings, unwrap_settings
 from ..unwrap import Unwrap
-
-# from ..utils.geometry import apply_transforms, calc_center
 from ..utils.io import export_obj
 from ..utils.mesh import (
     check_exists,
@@ -55,7 +51,7 @@ from ..utils.paths import (
 from ..utils.ui import tag_redraw
 from .guides import SEAM_RESTRICTIONS_GROUP
 
-Preseeding = namedtuple("Preseeding", ["task", "apply", "obj", "symmetrize_job"])
+Preseeding = namedtuple("Preseeding", ["task", "apply", "obj"])
 
 # seconds of work per tick before yielding to the event loop
 TICK_BUDGET = 0.033
@@ -503,7 +499,7 @@ class SessionBuilder:
 
     def _advance(self):
         if self.pending is not None:
-            task, apply, obj, symmetrize_job = self.pending
+            task, apply, obj = self.pending
             if not task.done():
                 return 0.1
             self.pending = None
@@ -513,50 +509,35 @@ class SessionBuilder:
                 task.close()
                 self._drop_object(obj)
                 return 0.0
-            result = task.result()
             if not check_exists(obj):
+                task.close()
                 raise RuntimeError("Undo removed the working copy mid unwrap")
+            try:
+                result = task.result()
+            except EngineError as error:
+                # each part then fails in the engine or gets the engine's own seams
+                logger.add_data(
+                    "errors",
+                    f"{self.names[obj.name][0]}: hard surface seams failed, {error}",
+                )
+                result = None
             props = manager.props
             preseeded = apply(result)
-            if symmetrize_job is not None:
-                if preseeded:
-                    # the seams are mirrored, so the mesh ships whole
-                    symmetrize_job.kept_whole = True
-                    symmetrize_job.prepare_half(obj)
-                else:
-                    logger.add_data(
-                        "errors",
-                        f"{self.names[obj.name][0]}: no seams to mirror,"
-                        " the mesh was cut and mirrored",
-                    )
-                    symmetrize_job.cut(obj)
             has_uvs = preseeded or self.engine.uses_import_uvs(props)
-            self._separate(obj, has_uvs, symmetrize_job, preseeded=preseeded)
+            self._separate(obj, has_uvs, preseeded=preseeded)
             return 0.0
         if not self.remaining:
             return self._finish()
 
         obj = self.remaining.popleft()
         props = manager.props
-        symmetrize_job = None
-        mirrors = None
-        # if props.use_symmetry:
-        #     apply_transforms(obj)
-        #     center = calc_center(obj)
-        #     symmetrize_job = Symmetrise(props.sym_axes, center, props.sym_merge)
-        #     mirrors = mirror_matches(obj.data, center, sorted(props.sym_axes))
-        #     symmetrize_job.mirrors = mirrors
-
         # the seams package reads region widths off the full model
-        work = self.engine.preseed_work(obj, props, mirrors)
+        work = self.engine.preseed_work(obj, props)
         if work is None:
-            has_uvs = self.engine.prepare_uvs(obj, props)
-            if symmetrize_job is not None:
-                symmetrize_job.cut(obj)
-            self._separate(obj, has_uvs, symmetrize_job)
+            self._separate(obj, self.engine.uses_import_uvs(props))
             return 0.0
         worker, apply = work
-        self.pending = Preseeding(worker, apply, obj, symmetrize_job)
+        self.pending = Preseeding(worker, apply, obj)
         return 0.1
 
     def _input_jobs(self, props, obj, proxied):
@@ -598,7 +579,7 @@ class SessionBuilder:
         self.piece_unwrap[obj] = unwrap
         manager.add(unwrap)
 
-    def _separate(self, obj, has_uvs, symmetrize_job, preseeded=False):
+    def _separate(self, obj, has_uvs, preseeded=False):
         props = manager.props
         proxied = obj in self.proxied_objects
         # relink for the ops selection, all within one tick so nothing shows
@@ -626,7 +607,7 @@ class SessionBuilder:
             join_job = Join(len(valid))
             hide_job, transfer_uvs_job = self._input_jobs(props, obj, proxied)
             for obj_idx, o in enumerate(valid):
-                jobs = (None, join_job, hide_job, symmetrize_job, transfer_uvs_job)
+                jobs = (None, join_job, hide_job, transfer_uvs_job)
                 piece_name = f"{unwrap_name}_{obj_idx + 1}"
                 self._add_piece(
                     o,
@@ -655,7 +636,7 @@ class SessionBuilder:
         else:
             unwrap_name = self.names[obj.name][0]
             hide_job, transfer_uvs_job = self._input_jobs(props, obj, proxied)
-            jobs = (None, None, hide_job, symmetrize_job, transfer_uvs_job)
+            jobs = (None, None, hide_job, transfer_uvs_job)
             self._add_piece(
                 obj,
                 unwrap_name,

@@ -52,12 +52,6 @@ def unwrap_settings(props):
                 "stack_similar",
                 is_non_default(props, "stack_similar"),
             ),
-            # (
-            #     "MOD_MIRROR",
-            #     "Symmetry",
-            #     "use_symmetry",
-            #     is_non_default(props, "use_symmetry"),
-            # ),
             (
                 "TIME",
                 "Timeout",
@@ -489,43 +483,6 @@ class UVGAMI_PT_weights(bpy.types.Panel):
         row.operator("uvgami.seed_restrictions", text="From View").mode = "VIEW"
         row.operator("uvgami.seed_restrictions", text="Crevices").mode = "CREVICES"
         row.operator("uvgami.seed_restrictions", text="Both").mode = "BOTH"
-
-
-class UVGAMI_PT_symmetry(EnginePanel, bpy.types.Panel):
-    bl_label = "Symmetry"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "UVgami"
-    bl_parent_id = "UVGAMI_PT_main"
-    bl_options = {"DEFAULT_CLOSED"}
-    bl_order = 2
-
-    def draw_header(self, context):
-        self.layout.prop(context.scene.uvgami, "use_symmetry")
-
-    def draw(self, context):
-        props = context.scene.uvgami
-        layout = self.layout
-        layout.active = props.use_symmetry
-        box = layout.box()
-
-        row = box.row()
-        row.alignment = "CENTER"
-        row.label(text="Symmetry", icon="MOD_MIRROR")
-
-        row = box.row()
-        row.scale_y = 1.5
-        row.prop(props, "sym_axes")
-
-        row = box.row()
-        row.prop(props, "sym_preview", icon="EMPTY_AXIS")
-        row.prop(props, "sym_merge")
-
-        # only the hard surface preseed can mirror seams on the whole mesh
-        engine = active_engine(props.engine)
-        if engine is not get_engine("OPTCUTS") or props.optcuts.surface_mode != "HARD":
-            row = box.row()
-            row.label(text="Mesh will be cut and mirrored", icon="ERROR")
 
 
 class UVGAMI_PT_grid(EnginePanel, bpy.types.Panel):

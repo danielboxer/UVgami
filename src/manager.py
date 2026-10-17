@@ -501,15 +501,6 @@ class UnwrapManager:
         if unwrap.hide_job is not None:
             unwrap.hide_job.finish(self.input[unwrap.hide_job])
 
-        symmetrize_job = unwrap.symmetrize_job
-        half_rebuilt = False
-        if symmetrize_job is not None:
-            if not symmetrize_job.kept_whole:
-                symmetrize_job.finish(output)
-            elif symmetrize_job.whole is not None:
-                output = symmetrize_job.rebuild(output, unwrap.origin)
-                half_rebuilt = True
-
         pieces = unwrap.join_job.finished if unwrap.join_job is not None else [unwrap]
         if any(u.preseeded for u in pieces):
             # imported here: ops.island imports this module back
@@ -528,25 +519,16 @@ class UnwrapManager:
                 if start != len(output.data.polygons):
                     ranges = None
             reads = read_mesh(output.data)
-            # a second pass in uv space would land differently on each side
-            if not half_rebuilt:
-                reads = finish_preseed(output, reads, ranges)
+            reads = finish_preseed(output, reads, ranges)
             rectify_islands(output, reads)
             self._pack_topology[output] = (reads.faces, reads.edges)
-
-        # after rectify, whose per-island solves would drift a stack apart
-        kept_whole = symmetrize_job is not None and symmetrize_job.kept_whole
-        if kept_whole and symmetrize_job.overlap:
-            symmetrize_job.snap_overlap(output)
 
         if props.pack_after_unwrap:
             self._pack_output_objects.append(output)
 
         edit_restore([output], show_seams)
 
-        # the piece's indices point at the half's vertices
-        if not half_rebuilt:
-            self._restore_vertex_groups(unwrap, output)
+        self._restore_vertex_groups(unwrap, output)
 
         if unwrap.transfer_uvs_job is not None:
             job = unwrap.transfer_uvs_job

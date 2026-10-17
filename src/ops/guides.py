@@ -107,7 +107,7 @@ def _view_weights(obj, rv3d):
     return weights
 
 
-def _exposure_weights(obj):
+def exposure_weights(obj):
     mesh = obj.data
     bvh = BVHTree.FromPolygons(
         [v.co for v in mesh.vertices],
@@ -122,14 +122,14 @@ def _exposure_weights(obj):
         escaped = 0
         total = 0
         for direction in SPHERE_DIRS:
-            # skip grazing rays, they self-hit on curved surfaces
+            # grazing rays hit their own surface on curves
             if direction.dot(v.normal) < 0.1:
                 continue
             total += 1
             if bvh.ray_cast(origin, direction)[0] is None:
                 escaped += 1
         exposure = escaped / total if total else 1.0
-        # exposure is ~1 on a flat surface and ~0.5 in an inside corner
+        # exposure is about one on a flat surface and half in an inside corner
         weights[v.index] = min(max((exposure - 0.45) / 0.5, 0.0), 1.0) ** 2
     return weights
 
@@ -195,10 +195,10 @@ class UVGAMI_OT_seed_restrictions(bpy.types.Operator):
             if self.mode == "VIEW":
                 weights = _view_weights(obj, rv3d)
             elif self.mode == "CREVICES":
-                weights = _rank_normalize(_exposure_weights(obj))
+                weights = _rank_normalize(exposure_weights(obj))
             else:
                 view = _view_weights(obj, rv3d)
-                exposure = _exposure_weights(obj)
+                exposure = exposure_weights(obj)
                 weights = _rank_normalize({i: view[i] * exposure[i] for i in view})
             _set_group_weights(obj, weights)
 

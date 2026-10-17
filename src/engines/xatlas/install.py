@@ -33,7 +33,6 @@ class UVGAMI_OT_install_xatlas(InstallEngineTask, bpy.types.Operator):
     release = XATLAS
 
 
-# how xatlas is found, downloaded and started
 class XatlasInstall(BinaryEngine):
     release = XATLAS
     classes = (UVGAMI_OT_install_xatlas, UVGAMI_OT_delete_engine)

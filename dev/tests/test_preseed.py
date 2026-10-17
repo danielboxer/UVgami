@@ -1,8 +1,9 @@
 import importlib.util
+import math
 import sys
-import time
 from pathlib import Path
 
+import numpy
 import pytest
 
 # loaded from file, the addon package imports bpy
@@ -13,14 +14,15 @@ spec = importlib.util.spec_from_file_location(
 sys.modules["seams"] = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sys.modules["seams"])
 from seams import (  # noqa: E402
-    FlattenEngine,
-    FlattenError,
-    check_manifold,
-    preseed_uvs,
+    SURFACE_MODE_CODES,
+    EngineError,
+    preseed_job,
 )
-from seams.preseed import _read_uvs, submesh  # noqa: E402
+from seams.islands import SPLIT_TARGET  # noqa: E402
+from seams.preseed import submesh  # noqa: E402
 
 BUNDLED = Path(__file__).parents[2] / "engine-builds" / "windows" / "optcuts.exe"
+HARDSURFACE = BUNDLED.with_name("hardsurface.exe")
 
 CUBE_VERTS = [
     (0.0, 0.0, 0.0),
@@ -42,21 +44,6 @@ CUBE_FACES = [
 ]
 
 
-class GridEngine:
-    def __init__(self):
-        self.flatten_calls = []
-
-    def flatten(self, verts, faces, seams, cancelled=None):
-        self.flatten_calls.append((len(faces), frozenset(seams)))
-        out = []
-        for i, face in enumerate(faces):
-            x = float(i)
-            corners = [(x, 0.0), (x + 1.0, 0.0), (x + 1.0, 1.0), (x, 1.0)]
-            corners = corners[: len(face)]
-            out.append(corners[::-1] if i == 0 else corners)
-        return out
-
-
 def test_submesh_compacts_and_remaps_seams():
     sub_verts, sub_faces, sub_seams = submesh(
         CUBE_VERTS, CUBE_FACES, [0, 2], {(0, 1), (6, 7)}
@@ -70,110 +57,111 @@ def test_submesh_compacts_and_remaps_seams():
     assert sub_verts[b] == CUBE_VERTS[1]
 
 
-def test_read_uvs_rejects_face_mismatch(tmp_path):
-    out = tmp_path / "flatten.obj"
-    out.write_text("v 0 0 0\nvt 0 0\nf 1/1 1/1 1/1\n")
-    with pytest.raises(FlattenError):
-        _read_uvs(out, 2)
+needs_engines = pytest.mark.skipif(
+    not (BUNDLED.is_file() and HARDSURFACE.is_file()), reason="engine builds missing"
+)
 
 
-def test_engine_failure_raises(tmp_path):
-    engine = FlattenEngine([tmp_path / "missing.exe"], tmp_path)
-    with pytest.raises(FlattenError):
-        engine.flatten(CUBE_VERTS, CUBE_FACES, set())
+def mesh_arrays(faces):
+    corners = numpy.array([v for face in faces for v in face], dtype=numpy.int64)
+    totals = numpy.array([len(face) for face in faces], dtype=numpy.int64)
+    return corners, totals
 
 
-def test_check_manifold_rejects_three_owner_edge():
-    faces = list(CUBE_FACES) + [(0, 3, 6)]
-    with pytest.raises(FlattenError, match="Non Manifold"):
-        check_manifold(faces)
-
-
-def test_preseed_marked_only_uses_given_seams():
-    engine = GridEngine()
-    marked = {(0, 4), (1, 5), (2, 6), (3, 7), (4, 5), (5, 6), (6, 7)}
-    seams, uvs, _ = preseed_uvs(
-        engine, CUBE_VERTS, CUBE_FACES, marked="ONLY", marked_seams=marked
+# the seams, the flattened faces' corner uvs and the flattened faces, or None
+def run_preseed(tmp_path, positions, faces, surface_modes):
+    return preseed_job(
+        [HARDSURFACE],
+        tmp_path,
+        numpy.asarray(positions, dtype=numpy.float64),
+        *mesh_arrays(faces),
+        None,
+        None,
+        numpy.asarray(surface_modes),
+        30,
+        SPLIT_TARGET,
     )
-    assert marked <= seams
-    assert all(uv is not None for uv in uvs)
-    # the ruined layout ships as-is, the engine recuts the bad island itself
-    assert len(engine.flatten_calls) == 1
-    first = engine.flatten_calls[0]
-    assert first[0] == len(CUBE_FACES)
-    # marked seams reach the engine remapped but complete
-    assert len(first[1]) == len(marked)
-    # the flipped first face comes back exactly as the fake produced it
-    assert uvs[0] == [(0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (0.0, 0.0)]
 
 
-def test_preseed_only_leaves_other_faces_alone():
-    # two loose quads, a preseed holds whole loose parts, never a slice
+def all_hard(faces):
+    return [SURFACE_MODE_CODES["HARD"]] * len(faces)
+
+
+def uv_sphere(rings=16, segments=32):
+    verts = [(0.0, 0.0, 1.0)]
+    for ring in range(1, rings):
+        theta = math.pi * ring / rings
+        for segment in range(segments):
+            phi = 2 * math.pi * segment / segments
+            verts.append(
+                (
+                    math.sin(theta) * math.cos(phi),
+                    math.sin(theta) * math.sin(phi),
+                    math.cos(theta),
+                )
+            )
+    verts.append((0.0, 0.0, -1.0))
+    bottom = len(verts) - 1
+
+    def at(ring, segment):
+        return 1 + (ring - 1) * segments + segment % segments
+
+    faces = [(0, at(1, s), at(1, s + 1)) for s in range(segments)]
+    for ring in range(1, rings - 1):
+        for s in range(segments):
+            faces.append(
+                (at(ring, s), at(ring + 1, s), at(ring + 1, s + 1), at(ring, s + 1))
+            )
+    faces += [(bottom, at(rings - 1, s + 1), at(rings - 1, s)) for s in range(segments)]
+    return verts, faces
+
+
+def test_a_missing_hard_surface_engine_raises(tmp_path):
+    with pytest.raises(EngineError):
+        preseed_job(
+            [tmp_path / "missing.exe"],
+            tmp_path,
+            numpy.asarray(CUBE_VERTS),
+            *mesh_arrays(CUBE_FACES),
+            None,
+            None,
+            numpy.asarray(all_hard(CUBE_FACES)),
+            30,
+            SPLIT_TARGET,
+        )
+
+
+@pytest.mark.smoke
+@needs_engines
+def test_preseed_flattens_a_cube_inside_the_unit_square(tmp_path):
+    seams, uvs, flattened = run_preseed(
+        tmp_path, CUBE_VERTS, CUBE_FACES, all_hard(CUBE_FACES)
+    )
+    assert seams
+    assert flattened.tolist() == list(range(len(CUBE_FACES)))
+    assert uvs.shape == (4 * len(CUBE_FACES), 2)
+    assert ((uvs >= 0.0) & (uvs <= 1.0)).all()
+
+
+# two loose quads, a preseed holds whole loose parts, never a slice
+@pytest.mark.smoke
+@needs_engines
+def test_preseed_leaves_faces_that_are_not_hard_alone(tmp_path):
     verts = CUBE_VERTS[:4] + [(x + 5.0, y, z) for x, y, z in CUBE_VERTS[:4]]
     faces = [(0, 1, 2, 3), (4, 5, 6, 7)]
-    engine = GridEngine()
-    seams, uvs, flattened = preseed_uvs(engine, verts, faces, marked="ONLY", only={0})
-    assert uvs[0] is not None
-    assert uvs[1] is None
-    assert flattened == [0]
+    modes = [SURFACE_MODE_CODES["HARD"], SURFACE_MODE_CODES["ORGANIC"]]
+    _, _, flattened = run_preseed(tmp_path, verts, faces, modes)
+    assert flattened.tolist() == [0]
 
 
-def test_preseed_drops_seamless_closed_part():
-    # a seamed cube joined with a second cube no seam touches
-    verts = CUBE_VERTS + [(x + 5.0, y, z) for x, y, z in CUBE_VERTS]
-    faces = list(CUBE_FACES) + [tuple(v + 8 for v in face) for face in CUBE_FACES]
-    marked = {(0, 4), (1, 5), (2, 6), (3, 7), (4, 5), (5, 6), (6, 7)}
-    engine = GridEngine()
-    seams, uvs, flattened = preseed_uvs(
-        engine, verts, faces, marked="ONLY", marked_seams=marked
-    )
-    assert flattened == list(range(len(CUBE_FACES)))
-    assert all(uvs[f] is not None for f in range(len(CUBE_FACES)))
-    assert all(uvs[f] is None for f in range(len(CUBE_FACES), len(faces)))
-    # the seamless cube never reaches the flatten
-    assert engine.flatten_calls[0][0] == len(CUBE_FACES)
-
-
-def test_preseed_all_parts_seamless_returns_none():
-    engine = GridEngine()
-    assert preseed_uvs(engine, CUBE_VERTS, CUBE_FACES, marked="ONLY") is None
-    assert not engine.flatten_calls
-
-
+# a closed part no seam touches folds onto itself in the flatten
 @pytest.mark.smoke
-@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled engine missing")
-def test_preseed_cube_with_real_engine(tmp_path):
-    engine = FlattenEngine([BUNDLED], tmp_path)
-    seams, uvs, _ = preseed_uvs(engine, CUBE_VERTS, CUBE_FACES)
-    assert all(uv is not None and len(uv) == 4 for uv in uvs)
-    flat = [p for face in uvs for p in face]
-    assert all(0.0 <= u <= 1.0 and 0.0 <= v <= 1.0 for u, v in flat)
-    # a seamed cube flattens without repair only if the layout held up
-    assert seams
-
-
-@pytest.mark.smoke
-@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled engine missing")
-def test_flatten_start_poll_matches_flatten(tmp_path):
-    engine = FlattenEngine([BUNDLED], tmp_path)
-    seams = {(0, 1), (1, 2), (2, 3), (0, 3)}
-    run = engine.start(CUBE_VERTS, CUBE_FACES, seams)
-    while run.poll() is None:
-        time.sleep(0.05)
-    uvs = run.result()
-    assert not run.workdir.exists()
-    assert uvs == engine.flatten(CUBE_VERTS, CUBE_FACES, seams)
-
-
-def test_preseed_mirrors_close_the_seam_set():
-    engine = GridEngine()
-    # the unit cube is symmetric across x = 0.5
-    mirror = dict(enumerate([1, 0, 3, 2, 5, 4, 7, 6]))
-
-    seams, _, _ = preseed_uvs(engine, CUBE_VERTS, CUBE_FACES, mirrors=[mirror])
-
-    assert seams
-    mirrored = {
-        (min(mirror[a], mirror[b]), max(mirror[a], mirror[b])) for a, b in seams
-    }
-    assert mirrored == seams
+@needs_engines
+def test_a_closed_part_no_seam_touches_is_not_flattened(tmp_path):
+    sphere_verts, sphere_faces = uv_sphere()
+    verts = CUBE_VERTS + [(x + 5.0, y, z) for x, y, z in sphere_verts]
+    faces = list(CUBE_FACES) + [
+        tuple(v + len(CUBE_VERTS) for v in face) for face in sphere_faces
+    ]
+    _, _, flattened = run_preseed(tmp_path, verts, faces, all_hard(faces))
+    assert flattened.tolist() == list(range(len(CUBE_FACES)))

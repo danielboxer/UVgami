@@ -1,10 +1,9 @@
-import collections
 import heapq
 import math
 
-from .mesh import LOW_ANGLE, find, norm, pair, turn_angle
+from .mesh import LOW_ANGLE, norm, pair, turn_angle
 
-# bounded on purpose, an infinite cost would drop a cut instead of moving it
+# bounded, an infinite cost drops a cut instead of moving it
 RESTRICT_COST = 9.0
 # a crease edge counts shorter, concave gets the deeper discount
 CONCAVE_RELIEF = 0.5
@@ -15,29 +14,8 @@ RELIEF_FULL_ANGLE = 45
 CREASED_RELIEF = 0.9
 # a step turning between two dull edges costs this fraction of its length extra
 TURN_COST = 1.0
-
-
-# two loops meeting at a vertex count as one component, the cut would be a point
-def boundary_components(edges, label, forced=None):
-    parent = {}
-
-    for (v0, v1), owners in edges.items():
-        regions = {label[o] for o in owners}
-        if len(owners) == 2 and len(regions) == 1:
-            if not forced or (v0, v1) not in forced:
-                continue
-        for r in regions:
-            a, b = (r, v0), (r, v1)
-            parent.setdefault(a, a)
-            parent.setdefault(b, b)
-            ra, rb = find(parent, a), find(parent, b)
-            if ra != rb:
-                parent[ra] = rb
-
-    grouped = collections.defaultdict(lambda: collections.defaultdict(set))
-    for region, vert in parent:
-        grouped[region][find(parent, (region, vert))].add(vert)
-    return {r: list(comps.values()) for r, comps in grouped.items()}
+# an exposed vertex repels a cut a tenth as hard as a painted one, so it only breaks ties
+VISIBILITY_SHARE = 0.1
 
 
 # the sign comes from the neighbour's centroid against the face plane
@@ -64,6 +42,14 @@ def crease_relief(verts, faces, weighted, edges):
         depth = min((angle - LOW_ANGLE) / (RELIEF_FULL_ANGLE - LOW_ANGLE), 1.0)
         relief[key] = 1 - (CONCAVE_RELIEF if lift > 0 else CONVEX_RELIEF) * depth
     return relief
+
+
+# painted weights win where both apply, exposure is 1 on open surface and 0 in a crevice
+def restriction_weights(painted, exposure):
+    weights = {v: VISIBILITY_SHARE * e for v, e in (exposure or {}).items() if e > 0}
+    for v, w in (painted or {}).items():
+        weights[v] = max(weights.get(v, 0.0), w)
+    return weights or None
 
 
 # longer where a painted restriction repels cuts, shorter along a crease
@@ -210,24 +196,4 @@ def connect_loops(verts, adjacent, comps, weights=None, relief=None):
         sources.update(reached)
         for v in reached:
             del targets[v]
-    return cuts
-
-
-# a path joining two boundary loops opens the region without splitting it
-def disk_cuts(verts, edges, label, weights=None, relief=None, forced=None):
-    needs = {
-        r: c for r, c in boundary_components(edges, label, forced).items() if len(c) > 1
-    }
-    if not needs:
-        return set()
-
-    adjacent = {r: collections.defaultdict(set) for r in needs}
-    for (v0, v1), owners in edges.items():
-        for r in {label[o] for o in owners} & needs.keys():
-            adjacent[r][v0].add(v1)
-            adjacent[r][v1].add(v0)
-
-    cuts = set()
-    for region, comps in needs.items():
-        cuts |= connect_loops(verts, adjacent[region], comps, weights, relief)
     return cuts

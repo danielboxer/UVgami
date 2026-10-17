@@ -11,21 +11,23 @@ from .mesh import (
     find,
     island_groups,
     pair,
+    polygon_area,
     signed_area,
     uv_seams,
     weighted_normals,
 )
 from .rectify import flatten_distortion
-from .regions import SPLIT_ASPECT
 
 # length alone must not drag texture use under this
 SPLIT_TARGET = 0.5
+# length squared over uv area, about length/width
+SPLIT_ASPECT = 6.0
 # a clean island is scanned for cuts once it passes this fraction of the cap
 SPLIT_NECK = 0.5
 # symmetric Dirichlet past this with no flipped face, the engine's bound is 5.0
 SPLIT_DISTORTION = 8.0
 # width ratio across a slab boundary that reads as a neck
-SPLIT_STEP = 2.5
+SPLIT_STEP = 3.5
 # capped so the cut cannot creep along a tapering strip
 STRAIGHTEN_SWEEPS = 4
 # centroids fitting a circle this much tighter than their axis line are a cone
@@ -34,22 +36,8 @@ SPLIT_ARC_BAND = 0.65
 SPLIT_ARC_ANNULUS = 0.3
 # slice crumbs measure under 0.0004, kept pieces from 0.0037
 FRAGMENT_SHARE = 0.002
-# blender decides islands from uv coordinates, an exact shared line stays one
+# blender's islands come from uv coordinates, an exact shared line stays one
 SPLIT_GAP = 0.98
-
-
-# by fan, the same fan the flatten solves
-def polygon_area(verts, face):
-    x0, y0, z0 = verts[face[0]]
-    total = 0.0
-    for i in range(1, len(face) - 1):
-        ax, ay, az = verts[face[i]]
-        bx, by, bz = verts[face[i + 1]]
-        ux, uy, uz = ax - x0, ay - y0, az - z0
-        vx, vy, vz = bx - x0, by - y0, bz - z0
-        cx, cy, cz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
-        total += math.sqrt(cx * cx + cy * cy + cz * cz) / 2.0
-    return total
 
 
 # corners glue across interior non-seam edges, so a cut-open tube is a disk
@@ -105,7 +93,7 @@ def uv_topology(group, faces, edges, seams):
 
     loops = collections.defaultdict(set)
     for a, b in boundary:
-        # a corner class only ever holds one mesh vert, its node's second slot
+        # a corner class only ever has one mesh vertex, its node's second slot
         loops[find(comp_parent, a)].update((vert_of[a], vert_of[b]))
     return ec, list(loops.values())
 
@@ -265,7 +253,7 @@ def island_ruined(group, faces, uvs, edges, seams, uv_areas=None, euler=None):
     return False
 
 
-# only interior edges link, the same relation island_groups used
+# only interior edges link, the same relation island_groups uses
 def face_adjacency(group, faces, edges, seams):
     adjacent = collections.defaultdict(list)
     in_group = set(group)
@@ -340,8 +328,9 @@ def straighten_cut(
 
     extra = set()
     for cut_edges in cuts.values():
+        # sorted, so the walk and the run's two ends don't follow set order
         by_vert = collections.defaultdict(list)
-        for key in cut_edges:
+        for key in sorted(cut_edges):
             by_vert[key[0]].append(key)
             by_vert[key[1]].append(key)
         seen = set()
@@ -388,7 +377,7 @@ def straighten_cut(
                 )
             if better:
                 candidate = (blocked - set(run)) | set(straight)
-                # or the swap cut the island somewhere else and left the bins joined
+                # the swap can cut the island elsewhere and leave the bins joined
                 a, b = edges[run[0]]
                 if separated(a, b, candidate):
                     blocked = candidate
@@ -442,11 +431,14 @@ def arc_parameter(group, centroids, areas, size, cx, cy, xx, xy, yy):
     return ts, 0.0, span * radius
 
 
+# seeds go in group order, a set's pop order would reorder every later sum
 def split_pieces(group, links, cuts):
     unvisited = set(group)
     pieces = []
-    while unvisited:
-        seed = unvisited.pop()
+    for seed in group:
+        if seed not in unvisited:
+            continue
+        unvisited.discard(seed)
         piece = [seed]
         stack = [seed]
         while stack:
@@ -585,6 +577,7 @@ def split_islands(
     fragment_floor=None,
     groups_clean=False,
     measures=None,
+    split_target=SPLIT_TARGET,
 ):
     if edges is None:
         edges = face_edges(faces)
@@ -638,7 +631,7 @@ def split_islands(
     total = sum(areas3d[f] for g in groups for f in g)
     if total <= 0:
         return extra
-    cap = math.sqrt(total / SPLIT_TARGET)
+    cap = math.sqrt(total / split_target)
     if fragment_floor is None:
         fragment_floor = whole_mesh_fragment_floor(areas3d)
 
@@ -646,6 +639,9 @@ def split_islands(
     queue = collections.deque((group, groups_clean) for group in groups)
     while queue:
         group, known_clean = queue.popleft()
+        # an island under the floor can only make fragments
+        if sum(areas3d[f] for f in group) < fragment_floor:
+            continue
         m = measure(group)
         if m is None:
             continue

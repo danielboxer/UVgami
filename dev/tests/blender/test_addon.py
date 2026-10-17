@@ -77,7 +77,7 @@ def test_stalled_marker_flags_frozen_progress():
 
     from bl_ext.user_default.UVgami.src.unwrap import PROGRESS_STALL_SECONDS, Unwrap
 
-    unwrap = Unwrap("p", "p", pathlib.Path("p.obj"), (None,) * 5, "OFF")
+    unwrap = Unwrap("p", "p", pathlib.Path("p.obj"), (None,) * 4, "OFF")
     unwrap.is_active = True
     assert not unwrap.is_stalled
 

@@ -1,8 +1,12 @@
 import collections
 import importlib.util
 import math
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+import pytest
 
 # loaded from file, the addon package imports bpy
 PKG = Path(__file__).parents[2] / "src" / "seams"
@@ -12,24 +16,14 @@ spec = importlib.util.spec_from_file_location(
 sys.modules["seams"] = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sys.modules["seams"])
 from seams import (  # noqa: E402
-    CREASE_ANGLE,
-    LOW_ANGLE,
     TURN_COST,
-    absorb,
-    boundary_edges,
     build,
-    close_rings,
-    component_faces,
     crease_relief,
     cross,
     crosses,
     cut_path,
-    detect_width,
-    diagonal,
-    disk_cuts,
     face_edges,
     flatten_distortion,
-    flatten_teeth,
     is_hard_surface,
     island_eulers,
     island_groups,
@@ -37,20 +31,12 @@ from seams import (  # noqa: E402
     island_ruined,
     islands_overlap,
     pair,
-    partition,
     path_cost,
     rectify_targets,
-    region_topology,
-    reroute_boundaries,
-    seam_edges,
     signed_area,
     snap_paths,
     split_islands,
     split_moves,
-    split_sweeps,
-    sweep_rims,
-    turn_angle,
-    unfold_hinges,
     uv_area_fit,
     uv_fit,
     uv_island_groups,
@@ -59,9 +45,38 @@ from seams import (  # noqa: E402
     uvs_collapsed,
     vertex_components,
 )
+from seams.engine_run import write_obj  # noqa: E402
 from seams.islands import absorb_fragments, split_pieces  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+HARDSURFACE = (
+    Path(__file__).parents[2] / "engine-builds" / "windows" / "hardsurface.exe"
+)
+needs_hardsurface = pytest.mark.skipif(
+    not HARDSURFACE.is_file(), reason="hardsurface build missing"
+)
+
+
+# the hard surface exe's placed seams as (low, high) vertex pairs
+def exe_seams(verts, faces, angle=30, weights=None):
+    with tempfile.TemporaryDirectory() as folder:
+        obj = Path(folder) / "mesh.obj"
+        write_obj(obj, verts, faces)
+        if weights:
+            (Path(folder) / "mesh_weights").write_text(
+                ",".join(f"{v},{w!r}" for v, w in weights.items()) + "\n"
+            )
+        out = Path(folder) / "seams.txt"
+        subprocess.run(
+            [HARDSURFACE, "seams", obj, out, "--angle", str(angle)],
+            check=True,
+            capture_output=True,
+        )
+        return {
+            tuple(int(v) for v in line.split()) for line in out.read_text().splitlines()
+        }
 
 
 def read_obj(path):
@@ -74,39 +89,15 @@ def read_obj(path):
     return verts, faces
 
 
-def region_count(verts, faces, width):
-    weighted, areas, edges = build(verts, faces)
-    find = partition(faces, weighted, edges, LOW_ANGLE)
-    if width == "auto":
-        width = detect_width(verts, faces, areas, edges, find, diagonal(verts))
-    label, _ = absorb(verts, faces, weighted, areas, edges, find, width)
-    return len(set(label.values()))
-
-
-def test_beveled_cube_merges_to_faces():
-    # 2-segment bevel, no per-edge angle can give 6 charts
-    verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
-    assert region_count(verts, faces, "auto") == 6
-
-
-def test_beveled_cube_zero_width_keeps_bands():
-    verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
-    assert region_count(verts, faces, 0.0) == 54
-
-
-def test_plain_cube_is_untouched():
-    # a plain cube has no narrow regions
-    verts, faces = read_obj(FIXTURES / "cube.obj")
-    assert region_count(verts, faces, "auto") == 6
-
-
+@pytest.mark.smoke
+@needs_hardsurface
 def test_seam_edges_on_plain_cube():
-    # the cross: five hinges stay uncut, the other seven cube edges are the seams
+    # every cube edge is a crease, so each face is its own island
     verts, faces = read_obj(FIXTURES / "cube.obj")
-    seams = seam_edges(verts, faces)
-    assert len(seams) == 7
+    seams = exe_seams(verts, faces)
+    assert len(seams) == 12
     assert all(v0 < v1 for v0, v1 in seams)
-    assert len(island_groups(faces, seams, face_edges(faces))) == 1
+    assert len(island_groups(faces, seams, face_edges(faces))) == 6
 
 
 def tube(sides=4, height=1.0):
@@ -123,144 +114,54 @@ def tube(sides=4, height=1.0):
     return verts, faces
 
 
-def test_tube_stops_merging_before_it_closes_the_ring():
-    verts, faces = tube()
-    weighted, areas, edges = build(verts, faces)
-    find = partition(faces, weighted, edges, LOW_ANGLE)
-    # 100.0 is far over the tube's own width
-    label, _ = absorb(verts, faces, weighted, areas, edges, find, 100.0)
-    ec, _, _ = region_topology(edges, label)
-    assert len(set(label.values())) == 2
-    assert all(value == 1 for value in ec.values())
-
-
+@pytest.mark.smoke
+@needs_hardsurface
 def test_coarse_tube_unrolls_with_one_cut():
-    # the wall is a verified sweep, it partitions as one annulus
+    # the wall merges into one annulus, which gets one lengthwise opening
     verts, faces = tube(16)
-    seams = seam_edges(verts, faces)
+    seams = exe_seams(verts, faces)
     assert len(seams) == 1
     ((v0, v1),) = seams
     assert {verts[v0][2], verts[v1][2]} == {0.0, 1.0}
 
 
-def test_tall_coarse_tube_closes_ring_for_one_cut():
-    # at height 2 the wall unrolls to aspect pi and close_rings merges the halves
+@pytest.mark.smoke
+@needs_hardsurface
+def test_tall_coarse_tube_still_gets_one_cut():
+    # the wall's 22.5 degree steps merge away whatever its height
     verts, faces = tube(16, height=2.0)
-    seams = seam_edges(verts, faces)
+    seams = exe_seams(verts, faces)
     assert len(seams) == 1
     ((v0, v1),) = seams
     assert {verts[v0][2], verts[v1][2]} == {0.0, 2.0}
 
 
-def test_ring_closing_refuses_a_crease():
-    # the octagonal prism halves pass the aspect bound but their boundaries turn 45
-    verts, faces = tube(8, height=2.0)
-    weighted, areas, edges = build(verts, faces)
-    label = {i: 0 if i < 8 else 1 for i in range(len(faces))}
-    assert close_rings(verts, weighted, areas, edges, label) == label
-
-
-def test_faceted_tube_unrolls_whole():
-    # 45 degrees a segment reads as a crease, but the facets are flat panels
+@pytest.mark.smoke
+@needs_hardsurface
+def test_faceted_tube_is_cut_on_every_facet_edge():
+    # 45 degrees a segment is a crease, so each flat facet is its own island
     verts, faces = tube(8)
-    seams = seam_edges(verts, faces)
-    assert len(seams) == 1
-    assert len(island_groups(faces, seams, face_edges(faces))) == 1
+    seams = exe_seams(verts, faces)
+    assert len(seams) == 8
+    assert len(island_groups(faces, seams, face_edges(faces))) == 8
 
 
+@pytest.mark.smoke
+@needs_hardsurface
 def test_lower_feature_angle_keeps_shallow_seams():
     # 22.5 degree panel boundaries merge away at the default 30 but survive 15
     verts, faces = elbow(sides=16)
-    assert len(seam_edges(verts, faces, angle=15)) > len(seam_edges(verts, faces))
+    assert len(exe_seams(verts, faces, angle=15)) > len(exe_seams(verts, faces))
 
 
-def test_beveled_cube_unfolds_into_one_island():
-    # the six faces survive the merges, then the unfold hinges them into a cross
+@pytest.mark.smoke
+@needs_hardsurface
+def test_beveled_cube_is_cut_into_its_six_faces():
+    # each bevel band dissolves into one neighbour, so every cut sits on one crease
     verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
-    seams = seam_edges(verts, faces)
+    seams = exe_seams(verts, faces)
     edges = face_edges(faces)
-    assert len(island_groups(faces, seams, edges)) == 1
-
-
-def panel_hinges(verts, faces):
-    weighted, _, edges = build(verts, faces)
-    root = partition(faces, weighted, edges, LOW_ANGLE)
-    label = {i: root(i) for i in range(len(faces))}
-    return unfold_hinges(verts, faces, weighted, edges, label)
-
-
-def test_unfold_drops_the_hinge_that_would_overlap():
-    # a unit base with two 3x3 wings folded up from adjacent edges
-    verts = [
-        (0.0, 0.0, 0.0),
-        (1.0, 0.0, 0.0),
-        (1.0, 1.0, 0.0),
-        (0.0, 1.0, 0.0),
-        (1.0, -1.0, 0.0),
-        (1.0, 2.0, 0.0),
-        (1.0, 2.0, 3.0),
-        (1.0, -1.0, 3.0),
-        (-1.0, 1.0, 0.0),
-        (2.0, 1.0, 0.0),
-        (2.0, 1.0, 3.0),
-        (-1.0, 1.0, 3.0),
-    ]
-    faces = [
-        (0, 1, 2),
-        (0, 2, 3),
-        (7, 6, 5),
-        (7, 5, 2),
-        (7, 2, 1),
-        (7, 1, 4),
-        (11, 8, 3),
-        (11, 3, 2),
-        (11, 2, 9),
-        (11, 9, 10),
-    ]
-    hinges = panel_hinges(verts, faces)
-    assert len(hinges) == 1
-    assert hinges < {pair(1, 2), pair(2, 3)}
-
-
-def test_unfold_keeps_hinges_that_open_clear():
-    # the same shape with wings that stay inside their own quadrant when opened
-    verts = [
-        (0.0, 0.0, 0.0),
-        (1.0, 0.0, 0.0),
-        (1.0, 1.0, 0.0),
-        (0.0, 1.0, 0.0),
-        (1.0, 0.0, 1.0),
-        (1.0, 1.0, 1.0),
-        (1.0, 1.0, 0.5),
-        (0.0, 1.0, 0.5),
-    ]
-    faces = [
-        (0, 1, 2),
-        (0, 2, 3),
-        (4, 5, 2),
-        (4, 2, 1),
-        (7, 3, 2),
-        (7, 2, 6),
-    ]
-    assert panel_hinges(verts, faces) == {pair(1, 2), pair(2, 3)}
-
-
-def test_absorbed_bevel_still_reads_as_a_crease():
-    verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
-    weighted, areas, edges = build(verts, faces)
-    find = partition(faces, weighted, edges, LOW_ANGLE)
-    width = detect_width(verts, faces, areas, edges, find, diagonal(verts))
-    _, bounds = absorb(verts, faces, weighted, areas, edges, find, width)
-    live = [key for key in bounds.length if bounds.length[key] > 0]
-    # every boundary left is a cube corner with its bevel absorbed into one side
-    angles = [bounds.turn[key] / bounds.length[key] for key in live]
-    assert angles
-    assert min(angles) > CREASE_ANGLE
-    assert max(angles) < 120
-    # the turn at the boundary's own edges is only the last bevel segment
-    assert min(bounds.step[key] / bounds.length[key] for key in live) < 45
-    # the turn is spread over a bevel's width, not a surface's
-    assert max(bounds.spread[key] / bounds.length[key] for key in live) < width
+    assert len(island_groups(faces, seams, edges)) == 6
 
 
 def capped_tube(sides=32, height=2.0):
@@ -293,120 +194,26 @@ def elbow(rings=12, sides=12, bend_radius=3.0, tube_radius=1.0):
     return verts, faces
 
 
-def sweep_regions(verts, faces):
-    weighted, areas, edges = build(verts, faces)
-    label = {i: 0 for i in range(len(faces))}
-    return split_sweeps(verts, faces, weighted, areas, edges, label), len(faces)
-
-
-def test_sweep_split_lifts_the_cap_off_a_sock():
-    verts, faces = capped_tube()
-    label, count = sweep_regions(verts, faces)
-    regions = collections.defaultdict(set)
-    for i, r in label.items():
-        regions[r].add(i)
-    assert len(regions) == 2
-    # the cap fan is exactly the faces added after the wall quads
-    fan = set(range(count - 32, count))
-    assert fan in regions.values()
-
-
-def test_sweep_split_cuts_a_bent_tube_into_straight_runs():
-    # mid-bend normals sit between wall and cap against any axis
-    verts, faces = elbow()
-    label, _ = sweep_regions(verts, faces)
-    regions = collections.defaultdict(list)
-    for i, r in label.items():
-        regions[r].append(i)
-    assert len(regions) > 1
-    edges = face_edges(faces)
-    for members in regions.values():
-        assert len(component_faces(members, edges)) == 1
-
-
-def filleted_tube(sides=32, height=2.0, fillet=8, radius=0.4):
-    verts, faces = [], []
-    rings = [(1.0, 0.0), (1.0, height)]
-    for k in range(1, fillet + 1):
-        t = (math.pi / 2) * k / fillet
-        rings.append((1 - radius * (1 - math.cos(t)), height + radius * math.sin(t)))
-    for r, z in rings:
-        for i in range(sides):
-            angle = 2 * math.pi * i / sides
-            verts.append([r * math.cos(angle), r * math.sin(angle), z])
-    for ring in range(len(rings) - 1):
-        for i in range(sides):
-            a = ring * sides + i
-            b = ring * sides + (i + 1) % sides
-            c = (ring + 1) * sides + (i + 1) % sides
-            d = (ring + 1) * sides + i
-            faces.append([a, b, c])
-            faces.append([a, c, d])
-    top = len(verts)
-    verts.append([0.0, 0.0, rings[-1][1]])
-    last = (len(rings) - 1) * sides
-    for i in range(sides):
-        faces.append([last + i, last + (i + 1) % sides, top])
-    return verts, faces
-
-
-def test_filleted_cap_is_cut_off_at_its_rim():
-    # the wall merges straight over a filleted cap, no boundary turns like a crease
-    verts, faces = filleted_tube()
-    edges = face_edges(faces)
-    with_rims = seam_edges(verts, faces)
-    without = seam_edges(verts, faces, rims=False)
-    assert len(island_groups(faces, without, edges)) == 1
-    assert len(island_groups(faces, with_rims, edges)) == 2
-
-
-def test_sweep_split_leaves_a_shallow_shell_alone():
-    # a quarter of the capped tube: a curved plate with a flange, not a sock
-    verts, faces = capped_tube()
-    quarter = faces[0:16] + faces[64:72]
-    label, _ = sweep_regions(verts, quarter)
-    assert len(set(label.values())) == 1
-
-
-def euler_after_cut(ec, cuts):
-    return ec + len({v for edge in cuts for v in edge}) - len(cuts)
-
-
-def test_annulus_region_is_cut_open():
-    # the whole tube as one region, what a low-curvature tube wall partitions into
-    verts, faces = tube(8)
-    _, _, edges = build(verts, faces)
-    label = {i: 0 for i in range(len(faces))}
-    ec, _, _ = region_topology(edges, label)
-    assert ec[0] == 0
-
-    cuts = disk_cuts(verts, edges, label)
-    assert len(cuts) == 1  # one rim to the other, along a single side edge
-    v0, v1 = next(iter(cuts))
-    assert {verts[v0][2], verts[v1][2]} == {0.0, 1.0}
-    assert euler_after_cut(ec[0], cuts) == 1
-
-
+# the coarse tube's one cut is a side edge, and every other side edge is as long
+@pytest.mark.smoke
+@needs_hardsurface
 def test_painted_restriction_moves_the_cut():
-    # the tube's one cut is a side edge, and every other side edge is as long
-    verts, faces = tube(8)
-    _, _, edges = build(verts, faces)
-    label = {i: 0 for i in range(len(faces))}
-    plain = disk_cuts(verts, edges, label)
+    verts, faces = tube(16)
+    plain = exe_seams(verts, faces)
     painted = {v: 1.0 for edge in plain for v in edge}
 
-    cuts = disk_cuts(verts, edges, label, painted)
+    cuts = exe_seams(verts, faces, weights=painted)
     assert len(cuts) == 1
     assert not painted.keys() & {v for edge in cuts for v in edge}
 
 
+# painting everything leaves the tube closed if the cut is dropped
+@pytest.mark.smoke
+@needs_hardsurface
 def test_paint_cannot_block_a_cut_that_has_to_happen():
-    # painting everything leaves the region non-disk if the cut is dropped
-    verts, faces = tube(8)
-    _, _, edges = build(verts, faces)
-    label = {i: 0 for i in range(len(faces))}
+    verts, faces = tube(16)
     painted = {v: 1.0 for v in range(len(verts))}
-    assert len(disk_cuts(verts, edges, label, painted)) == 1
+    assert len(exe_seams(verts, faces, weights=painted)) == 1
 
 
 def folded_pair(z):
@@ -502,240 +309,6 @@ def test_path_cost_prices_turns():
     bent = path_cost(verts, [0, 1, 4], relief={})
     assert straight == 2.0
     assert bent == 2.0 + TURN_COST * 0.5
-
-
-def flat_grid():
-    verts = [[x, y, 0] for y in range(3) for x in range(3)]
-    faces = []
-    for y in range(2):
-        for x in range(2):
-            a = 3 * y + x
-            faces.append([a, a + 1, a + 4])
-            faces.append([a, a + 4, a + 3])
-    return verts, faces
-
-
-def test_tooth_on_a_flat_boundary_is_flattened():
-    verts, faces = flat_grid()
-    weighted, _, edges = build(verts, faces)
-    # left column region 0, right column region 1, with one tooth into the left
-    label = {0: 0, 1: 0, 4: 0, 5: 0, 2: 1, 3: 1, 6: 1, 7: 1}
-    label[3] = 0
-
-    flat = flatten_teeth(weighted, faces, edges, label)
-    assert flat[3] == 1
-    assert boundary_edges(edges, flat) == {(1, 4), (4, 7)}
-
-
-def test_forced_seam_survives_the_tooth_flip():
-    verts, faces = flat_grid()
-    weighted, _, edges = build(verts, faces)
-    label = {0: 0, 1: 0, 4: 0, 5: 0, 2: 1, 3: 1, 6: 1, 7: 1}
-    label[3] = 0
-
-    flat = flatten_teeth(weighted, faces, edges, label, forced={(1, 5)})
-    assert flat[3] == 0
-
-
-def folded_planes():
-    verts = (
-        [[x, 0, 0] for x in range(3)]
-        + [[x, -1, 0] for x in range(3)]
-        + [[x, 0, 1] for x in range(3)]
-    )
-    faces = []
-    for x in range(2):
-        faces.append([x, x + 1, x + 4])
-        faces.append([x, x + 4, x + 3])
-    for x in range(2):
-        faces.append([x, x + 1, x + 7])
-        faces.append([x, x + 7, x + 6])
-    return verts, faces
-
-
-def test_tooth_flip_returns_the_seam_to_the_fold():
-    verts, faces = folded_planes()
-    weighted, _, edges = build(verts, faces)
-    # one vertical triangle mislabeled onto the flat plane, its kept edge is the fold
-    label = {0: 0, 1: 0, 2: 0, 3: 0, 4: 1, 5: 1, 6: 1, 7: 1}
-    label[4] = 0
-
-    flat = flatten_teeth(weighted, faces, edges, label)
-    assert flat[4] == 1
-    assert boundary_edges(edges, flat) == {(0, 1), (1, 2)}
-
-
-def test_corner_on_a_crease_is_not_cut():
-    verts, faces = read_obj(FIXTURES / "cube.obj")
-    weighted, _, edges = build(verts, faces)
-    # top face one region, the rest another, each top triangle has two sharp edges
-    top = max(v[2] for v in verts)
-    label = {
-        f: 0 if all(verts[v][2] == top for v in face) else 1
-        for f, face in enumerate(faces)
-    }
-
-    assert flatten_teeth(weighted, faces, edges, label) == label
-
-
-def bump_grid():
-    verts = [[x, y, 0] for y in range(4) for x in range(4)]
-    faces = []
-    for y in range(3):
-        for x in range(3):
-            a = 4 * y + x
-            faces.append([a, a + 1, a + 5])
-            faces.append([a, a + 5, a + 4])
-    label = {f: 0 if (f // 2) % 3 == 0 else 1 for f in range(18)}
-    label[8] = label[9] = 0
-    return verts, faces, label
-
-
-def test_reroute_straightens_a_boundary_bump():
-    verts, faces, label = bump_grid()
-    weighted, areas, edges = build(verts, faces)
-    relief = crease_relief(verts, faces, weighted, edges)
-
-    moved = reroute_boundaries(verts, faces, areas, edges, label, relief)
-    assert moved[8] == 1 and moved[9] == 1
-    assert boundary_edges(edges, moved) == {(1, 5), (5, 9), (9, 13)}
-
-
-def test_reroute_leaves_a_forced_chain():
-    verts, faces, label = bump_grid()
-    weighted, areas, edges = build(verts, faces)
-    relief = crease_relief(verts, faces, weighted, edges)
-
-    moved = reroute_boundaries(
-        verts, faces, areas, edges, label, relief, forced={(5, 6)}
-    )
-    assert moved == label
-
-
-def walled_floor():
-    verts = [[x, y, 0] for y in range(3) for x in range(9)] + [
-        [x, 0, 1] for x in range(9)
-    ]
-    faces = []
-    for y in range(2):
-        for x in range(8):
-            a = 9 * y + x
-            faces.append([a, a + 1, a + 10])
-            faces.append([a, a + 10, a + 9])
-    for x in range(8):
-        faces.append([x, x + 1, 28 + x])
-        faces.append([x, 28 + x, 27 + x])
-    return verts, faces
-
-
-def test_reroute_drops_the_seam_onto_the_fold():
-    verts, faces = walled_floor()
-    # the wall region reaches over the fold onto the middle of the floor
-    label = {f: 1 if f >= 32 else 0 for f in range(48)}
-    for f in range(4, 12):
-        label[f] = 1
-    weighted, areas, edges = build(verts, faces)
-    relief = crease_relief(verts, faces, weighted, edges)
-
-    moved = reroute_boundaries(verts, faces, areas, edges, label, relief)
-    assert all(moved[f] == (1 if f >= 32 else 0) for f in range(48))
-    assert boundary_edges(edges, moved) == {(x, x + 1) for x in range(8)}
-
-
-def capped_prism(sides=12):
-    verts = [[0.0, 0.0, 1.0]]
-    for ring_z in (1.0, 0.0):
-        for i in range(sides):
-            a = 2 * math.pi * i / sides
-            verts.append([math.cos(a), math.sin(a), ring_z])
-    faces = []
-    for i in range(sides):
-        faces.append([0, 1 + i, 1 + (i + 1) % sides])
-    for i in range(sides):
-        a, b = 1 + i, 1 + (i + 1) % sides
-        faces.append([b, a, sides + a])
-        faces.append([b, sides + a, sides + b])
-    return verts, faces
-
-
-def test_reroute_snaps_a_closed_loop_to_its_rim():
-    verts, faces = capped_prism()
-    # a rim loop with no junction to anchor it, so only loop_arcs pulls it back
-    label = {f: 0 if f < 12 else 1 for f in range(36)}
-    label[0] = 1
-    weighted, areas, edges = build(verts, faces)
-    relief = crease_relief(verts, faces, weighted, edges)
-
-    moved = reroute_boundaries(verts, faces, areas, edges, label, relief)
-    assert moved[0] == 0
-    rim = {pair(1 + i, 1 + (i + 1) % 12) for i in range(12)}
-    assert boundary_edges(edges, moved) == rim
-
-
-def test_forced_seam_splits_a_flat_face():
-    # both merges would take these coplanar triangles, nothing says cut here
-    verts, faces = read_obj(FIXTURES / "cube.obj")
-    weighted, _, edges = build(verts, faces)
-    flat = next(
-        key
-        for key, owners in edges.items()
-        if len(owners) == 2 and turn_angle(weighted, owners) < 1
-    )
-    seams = seam_edges(verts, faces, forced={flat})
-    assert flat in seams
-    # the unfold takes the rest to one island, the mark stays as its slit
-    assert len(island_groups(faces, seams, edges)) == 1
-
-
-def test_forced_seam_takes_a_detected_one_over():
-    # the swept wall needs one cut and detection picks where
-    verts, faces = tube(16)
-    edges = face_edges(faces)
-    base = seam_edges(verts, faces)
-    side = next(
-        pair(2 * i, 2 * i + 1) for i in range(16) if pair(2 * i, 2 * i + 1) not in base
-    )
-    seams = seam_edges(verts, faces, forced={side})
-    assert seams == {side}
-    assert len(base) == 1
-    assert len(island_groups(faces, seams, edges)) == 1
-
-
-def test_forced_seam_moves_the_band_it_blocks():
-    # a mark on one side of a bevel band
-    verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
-    weighted, areas, edges = build(verts, faces)
-    # 22.5 degrees is where a bevel band meets the face beside it
-    band = next(
-        key
-        for key, owners in edges.items()
-        if len(owners) == 2 and 20 < turn_angle(weighted, owners) < 25
-    )
-    find = partition(faces, weighted, edges, LOW_ANGLE, {band})
-    width = detect_width(verts, faces, areas, edges, find, diagonal(verts))
-    label, _ = absorb(verts, faces, weighted, areas, edges, find, width, {band})
-    assert len(set(label.values())) == 6
-    a, b = edges[band]
-    assert label[a] != label[b]
-
-
-def test_ring_closing_refuses_a_forced_seam():
-    verts, faces = tube(16, height=2.0)
-    weighted, areas, edges = build(verts, faces)
-    label = {i: 0 if i < 16 else 1 for i in range(len(faces))}
-    assert close_rings(verts, weighted, areas, edges, label) != label
-    # a vertical edge on the two halves' own boundary
-    forced = {pair(0, 1)}
-    merged = close_rings(verts, weighted, areas, edges, label, forced=forced)
-    assert merged == label
-
-
-def test_disk_regions_are_left_alone():
-    verts, faces = read_obj(FIXTURES / "cube.obj")
-    weighted, areas, edges = build(verts, faces)
-    find = partition(faces, weighted, edges, LOW_ANGLE)
-    label = {i: find(i) for i in range(len(faces))}
-    assert disk_cuts(verts, edges, label) == set()
 
 
 def strip_island(quads, scale=1.0, angle=0.0):
@@ -1389,20 +962,38 @@ def test_beveled_cube_reads_hard():
     assert is_hard_surface(verts, faces)
 
 
-def test_smooth_blob_reads_organic():
-    # dense enough that the surface never turns past the partition angle
-    verts, faces = sphere(rings=24, sides=48)
+def lumpy_blob(rings=24, sides=48):
+    verts, faces = [], []
+    for i in range(rings + 1):
+        t = math.pi * i / rings
+        for j in range(sides):
+            p = 2 * math.pi * j / sides
+            x, y, z = math.sin(t) * math.cos(p), math.sin(t) * math.sin(p), math.cos(t)
+            r = (
+                1
+                + 0.25 * math.sin(3 * x + 0.5) * math.cos(2 * y + 1.3)
+                + 0.2 * math.sin(2.5 * z + 0.7)
+            )
+            verts.append([r * x, 1.4 * r * y, r * z])
+    for i in range(rings):
+        for j in range(sides):
+            a, b = i * sides + j, i * sides + (j + 1) % sides
+            faces.append([a, b, b + sides, a + sides])
+    return verts, faces
+
+
+@pytest.mark.parametrize("rings, sides", [(24, 48), (12, 24)])
+def test_lumpy_blob_reads_organic(rings, sides):
+    verts, faces = lumpy_blob(rings, sides)
     assert not is_hard_surface(verts, faces)
 
 
-def test_coarse_blob_reads_organic():
-    # coarse enough that every edge turns into the spread band instead
-    verts, faces = sphere(rings=12, sides=24)
-    assert not is_hard_surface(verts, faces)
+def test_tiny_part_reads_hard():
+    verts, faces = lumpy_blob()
+    assert is_hard_surface(verts, faces, model_area=10000.0)
 
 
 def test_smooth_cylinder_reads_hard():
-    # no crease anywhere, the hard call comes from the sweep rims
     verts, faces = capped_tube(sides=48)
     assert is_hard_surface(verts, faces)
 
@@ -1427,104 +1018,14 @@ def test_default_cylinder_reads_hard():
     assert is_hard_surface(verts, faces)
 
 
+@pytest.mark.smoke
+@needs_hardsurface
 def test_default_cylinder_cuts_rims_and_one_seam():
     # both rims plus a single axial cut, the wall as one island and each cap its own
     verts, faces = ngon_capped_cylinder()
-    seams = seam_edges(verts, faces)
+    seams = exe_seams(verts, faces)
     groups = island_groups(faces, seams, face_edges(faces))
     assert sorted(len(g) for g in groups) == [1, 1, 32]
-
-
-def test_sweep_rims_leave_blobs_alone():
-    verts, faces = sphere(rings=12, sides=24)
-    rims, walls = sweep_rims(verts, faces)
-    assert not rims and not walls
-
-
-def test_sweep_rims_split_bent_tubes_into_straight_runs():
-    # a quarter-torus tube is too bent for one axis
-    verts, faces = elbow(rings=24, sides=16)
-    rims, walls = sweep_rims(verts, faces)
-    assert walls == set(range(len(faces)))
-    # at least one full ring of forced rim edges between two runs
-    assert len(rims) >= 16
-
-
-def stadium_tube(height=4.0, width=2.0, radius=0.3, arc=8, flats=4):
-    profile = []
-    half = width / 2 - radius
-    for k in range(arc + 1):
-        a = -math.pi / 2 + math.pi * k / arc
-        profile.append((half + radius * math.cos(a), radius * math.sin(a)))
-    for k in range(1, flats):
-        profile.append((half - 2 * half * k / flats, radius))
-    for k in range(arc + 1):
-        a = math.pi / 2 + math.pi * k / arc
-        profile.append((-half + radius * math.cos(a), radius * math.sin(a)))
-    for k in range(1, flats):
-        profile.append((-half + 2 * half * k / flats, -radius))
-    verts, faces = [], []
-    for x, y in profile:
-        verts.append([x, y, 0.0])
-        verts.append([x, y, height])
-    sides = len(profile)
-    for i in range(sides):
-        low, high = 2 * i, 2 * i + 1
-        next_low = 2 * ((i + 1) % sides)
-        faces.append([low, next_low, high])
-        faces.append([next_low, next_low + 1, high])
-    return verts, faces
-
-
-def test_flat_bar_wall_panels_at_its_soft_ridges():
-    # the wall splits lengthwise at the rounded ends into two panels
-    verts, faces = stadium_tube()
-    rims, walls = sweep_rims(verts, faces)
-    assert walls == set(range(len(faces)))
-    groups = island_groups(faces, rims, face_edges(faces))
-    assert len(groups) == 2
-    assert min(len(g) for g in groups) > len(faces) // 4
-
-
-def test_round_tube_wall_keeps_one_wrap():
-    # a circular profile has no ridge to cut, coarse or fine
-    for sides in (16, 32):
-        verts, faces = tube(sides=sides, height=4.0)
-        rims, walls = sweep_rims(verts, faces)
-        assert walls == set(range(len(faces)))
-        assert not rims
-
-
-def test_sweep_rims_still_reject_shattered_coarse_elbows():
-    # at 12 sides the cross-tube edges turn past the partition angle
-    verts, faces = elbow()
-    rims, walls = sweep_rims(verts, faces)
-    assert not rims and not walls
-
-
-def quad_torus(major=16, minor=48, radius=3.0, tube=1.0):
-    verts, faces = [], []
-    for i in range(major):
-        u = 2 * math.pi * i / major
-        for j in range(minor):
-            v = 2 * math.pi * j / minor
-            r = radius + tube * math.cos(v)
-            verts.append([r * math.cos(u), r * math.sin(u), tube * math.sin(v)])
-    for i in range(major):
-        for j in range(minor):
-            a = i * minor + j
-            b = i * minor + (j + 1) % minor
-            c = ((i + 1) % major) * minor + (j + 1) % minor
-            d = ((i + 1) % major) * minor + j
-            faces.append([a, b, c, d])
-    return verts, faces
-
-
-def test_planar_quad_diagonals_do_not_count_as_coplanar_edges():
-    # every quad of this torus is planar, so the fan diagonals alone are 0.47 of
-    # the edge length, over the coplanar share
-    verts, faces = quad_torus()
-    assert not is_hard_surface(verts, faces)
 
 
 def uv_groups(faces, uvs):

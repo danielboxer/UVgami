@@ -162,41 +162,6 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         max=5,
         default=3,
     )
-    # symmetry
-    use_symmetry: bpy.props.BoolProperty(
-        name="",
-        description=(
-            "Use this setting for symmetrical meshes only."
-            " This will result in a symmetrical UV map"
-        ),
-    )
-    sym_preview: bpy.props.BoolProperty(
-        name="Preview",
-        description="Show the symmetry planes of the selected meshes in the viewport",
-        default=True,
-    )
-    sym_axes: bpy.props.EnumProperty(
-        name="Axes",
-        description=(
-            "The axis of symmetry of the input mesh."
-            " Hold down Shift to select or deselect multiple axes"
-        ),
-        items=(
-            ("X", "X", "X axis"),
-            ("Y", "Y", "Y axis"),
-            ("Z", "Z", "Z axis"),
-        ),
-        default={"X"},
-        # allows for selection of multiple items
-        options={"ENUM_FLAG"},
-    )
-    sym_merge: bpy.props.BoolProperty(
-        name="Merge",
-        description=(
-            "Overlap and combine symmetrical UVs. This will remove the seam on the axis"
-        ),
-        default=True,
-    )
     # grid
     grid_type: bpy.props.EnumProperty(
         name="Grid Type",

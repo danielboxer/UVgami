@@ -8,12 +8,32 @@ env:
   INCLUDED_FILES: "src LICENSE __init__.py blender_manifest.toml"
 
 jobs:
-  # no engine is bundled, the addon downloads each one
   zip:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - run: zip -r addon.zip $INCLUDED_FILES
+
+      - name: Download the bundled engine builds
+        env:
+          GITHUB_TOKEN: ${{ secrets.ENGINE_RELEASE_TOKEN }}
+          ENGINE_RELEASE_REPO: ${{ secrets.ENGINE_RELEASE_REPO }}
+        run: |
+          mkdir -p bin/licenses
+          for ENGINE in hardsurface; do
+            CONSTANT="$(echo "$ENGINE" | tr a-z A-Z)_VERSION"
+            VERSION=$(grep -m1 "^$CONSTANT = " src/engines/bundled.py | cut -d'"' -f2)
+            gh release download "$ENGINE-v$VERSION" -R "$ENGINE_RELEASE_REPO" --pattern "$ENGINE-engine-$VERSION-*.zip" --dir "package/$ENGINE"
+            for TAG in windows linux macos-x64 macos-arm64; do
+              BINARY=$ENGINE
+              if [ "$TAG" = "windows" ]; then BINARY=$ENGINE.exe; fi
+              unzip -q "package/$ENGINE/$ENGINE-engine-$VERSION-$TAG.zip" -d "extracted/$ENGINE/$TAG"
+              mkdir -p "bin/$TAG"
+              cp "$(find "extracted/$ENGINE/$TAG" -type f -name "$BINARY")" "bin/$TAG/"
+            done
+            cp "$(find "extracted/$ENGINE/linux" -type d -name licenses)"/* bin/licenses/
+          done
+
+      - run: zip -r addon.zip $INCLUDED_FILES bin
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: addon-zip
@@ -187,6 +207,10 @@ jobs:
             curl -sSL "$URL" | tar xJ
           fi
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: addon-zip
+
       # same zips and basename match as fetch_binary in the addon
       - name: Download the engines
         if: matrix.platform.suite
@@ -204,6 +228,10 @@ jobs:
             cp "$(find extracted/$ENGINE -type f -name "$ENGINE$EXE")" engine-builds/$TAG/
             chmod +x "engine-builds/$TAG/$ENGINE$EXE"
           done
+          for ENGINE in hardsurface; do
+            unzip -q -j addon.zip "bin/$TAG/$ENGINE$EXE" -d engine-builds/$TAG
+            chmod +x "engine-builds/$TAG/$ENGINE$EXE"
+          done
 
       - name: Run the suite inside blender
         if: matrix.platform.suite
@@ -214,10 +242,6 @@ jobs:
       # validate only reads the manifest
       - name: Validate the manifest
         run: ${{ env.BLENDER_DIR }}/${{ matrix.platform.binary }} --factory-startup --command extension validate .
-
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: addon-zip
 
       # an empty user folder, like a first install
       - name: Install the zip

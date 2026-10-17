@@ -42,8 +42,6 @@ from .src.ops.island import (
 from .src.ops.misc import (
     UVGAMI_OT_expand,
     UVGAMI_OT_open_preferences,
-    # start_symmetry_draw,
-    # stop_symmetry_draw,
     UVGAMI_OT_reset_setting,
     UVGAMI_OT_reset_settings,
 )
@@ -60,7 +58,6 @@ from .src.ops.viewer import UVGAMI_OT_view_unwrap
 from .src.ui.panels import (
     UVGAMI_PT_grid,
     UVGAMI_PT_island_settings,
-    # UVGAMI_PT_symmetry,
     UVGAMI_PT_island_uv,
     UVGAMI_PT_main,
     UVGAMI_PT_misc,
@@ -108,7 +105,6 @@ classes = (
     UVGAMI_OT_open_logs,
     UVGAMI_PT_main,
     UVGAMI_PT_weights,
-    # UVGAMI_PT_symmetry,
     UVGAMI_PT_island_uv,
     UVGAMI_PT_island_settings,
     UVGAMI_PT_speed,
@@ -133,12 +129,10 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.uvgami = bpy.props.PointerProperty(type=UVGAMI_PG_properties)
     bpy.app.handlers.load_pre.append(_on_load_pre)
-    # start_symmetry_draw()
 
 
 def unregister():
     manager.shutdown()
-    # stop_symmetry_draw()
     if _on_load_pre in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(_on_load_pre)
     del bpy.types.Scene.uvgami

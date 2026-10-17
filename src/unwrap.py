@@ -38,8 +38,7 @@ class Unwrap:
         if self.join_job is not None:
             self.join_job.members.append(self)
         self.hide_job = jobs[2]
-        self.symmetrize_job = jobs[3]
-        self.transfer_uvs_job = jobs[4]
+        self.transfer_uvs_job = jobs[3]
 
         # a duplicate skips the engine and takes copy_of's output moved by copy_matrix
         self.copy_of = None

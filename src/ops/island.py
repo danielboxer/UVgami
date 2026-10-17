@@ -85,7 +85,7 @@ def queue_fix(obj, job, name, path, vertex_count, props):
         name=name,
         input_name=name,
         path=path,
-        jobs=(None, None, None, None, job),
+        jobs=(None, None, None, job),
         # maintain_mode=props.maintain_mode,
     )
     unwrap.set_export_data(

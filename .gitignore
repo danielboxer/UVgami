@@ -15,6 +15,9 @@ output/
 # bundled engine binaries
 /engine-builds/
 
+# the hardsurface builds release-check bundles
+/bin/
+
 # local test builds from dev/build.ps1
 /dist/
 

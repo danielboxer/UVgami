@@ -46,7 +46,7 @@ def draw_online_access(layout):
         return False
     row = layout.row()
     row.scale_y = 1.5
-    # its poll explains itself when blender was started in offline mode
+    # the tooltip has the reason the button is greyed out in offline mode
     row.operator(
         "extensions.userpref_allow_online", text="Allow Online Access", icon="URL"
     )

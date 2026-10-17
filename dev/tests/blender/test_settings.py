@@ -11,12 +11,13 @@ from blender_fixtures import (
 pytestmark = [needs_engine, pytest.mark.smoke]
 
 GRID_MATERIAL = "UVgami_grid"
-# (islands, seams) on the balanced unwrap, recorded 2026-08-22 at optcuts 1.20
+# (islands, seams) on the balanced unwrap, recorded 2026-08-22 at optcuts 1.20,
+# the hard surface rows 2026-10-24 on the placed seams route
 EXPECTED = {
     ("cylinder", "ORGANIC"): (1, 30),
     ("cylinder", "HARD"): (3, 97),
     ("cube-bevel2", "ORGANIC"): (1, 12),
-    ("cube-bevel2", "HARD"): (2, 34),
+    ("cube-bevel2", "HARD"): (6, 37),
 }
 QUALITY_LEVELS = ["LESS_STRETCH", "BALANCED", "FEWER_SEAMS"]
 
@@ -70,7 +71,7 @@ def test_chart_and_seam_counts_are_pinned(
     load_obj, unwrap, outputs, model, surface_mode
 ):
     load_obj(model)
-    bpy.context.scene.uvgami.optcuts.surface_mode = surface_mode
+    bpy.context.scene.uvgami.optcuts.mode = surface_mode
 
     unwrap()
 
@@ -79,13 +80,23 @@ def test_chart_and_seam_counts_are_pinned(
     assert (island_count(output), seam_count(output)) == EXPECTED[model, surface_mode]
 
 
+def test_auto_unwraps_a_beveled_cube_as_hard_surface(load_obj, unwrap, outputs):
+    load_obj("cube-bevel2")
+
+    unwrap()
+
+    (output,) = outputs().values()
+    expected = EXPECTED["cube-bevel2", "HARD"]
+    assert (island_count(output), seam_count(output)) == expected
+
+
 def test_quality_levels_trade_seams_for_stretch(load_obj, unwrap, outputs):
     seams = []
     for quality in QUALITY_LEVELS:
         bpy.ops.wm.read_homefile(use_empty=True)
         load_obj("cylinder")
         # priority moves only the engine's cuts, never the preseed's
-        bpy.context.scene.uvgami.optcuts.surface_mode = "ORGANIC"
+        bpy.context.scene.uvgami.optcuts.mode = "ORGANIC"
         bpy.context.scene.uvgami.priority = quality
         unwrap()
         (output,) = outputs().values()

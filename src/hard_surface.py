@@ -1,41 +1,19 @@
+import functools
+
 import numpy
 
-from .ops.guides import SEAM_RESTRICTIONS_GROUP
-from .seams import (
-    CREASE_ANGLE,
-    FlattenEngine,
-    FlattenError,
-    hard_faces,
-    preseed_job,
-    preseed_uvs,
-)
+from .ops.guides import SEAM_RESTRICTIONS_GROUP, exposure_weights
+from .seams import EngineError, preseed_job
 from .seams.worker import WorkerProcess
 from .utils.mesh import (
     face_vertex_arrays,
-    face_vertices,
     loop_starts,
     loop_totals,
     loop_uvs,
     set_loop_uvs,
     vertex_position_array,
-    vertex_positions,
 )
-
-
-def flatten_engine():
-    # imported here: engines imports this module back
-    from .engines import get_engine
-    from .utils.paths import get_extension_dir_path, get_preferences
-
-    engine = get_engine("OPTCUTS")
-    engine_ctx, error = engine.validate(get_preferences())
-    if error is not None:
-        raise FlattenError(error)
-    return FlattenEngine(
-        engine.command(engine_ctx),
-        get_extension_dir_path() / "preseed",
-        engine.build_env(engine_ctx),
-    )
+from .utils.paths import get_extension_dir_path
 
 
 # the same group the engine reads, higher repels seams
@@ -52,14 +30,7 @@ def seam_restrictions(obj):
     return weights or None
 
 
-def auto_hard_faces(obj, marked="NONE"):
-    mesh = obj.data
-    verts = vertex_positions(mesh)
-    faces = face_vertices(mesh)
-    return hard_faces(verts, faces, marked_seams(mesh), marked)
-
-
-# (low, high) index pairs as one integer each, so numpy can match them
+# (low, high) index pairs packed into one integer each
 def _packed(pairs):
     return numpy.fromiter(
         ((a << 32) | b for a, b in pairs), dtype=numpy.int64, count=len(pairs)
@@ -108,20 +79,14 @@ def seam_flags(mesh):
     return flags
 
 
-def marked_seams(mesh):
-    pairs = numpy.empty(len(mesh.edges) * 2, dtype=numpy.int64)
-    mesh.edges.foreach_get("vertices", pairs)
-    pairs = numpy.sort(pairs.reshape(-1, 2)[seam_flags(mesh)], axis=1)
-    return {(a, b) for a, b in pairs.tolist()}
+# def marked_seams(mesh):
+#     pairs = numpy.empty(len(mesh.edges) * 2, dtype=numpy.int64)
+#     mesh.edges.foreach_get("vertices", pairs)
+#     pairs = numpy.sort(pairs.reshape(-1, 2)[seam_flags(mesh)], axis=1)
+#     return {(a, b) for a, b in pairs.tolist()}
 
 
-def apply_face_uvs(mesh, uvs, only=None):
-    layer = mesh.uv_layers.active.data
-    if only is None:
-        flat = [c for face in uvs for uv in face for c in uv]
-        layer.foreach_set("uv", flat)
-        return
-
+def apply_face_uvs(mesh, uvs, only):
     coords = loop_uvs(mesh)
     starts = loop_starts(mesh)
     for f in only:
@@ -130,7 +95,7 @@ def apply_face_uvs(mesh, uvs, only=None):
     set_loop_uvs(mesh, coords)
 
 
-# uvs holds the loops of these faces in face order
+# uvs has the loops of these faces in face order
 def apply_loop_uvs(mesh, uvs, faces):
     flattened = numpy.zeros(len(mesh.polygons), dtype=bool)
     flattened[faces] = True
@@ -139,59 +104,40 @@ def apply_loop_uvs(mesh, uvs, faces):
     set_loop_uvs(mesh, coords)
 
 
-# compute is bpy-free so a worker thread can run it
-def preseed_work(obj, angle, marked="NONE", weights=None, auto=False, mirrors=None):
+def hardsurface_command():
+    # imported here: engines imports this module back
+    from .engines.bundled import resolve_bundled_command
+
+    try:
+        return resolve_bundled_command("hardsurface", "Hard surface")
+    except RuntimeError as error:
+        raise EngineError(str(error)) from error
+
+
+# compute is bpy-free so a worker thread can run it, the exposure ray cast is not
+def preseed_work(obj, angle, split_target, weights, surface_modes):
     mesh = obj.data
-    marks = marked_seams(mesh) if (marked != "NONE" or auto) else frozenset()
-    engine = flatten_engine()
     worker = WorkerProcess(
         preseed_job,
-        engine.engine_command,
-        engine.workdir,
-        engine.env,
+        hardsurface_command(),
+        get_extension_dir_path() / "preseed",
         vertex_position_array(mesh),
         *face_vertex_arrays(mesh),
-        angle,
-        marked,
         weights,
-        marks,
-        mirrors,
-        auto,
-    )
-
-    def apply(result):
-        if result is None:
-            return False
-        seams, uvs, flattened = result
-        apply_seams(mesh, seams)
-        if not mesh.uv_layers:
-            mesh.uv_layers.new()
-        apply_loop_uvs(mesh, uvs, flattened)
-        return True
-
-    return worker, apply
-
-
-def build_seam_uvs(obj, angle=CREASE_ANGLE, marked="NONE", weights=None, only=None):
-    mesh = obj.data
-    verts = vertex_positions(mesh)
-    faces = face_vertices(mesh)
-    result = preseed_uvs(
-        flatten_engine(),
-        verts,
-        faces,
+        exposure_weights(obj),
+        surface_modes,
         angle,
-        marked,
-        weights,
-        only,
-        marked_seams(mesh) if marked != "NONE" else frozenset(),
-        parallel=True,
+        split_target,
     )
+    return worker, functools.partial(_apply_preseed, mesh)
+
+
+def _apply_preseed(mesh, result):
     if result is None:
         return False
     seams, uvs, flattened = result
     apply_seams(mesh, seams)
     if not mesh.uv_layers:
         mesh.uv_layers.new()
-    apply_face_uvs(mesh, uvs, None if len(flattened) == len(uvs) else flattened)
+    apply_loop_uvs(mesh, uvs, flattened)
     return True

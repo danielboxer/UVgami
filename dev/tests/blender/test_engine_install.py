@@ -109,10 +109,10 @@ def test_local_build_never_asks_for_an_update(release, install, monkeypatch):
     assert not engine.update_pending()
 
 
-def engine_zip(package=""):
+def engine_zip(package="", name="optcuts"):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr(f"{package}bin/{get_engine_binary_name('optcuts')}", "engine")
+        archive.writestr(f"{package}bin/{get_engine_binary_name(name)}", "engine")
         archive.writestr(f"{package}LICENSE.txt", "engine license")
         archive.writestr(f"{package}licenses/OptCuts-LICENSE-MIT.txt", "mit")
     return buffer.getvalue()
@@ -145,3 +145,41 @@ def test_a_zip_that_does_not_match_its_hash_is_never_installed(release, monkeypa
         release.install()
     assert release.installed_version() is None
     assert not release.install_dir().exists()
+
+
+@pytest.fixture
+def bundled(release):
+    segment = EngineRelease("segment", "Segmentation", "0.1.0", "0.1.0", "1 MB", {})
+    release.bundled = (segment,)
+    return segment
+
+
+def test_an_engine_without_its_bundled_binary_does_not_run(
+    release, bundled, install, monkeypatch
+):
+    install(VERSION)
+    engine = BinaryEngine()
+    engine.release = release
+    monkeypatch.setattr(binary_engine, "get_local_engine_path", lambda name: None)
+    path, error = engine.validate(None)
+    assert path is None
+    assert error is not None
+
+
+def test_install_fetches_only_the_missing_bundled_release(
+    release, bundled, install, monkeypatch
+):
+    install(VERSION)
+    content = engine_zip(name="segment")
+    bundled.archive_sha256s = {get_platform_tag(): hashlib.sha256(content).hexdigest()}
+    urls = []
+
+    def fake_download(url, path, progress):
+        urls.append(url)
+        path.write_bytes(content)
+
+    monkeypatch.setattr(binary_engine, "download_file", fake_download)
+    release.install()
+    assert len(urls) == 1
+    assert "segment" in urls[0]
+    assert bundled.installed_path().is_file()

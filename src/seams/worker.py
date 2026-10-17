@@ -65,6 +65,20 @@ class _ResultUnpickler(pickle.Unpickler):
         return super().find_class(module, name)
 
 
+class _InputUnpickler(pickle.Unpickler):
+    # the caller pickled seams classes under the addon's package name
+    def __init__(self, file, caller_package):
+        super().__init__(file)
+        self._caller_package = caller_package
+
+    def find_class(self, module, name):
+        if module == self._caller_package or module.startswith(
+            self._caller_package + "."
+        ):
+            module = SEAMS_PACKAGE + module[len(self._caller_package) :]
+        return super().find_class(module, name)
+
+
 def python_process(import_folders):
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(map(str, import_folders))}
     # blender's -I minus -E, which ignores PYTHONPATH
@@ -79,7 +93,8 @@ class WorkerProcess:
         module = SEAMS_PACKAGE + function.__module__[len(__package__) :]
         call = (module, function.__name__, args, kwargs)
         (self._folder / INPUT_NAME).write_bytes(
-            pickle.dumps(call, pickle.HIGHEST_PROTOCOL)
+            pickle.dumps(__package__, pickle.HIGHEST_PROTOCOL)
+            + pickle.dumps(call, pickle.HIGHEST_PROTOCOL)
         )
         python_command, env = python_process([SOURCE_FOLDER])
         run_worker = "import sys; from seams.worker import run_in_worker; run_in_worker(sys.argv[1])"
@@ -126,7 +141,7 @@ class WorkerProcess:
             raise value
         return value
 
-    # only a function that takes cancelled sees this
+    # only a function with a cancelled parameter gets this
     def cancel(self):
         if self._folder.is_dir():
             (self._folder / CANCEL_NAME).touch()
@@ -159,7 +174,9 @@ def _print_progress(fraction):
 # the worker process's side of WorkerProcess
 def run_in_worker(folder):
     folder = Path(folder)
-    module, name, args, kwargs = pickle.loads((folder / INPUT_NAME).read_bytes())
+    with (folder / INPUT_NAME).open("rb") as file:
+        caller_package = pickle.load(file)
+        module, name, args, kwargs = _InputUnpickler(file, caller_package).load()
     function = getattr(importlib.import_module(module), name)
     parameters = inspect.signature(function).parameters
     if "cancelled" in parameters:
