@@ -91,6 +91,7 @@ class EngineOutput:
 
 class BatchProcess:
     def __init__(self, args, env=None, sinks=None):
+        self.args = args
         self.sinks = sinks or {}
         self._engine_process = EngineProcess(args, env)
         self.process = self._engine_process.process

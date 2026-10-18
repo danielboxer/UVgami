@@ -17,6 +17,7 @@ class Engine:
     supports_viewer = False
     supports_early_stop = False
     supports_preserve = False
+    supports_hard_surface = False
     supports_import_uvs = False
     # the proxy finish flattens with optcuts
     supports_proxy = False

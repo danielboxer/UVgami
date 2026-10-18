@@ -3,6 +3,7 @@ import bpy
 
 # from ..hard_surface import apply_seams, marked_seams
 # from ..proxy import bounds_frame, snap_cuts, vertex_map
+# from ..part_overrides import UV_SCALE_ATTRIBUTE
 from ..seams import face_edges, uv_island_groups
 from ..similar import find_stacks
 from ..utils.mesh import (
@@ -101,6 +102,21 @@ def _restack(obj, stacks):
     bmesh.update_edit_mesh(obj.data)
 
 
+# def _scale_parts(obj):
+#     bm = bmesh.from_edit_mesh(obj.data)
+#     scale_layer = bm.faces.layers.float.get(UV_SCALE_ATTRIBUTE)
+#     if scale_layer is None:
+#         return
+#     uv_layer = bm.loops.layers.uv.active
+#     for face in bm.faces:
+#         scale = face[scale_layer]
+#         if scale in (0, 1) or not face.select:
+#             continue
+#         for loop in face.loops:
+#             loop[uv_layer].uv *= scale
+#     bmesh.update_edit_mesh(obj.data)
+
+
 # topology maps an object to its (faces, edges) for a caller that read them already
 def pack_objects(objects, topology=None):
     if not objects:
@@ -125,8 +141,11 @@ def pack(stacks_of):
         # a rotated twin's 3d area computes a few ulps apart
         for obj, stacks in stacks_of.items():
             _deselect_stacked_duplicates(obj, stacks)
+        # without the average first, a repeat pack scales a part again
         if bpy.context.scene.uvgami.fix_scale:
             bpy.ops.uv.average_islands_scale()
+            # for obj in stacks_of:
+            #     _scale_parts(obj)
         bpy.ops.uv.pack_islands(
             margin=bpy.context.scene.uvgami.margin, rotate_method="AXIS_ALIGNED"
         )

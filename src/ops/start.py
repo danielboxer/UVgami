@@ -1,5 +1,6 @@
 import contextlib
 import functools
+import shutil
 import time
 from collections import deque, namedtuple
 
@@ -20,6 +21,11 @@ from ..job import (
 )
 from ..logger import logger
 from ..manager import Preparing, manager
+from ..part_overrides import (
+    piece_keeps_uvs,
+    # piece_priority_override,
+    read_overrides,
+)
 from ..proxy import make_proxy, needs_proxy, triangle_count
 from ..seams import (
     EngineError,
@@ -51,7 +57,7 @@ from ..utils.paths import (
 from ..utils.ui import tag_redraw
 from .guides import SEAM_RESTRICTIONS_GROUP
 
-Preseeding = namedtuple("Preseeding", ["task", "apply", "obj"])
+Preseeding = namedtuple("Preseeding", ["task", "apply", "obj", "had_uv_layer"])
 
 # seconds of work per tick before yielding to the event loop
 TICK_BUDGET = 0.033
@@ -217,11 +223,15 @@ class InputExporter:
         matrix = unwrap.matrix
 
         # seams and uvs were built before separation, see create_jobs
-        if unwrap.has_uvs:
+        if unwrap.has_uvs and not unwrap.keeps_uvs:
             normalize_uvs(obj.data)
         # a transfer writes onto the original, where the winding doesn't matter
         vt_verts = export_obj(
-            obj, path, unwrap.has_uvs, flip_mirrored=unwrap.keeps_output, matrix=matrix
+            obj,
+            path,
+            unwrap.has_uvs or unwrap.keeps_uvs,
+            flip_mirrored=unwrap.keeps_output,
+            matrix=matrix,
         )
 
         guide_path = self._create_guide_file(obj, path, props, vt_verts)
@@ -241,9 +251,15 @@ class InputExporter:
             vertex_groups=vertex_groups,
             face_smooth=face_smooth,
             shading_modifiers=get_shading_modifiers(obj),
+            overrides=read_overrides(obj.data),
         )
 
         bpy.data.objects.remove(obj, do_unlink=True)
+
+        # the input file is already the result
+        if unwrap.keeps_uvs:
+            shutil.copyfile(path, unwrap.output_path)
+            manager.record_result(unwrap, Result.FINISHED)
 
     # a reordered twin's own indices point at the wrong vertices
     def _export_twin(self, obj, unwrap, props):
@@ -259,6 +275,7 @@ class InputExporter:
                 vertex_groups=representative.vertex_groups,
                 face_smooth=representative.face_smooth,
                 shading_modifiers=representative.shading_modifiers,
+                overrides=representative.overrides,
             )
         else:
             edge_path, new_edges = self._triangulate_mesh(
@@ -278,6 +295,7 @@ class InputExporter:
                 vertex_groups=vertex_groups,
                 face_smooth=face_smooth,
                 shading_modifiers=get_shading_modifiers(obj),
+                overrides=read_overrides(obj.data),
             )
 
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -406,6 +424,16 @@ class InputExporter:
         return materials, material_indices.tolist(), vertex_groups, face_smooth.tolist()
 
 
+def invalid_piece_reason(obj, *, had_uv_layer):
+    if len(obj.data.polygons) == 0:
+        return "No Polygons"
+    if piece_keeps_uvs(obj.data) and (
+        not had_uv_layer or obj.data.uv_layers.active is None
+    ):
+        return "No UVs To Keep"
+    return None
+
+
 # proxied says the mesh was decimated, one under Proxy Faces never is
 def input_job(props, proxied):
     if proxied:
@@ -499,7 +527,7 @@ class SessionBuilder:
 
     def _advance(self):
         if self.pending is not None:
-            task, apply, obj = self.pending
+            task, apply, obj, had_uv_layer = self.pending
             if not task.done():
                 return 0.1
             self.pending = None
@@ -524,7 +552,7 @@ class SessionBuilder:
             props = manager.props
             preseeded = apply(result)
             has_uvs = preseeded or self.engine.uses_import_uvs(props)
-            self._separate(obj, has_uvs, preseeded=preseeded)
+            self._separate(obj, has_uvs, had_uv_layer=had_uv_layer, preseeded=preseeded)
             return 0.0
         if not self.remaining:
             return self._finish()
@@ -532,12 +560,15 @@ class SessionBuilder:
         obj = self.remaining.popleft()
         props = manager.props
         # the seams package reads region widths off the full model
+        had_uv_layer = obj.data.uv_layers.active is not None
         work = self.engine.preseed_work(obj, props)
         if work is None:
-            self._separate(obj, self.engine.uses_import_uvs(props))
+            self._separate(
+                obj, self.engine.uses_import_uvs(props), had_uv_layer=had_uv_layer
+            )
             return 0.0
         worker, apply = work
-        self.pending = Preseeding(worker, apply, obj)
+        self.pending = Preseeding(worker, apply, obj, had_uv_layer)
         return 0.1
 
     def _input_jobs(self, props, obj, proxied):
@@ -566,20 +597,23 @@ class SessionBuilder:
             self.engine.piece_uses_uvs(obj, props, has_uvs)
             and obj.data.uv_layers.active is not None
         )
+        keeps_uvs = piece_keeps_uvs(obj.data)
         unwrap = Unwrap(
             name=piece_name,
             input_name=input_name,
             path=path,
             jobs=jobs,
             # maintain_mode=props.maintain_mode,
-            preseeded=preseeded and uses_uvs,
+            preseeded=preseeded and uses_uvs and not keeps_uvs,
         )
         unwrap.has_uvs = uses_uvs
+        unwrap.keeps_uvs = keeps_uvs
+        # unwrap.priority_override = piece_priority_override(obj.data)
         unwrap.keeps_output = keeps_output
         self.piece_unwrap[obj] = unwrap
         manager.add(unwrap)
 
-    def _separate(self, obj, has_uvs, preseeded=False):
+    def _separate(self, obj, has_uvs, *, had_uv_layer, preseeded=False):
         props = manager.props
         proxied = obj in self.proxied_objects
         # relink for the ops selection, all within one tick so nothing shows
@@ -598,8 +632,9 @@ class SessionBuilder:
             unwrap_name = self.names[obj.name][0]
             valid = []
             for o in s:
-                if len(o.data.polygons) == 0:
-                    mark_not_unwrapped(o, "No Polygons", unwrap_name)
+                reason = invalid_piece_reason(o, had_uv_layer=had_uv_layer)
+                if reason is not None:
+                    mark_not_unwrapped(o, reason, unwrap_name)
                     manager.moved_to_invalid = True
                 else:
                     valid.append(o)
@@ -623,9 +658,11 @@ class SessionBuilder:
             if props.stack_similar:
                 # the new pieces' matrix_world needs an evaluation first
                 bpy.context.view_layer.update()
+                # a kept piece can't take a twin's uvs
+                engine_pieces = [o for o in valid if not self.piece_unwrap[o].keeps_uvs]
                 # a representative always precedes its twins in valid order
                 for twin_obj, (rep_obj, twin_matrix, exact) in find_twins(
-                    valid
+                    engine_pieces
                 ).items():
                     twin = self.piece_unwrap[twin_obj]
                     representative = self.piece_unwrap[rep_obj]
@@ -635,6 +672,13 @@ class SessionBuilder:
                     representative.twins.append(twin)
         else:
             unwrap_name = self.names[obj.name][0]
+            reason = invalid_piece_reason(obj, had_uv_layer=had_uv_layer)
+            if reason is not None:
+                mark_not_unwrapped(obj, reason, unwrap_name)
+                manager.moved_to_invalid = True
+                self._drop_preparing(obj)
+                deselect_all()
+                return
             hide_job, transfer_uvs_job = self._input_jobs(props, obj, proxied)
             jobs = (None, None, hide_job, transfer_uvs_job)
             self._add_piece(

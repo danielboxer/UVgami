@@ -4,6 +4,7 @@ from ..engines import ENGINES, active_engine, get_engine, installed_engines
 from ..job import Result
 from ..logger import logger
 from ..manager import manager
+from ..ops.part_overrides import is_editing, selected_part_count
 from ..utils.paths import get_addon_name
 from ..utils.ui import (
     draw_active,
@@ -426,6 +427,64 @@ class UVGAMI_PT_speed(EnginePanel, bpy.types.Panel):
         split.prop(props, "stack_similar")
 
         draw_timeout(box, props)
+
+
+def draw_part_overrides(layout, context, engine):
+    # props = context.scene.uvgami
+    overrides = context.scene.uvgami_part_overrides
+
+    count = selected_part_count()
+    if count == 0:
+        selection = "Click a part to edit it"
+    elif count == 1:
+        selection = "1 part selected"
+    else:
+        selection = f"{count} parts selected"
+    row = layout.row()
+    row.scale_y = 1.5
+    row.operator("uvgami.exit_part_overrides", icon="PANEL_CLOSE")
+    layout.label(text=selection, icon="MOD_EXPLODE")
+
+    column = layout.column()
+    column.enabled = count > 0
+
+    split = column.split(factor=0.7)
+    split.label(icon="PINNED", text="Keep UVs")
+    split.prop(overrides, "keeps_uvs", text="")
+
+    settings = column.column()
+    settings.active = not overrides.keeps_uvs
+    if engine.supports_hard_surface:
+        row = settings.row()
+        row.label(icon="MOD_BEVEL", text="Mode")
+        row.prop(overrides, "surface_mode", expand=True)
+    # priority = settings.column(align=True)
+    # priority.label(icon="SOLO_OFF", text="Priority")
+    # priority.row(align=True).prop(overrides, "priority", expand=True)
+    # row = settings.row()
+    # # the scale is applied after Average Islands Scale
+    # row.active = props.fix_scale
+    # row.label(icon="FULLSCREEN_ENTER", text="UV Scale")
+    # row.prop(overrides, "uv_scale", text="")
+
+
+class UVGAMI_PT_part_overrides(EnginePanel, bpy.types.Panel):
+    bl_label = "Part Overrides"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "UVgami"
+    bl_parent_id = "UVGAMI_PT_main"
+    bl_order = 0
+
+    def draw(self, context):
+        engine = active_engine(context.scene.uvgami.engine)
+        box = self.layout.box()
+        if is_editing() and context.mode == "EDIT_MESH":
+            draw_part_overrides(box, context, engine)
+        else:
+            row = box.row()
+            row.scale_y = 1.5
+            row.operator("uvgami.edit_part_overrides", icon="EDITMODE_HLT")
 
 
 class UVGAMI_PT_weights(bpy.types.Panel):

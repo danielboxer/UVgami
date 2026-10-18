@@ -45,6 +45,12 @@ from .src.ops.misc import (
     UVGAMI_OT_reset_setting,
     UVGAMI_OT_reset_settings,
 )
+from .src.ops.part_overrides import (
+    UVGAMI_OT_edit_part_overrides,
+    UVGAMI_OT_exit_part_overrides,
+    UVGAMI_PG_part_overrides,
+    stop_part_overrides,
+)
 from .src.ops.proxy import UVGAMI_OT_preview_proxy
 from .src.ops.start import UVGAMI_OT_start
 from .src.ops.stop import (
@@ -62,6 +68,7 @@ from .src.ui.panels import (
     UVGAMI_PT_main,
     UVGAMI_PT_misc,
     UVGAMI_PT_pack,
+    UVGAMI_PT_part_overrides,
     UVGAMI_PT_speed,
     UVGAMI_PT_weights,
 )
@@ -89,6 +96,8 @@ classes = (
     UVGAMI_OT_seed_restrictions,
     UVGAMI_OT_exit_draw,
     UVGAMI_OT_clear_draw,
+    UVGAMI_OT_edit_part_overrides,
+    UVGAMI_OT_exit_part_overrides,
     UVGAMI_OT_pack,
     UVGAMI_OT_preview_proxy,
     UVGAMI_OT_unwrap_island,
@@ -104,6 +113,7 @@ classes = (
     UVGAMI_OT_clear_summary,
     UVGAMI_OT_open_logs,
     UVGAMI_PT_main,
+    UVGAMI_PT_part_overrides,
     UVGAMI_PT_weights,
     UVGAMI_PT_island_uv,
     UVGAMI_PT_island_settings,
@@ -114,6 +124,7 @@ classes = (
     # engine groups must register before the main group that points to them
     *engine_classes,
     UVGAMI_PG_properties,
+    UVGAMI_PG_part_overrides,
     UVGAMI_AP_preferences,
 )
 
@@ -122,19 +133,25 @@ classes = (
 def _on_load_pre(*args):
     # load_pre, not post, so cleanup can still touch the objects it made
     manager.shutdown()
+    stop_part_overrides()
 
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.uvgami = bpy.props.PointerProperty(type=UVGAMI_PG_properties)
+    bpy.types.Scene.uvgami_part_overrides = bpy.props.PointerProperty(
+        type=UVGAMI_PG_part_overrides
+    )
     bpy.app.handlers.load_pre.append(_on_load_pre)
 
 
 def unregister():
     manager.shutdown()
+    stop_part_overrides()
     if _on_load_pre in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(_on_load_pre)
     del bpy.types.Scene.uvgami
+    del bpy.types.Scene.uvgami_part_overrides
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

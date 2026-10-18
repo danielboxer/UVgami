@@ -45,6 +45,19 @@ def vertex_position_array(mesh):
     return flat.reshape(-1, 3)
 
 
+# each loop triangle's corners moved off the surface along its face normal, and its face
+def lifted_triangles(mesh, positions, lift):
+    triangles = numpy.empty(len(mesh.loop_triangles) * 3, dtype=numpy.int64)
+    mesh.loop_triangles.foreach_get("vertices", triangles)
+    triangle_faces = numpy.empty(len(mesh.loop_triangles), dtype=numpy.int64)
+    mesh.loop_triangle_polygons.foreach_get("value", triangle_faces)
+    normals = numpy.empty(len(mesh.polygons) * 3)
+    mesh.polygons.foreach_get("normal", normals)
+    offsets = normals.reshape(-1, 3)[triangle_faces] * lift
+    corners = positions[triangles.reshape(-1, 3)] + offsets[:, None, :]
+    return corners, triangle_faces
+
+
 def loop_starts(mesh):
     starts = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
     mesh.polygons.foreach_get("loop_start", starts)

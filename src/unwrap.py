@@ -55,7 +55,9 @@ class Unwrap:
 
         # what the export needs about this piece, filled by the session builder
         self.has_uvs = False
-        self.keeps_output = True
+        # a part override skips the engine and keeps the part's uvs
+        self.keeps_uvs = False
+        # self.priority_override = None
         self.matrix = None
 
         # export data, filled by set_export_data
@@ -70,6 +72,7 @@ class Unwrap:
         self.vertex_groups = {}
         self.face_smooth = []
         self.shading_modifiers = []
+        self.overrides = {}
 
         self.is_active = False
         self.progress = (0, 0, 1)
@@ -104,6 +107,7 @@ class Unwrap:
         vertex_groups=None,
         face_smooth=(),
         shading_modifiers=(),
+        overrides=None,
     ):
         self.guide_path = guide_path
         self.edge_path = edge_path
@@ -115,6 +119,7 @@ class Unwrap:
         self.vertex_groups = vertex_groups or {}
         self.face_smooth = face_smooth
         self.shading_modifiers = shading_modifiers
+        self.overrides = overrides or {}
         self.is_exported = True
 
     def start_unwrap(self):

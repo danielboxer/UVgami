@@ -1,6 +1,6 @@
 import bpy
-import numpy
 
+from ... import part_overrides
 from ...hard_surface import preseed_work, seam_flags, seam_restrictions
 from ...seams import SURFACE_MODE_CODES, uvs_collapsed
 from ...utils.io import print_stdin
@@ -26,7 +26,10 @@ SURFACE_MODE_LABELS = {mode: label for mode, label, _ in SURFACE_MODES}
 class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
     mode: bpy.props.EnumProperty(
         name="Mode",
-        description="Whether seams are cut on sharp features or all placed by the engine",
+        description=(
+            "Whether seams are cut on sharp features or all placed by the engine."
+            " Edit Parts overrides this for single parts"
+        ),
         items=SURFACE_MODES,
         default="AUTO",
     )
@@ -52,6 +55,7 @@ class OptcutsEngine(OptcutsInstall):
     supports_preserve = True
     supports_import_uvs = True
     supports_proxy = True
+    supports_hard_surface = True
 
     def draw_settings(self, layout, props):
         row = layout.row()
@@ -78,12 +82,11 @@ class OptcutsEngine(OptcutsInstall):
         return props.optcuts.mode
 
     def preseed_work(self, obj, props):
-        mode = self.unset_surface_mode(props)
-        if mode == "ORGANIC":
-            return None
-        surface_modes = numpy.full(
-            len(obj.data.polygons), SURFACE_MODE_CODES[mode], dtype=numpy.int32
+        surface_modes = part_overrides.surface_modes(
+            obj.data, self.unset_surface_mode(props)
         )
+        if (surface_modes == SURFACE_MODE_CODES["ORGANIC"]).all():
+            return None
         return preseed_work(
             obj,
             HARD_SURFACE_ANGLES[props.priority],

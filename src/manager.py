@@ -1,3 +1,4 @@
+# import copy
 import functools
 import multiprocessing
 import time
@@ -12,6 +13,7 @@ from .job import Join, Result, TransferReport
 from .logger import logger
 from .ops.grid import add_grid, make_grid_img, make_grid_mat
 from .ops.uv import pack_objects, show_seams
+from .part_overrides import write_overrides
 from .progress_bar import progress_bar
 from .seams.uv_transfer import AMBIGUOUS_GEOMETRY
 from .similar import write_twin_output
@@ -183,6 +185,13 @@ class UnwrapManager:
                 self._send_to_shared_process(unwrap, shared_args)
             self._running.append(unwrap)
 
+    # def piece_props(self, unwrap):
+    #     if unwrap.priority_override is None:
+    #         return self.props
+    #     props = copy.copy(self.props)
+    #     props.priority = unwrap.priority_override
+    #     return props
+
     # a lone mesh gets every core
     def _shared_threads(self, unwrap, props):
         pieces = unwrap.join_job.expected if unwrap.join_job is not None else 1
@@ -192,7 +201,10 @@ class UnwrapManager:
 
     # spawning costs 50ms inside Blender, so processes are reused
     def _send_to_shared_process(self, unwrap, args):
-        process = next((p for p in self._shared_processes if p.is_idle), None)
+        # a part priority override runs with other args
+        process = next(
+            (p for p in self._shared_processes if p.is_idle and p.args == args), None
+        )
         if process is None:
             process = BatchProcess(args, self.engine.build_env(self.engine_ctx))
             self._shared_processes.append(process)
@@ -206,7 +218,9 @@ class UnwrapManager:
 
     def _start_batch_process(self, engine, props):
         unwraps = [u for u in self._queue if u.copy_of is None]
-        self._queue = deque(u for u in self._queue if u.copy_of is not None)
+        if not unwraps:
+            return
+        self._queue = deque(u for u in self._queue if u not in unwraps)
         args = engine.build_batch_args(
             self.engine_ctx, [u.path for u in unwraps], props
         )
@@ -493,6 +507,7 @@ class UnwrapManager:
         # before the preserve job, so untriangulated faces carry these along
         self._restore_face_data(unwrap, output, "material_index", "material_indices")
         self._restore_face_data(unwrap, output, "use_smooth", "face_smooth")
+        self._restore_overrides(unwrap, output)
         add_shading_modifiers(output, unwrap.shading_modifiers)
 
         if unwrap.preserve_job is not None:
@@ -654,6 +669,16 @@ class UnwrapManager:
             values.extend(getattr(piece, field))
         if len(values) == len(output.data.polygons):
             output.data.polygons.foreach_set(attribute, values)
+
+    # pack reads the uv scale override off the output
+    def _restore_overrides(self, unwrap, output):
+        pieces = unwrap.join_job.finished if unwrap.join_job is not None else [unwrap]
+        overrides = {
+            name: [value for piece in pieces for value in piece.overrides[name]]
+            for name in pieces[0].overrides
+        }
+        if all(len(v) == len(output.data.polygons) for v in overrides.values()):
+            write_overrides(output.data, overrides)
 
     def _restore_vertex_groups(self, unwrap, output):
         if unwrap.join_job is not None and len(unwrap.join_job.finished) > 1:
