@@ -1,6 +1,8 @@
 import collections
 import math
 
+import numpy
+
 # low on purpose: a bevel splits one crease into several small turns
 LOW_ANGLE = 10
 
@@ -240,3 +242,9 @@ def uv_area_fit(polygons, area, bbox):
     cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
     ox, oy = (x0 + x1) / 2, (y0 + y1) / 2
     return lambda uv: (ox + (uv[0] - cx) * s, oy + (uv[1] - cy) * s)
+
+
+# positions moved by a 4x4 matrix
+def transformed(positions, matrix):
+    matrix = numpy.asarray(matrix)
+    return positions @ matrix[:3, :3].T + matrix[:3, 3]

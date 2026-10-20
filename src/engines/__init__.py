@@ -18,6 +18,7 @@ class Engine:
     supports_early_stop = False
     supports_keep_quads = False
     supports_hard_surface = False
+    supports_regions = False
     supports_import_uvs = False
     # the proxy finish flattens with optcuts
     supports_proxy = False
@@ -63,7 +64,10 @@ class Engine:
         return "AUTO"
 
     # (running worker, apply), or None when nothing is preseeded
-    def preseed_work(self, obj, props):
+    def splits_regions(self, props):
+        return props.split_regions and self.supports_regions
+
+    def preseed_work(self, obj, props, surface_modes):
         return None
 
     # has_uvs is true for a preseeded object or one with imported uvs

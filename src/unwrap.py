@@ -11,7 +11,7 @@ from .ops.viewer import set_snapshot
 from .utils.paths import get_extension_dir_path
 from .utils.ui import tag_redraw
 
-# healthy runs move progress every few seconds, minutes frozen is a hang
+# a healthy run's progress changes every few seconds
 PROGRESS_STALL_SECONDS = 120
 
 
@@ -21,23 +21,28 @@ class Unwrap:
         name: str,
         input_name: str,
         path: pathlib.Path,
-        jobs: tuple,
+        *,
+        join_job=None,
+        hide_job=None,
+        transfer_uvs_job=None,
+        segment_weld_job=None,
         preseeded: bool = False,
     ):
         self.name = name
         self.input_name = input_name
-        # this piece carries preseed uvs, so its output gets the finish pass
         self.preseeded = preseeded
 
         self.path = path
         self.output_path = get_extension_dir_path() / "output" / f"{self.path.stem}.obj"
 
-        self.preserve_job = jobs[0]
-        self.join_job = jobs[1]
+        # the export sets this when Keep Quads triangulates the mesh
+        self.preserve_job = None
+        self.join_job = join_job
         if self.join_job is not None:
             self.join_job.members.append(self)
-        self.hide_job = jobs[2]
-        self.transfer_uvs_job = jobs[3]
+        self.hide_job = hide_job
+        self.transfer_uvs_job = transfer_uvs_job
+        self.segment_weld_job = segment_weld_job
 
         # a duplicate skips the engine and takes copy_of's output moved by copy_matrix
         self.copy_of = None
@@ -46,17 +51,15 @@ class Unwrap:
         self.copy_reordered = False
         self.twins = []
 
-        # result state, set once through manager.record_result
+        # set once by manager.record_result
         self.result = None
 
-        # what the export needs about this piece, filled by the session builder
         self.has_uvs = False
         # a part override skips the engine and keeps the part's uvs
         self.keeps_uvs = False
         # self.priority_override = None
         self.matrix = None
 
-        # export data, filled by set_export_data
         self.is_exported = False
         self.guide_path = None
         self.origin = None
@@ -87,6 +90,11 @@ class Unwrap:
         # None for a batch member
         self._engine_process = None
         self._output = EngineOutput(self)
+
+    # a transfer writes onto the input and deletes the output
+    @property
+    def keeps_output(self):
+        return self.transfer_uvs_job is None
 
     # the defaults cover a fix export, which carries no mesh metadata
     def set_export_data(
@@ -126,13 +134,11 @@ class Unwrap:
         self.is_active = True
         self.started_at = time.monotonic()
 
-    # run inside a shared batch process instead of spawning our own
     def join_batch(self, batch_process):
         self.batch_process = batch_process
         self.process = batch_process.process
         self.is_active = True
 
-    # detach from a dead batch process so this mesh can be re-queued into a fresh one
     def leave_batch(self):
         self.batch_process = None
         self.process = None
@@ -168,7 +174,7 @@ class Unwrap:
         try:
             self.process.stdin.close()
         except OSError:
-            # close flushes stdin, which a dead engine refuses. it still closes
+            # the flush fails on a dead engine but stdin still closes
             pass
         self.process.wait()
         self._engine_process.close()
@@ -215,7 +221,7 @@ class Unwrap:
             return self.process.poll() is None
         return self.batch_process.poll_result(self.path.stem) is None
 
-    # progress frozen for minutes. False on engines that never report it
+    # False on engines that never report progress
     @property
     def is_stalled(self):
         return (
@@ -224,7 +230,7 @@ class Unwrap:
             and time.monotonic() - self.progress_changed_at > PROGRESS_STALL_SECONDS
         )
 
-    # reporting, so stopping keeps a uv map instead of dropping the piece
+    # an engine that has reported has a uv map to stop with
     @property
     def is_stoppable(self):
         return self.is_running and self.has_reported

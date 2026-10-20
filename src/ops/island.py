@@ -38,9 +38,9 @@ from ..utils.mesh import (
 )
 from ..utils.paths import (
     clear_io_dir,
-    engine_file_stem,
     get_io_dir_paths,
     get_preferences,
+    unused_input_path,
 )
 
 # blender's default is 10, 50 flattens the stubborn folds
@@ -80,12 +80,11 @@ def selected_faces(mesh):
 
 # a fix carries none of the material or vertex group state a full unwrap does
 def queue_fix(obj, job, name, path, vertex_count, props):
-    manager.input[job] = obj
     unwrap = Unwrap(
         name=name,
         input_name=name,
         path=path,
-        jobs=(None, None, None, job),
+        transfer_uvs_job=job,
     )
     unwrap.set_export_data(
         origin=obj.matrix_world.translation, vertex_count=vertex_count
@@ -139,9 +138,7 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
     proxied = props.use_proxy and make_proxy(temp, props.proxy_faces)
 
     name = f"{obj.name}_island_{k}"
-    path = input_path / f"{engine_file_stem(name)}.obj"
-    while path.is_file():
-        path = path.parent / f"{path.stem}1.obj"
+    path = unused_input_path(input_path, name)
     export_obj(temp, path, False)
     vertex_count = len(temp.data.vertices)
     # make_proxy swaps in a mesh of its own
@@ -150,9 +147,9 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
     bpy.data.meshes.remove(mesh)
 
     job = (
-        ProxyIslandUVs(list(group), bbox, area)
+        ProxyIslandUVs(obj, list(group), bbox, area)
         if proxied
-        else IslandUVs(list(group), bbox, area)
+        else IslandUVs(obj, list(group), bbox, area)
     )
     queue_fix(obj, job, name, path, vertex_count, props)
 
@@ -393,9 +390,7 @@ def queue_nocut(obj, temp, group, bbox, area, k, input_path, props):
     repair_flipped_island(obj, temp)
 
     name = f"{obj.name}_island_{k}"
-    path = input_path / f"{engine_file_stem(name)}.obj"
-    while path.is_file():
-        path = path.parent / f"{path.stem}1.obj"
+    path = unused_input_path(input_path, name)
     export_obj(temp, path, True)
     # empty pin line, nothing is held
     with (path.parent / f"{path.stem}_fixed").open("w") as f:
@@ -405,7 +400,7 @@ def queue_nocut(obj, temp, group, bbox, area, k, input_path, props):
 
     queue_fix(
         obj,
-        IslandUVs(list(group), bbox, area, mirrored),
+        IslandUVs(obj, list(group), bbox, area, mirrored),
         name,
         path,
         vertex_count,
@@ -711,9 +706,7 @@ def queue_area(obj, patch, border, k, input_path, props, nocut):
     bm.free()
 
     name = f"{obj.name}_area_{k}"
-    path = input_path / f"{engine_file_stem(name)}.obj"
-    while path.is_file():
-        path = path.parent / f"{path.stem}1.obj"
+    path = unused_input_path(input_path, name)
 
     matrix = obj.matrix_world
     with path.open("w") as f:
@@ -734,7 +727,7 @@ def queue_area(obj, patch, border, k, input_path, props, nocut):
     vertex_count = len(area_mesh.vertices)
     bpy.data.meshes.remove(area_mesh)
 
-    queue_fix(obj, AreaUVs(patch, pins, mirrored), name, path, vertex_count, props)
+    queue_fix(obj, AreaUVs(obj, patch, pins, mirrored), name, path, vertex_count, props)
 
 
 # optcuts is the only engine that can pin a border or stitch islands

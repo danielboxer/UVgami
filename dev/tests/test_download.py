@@ -191,3 +191,11 @@ def test_with_retries_gives_up_on_a_404():
     with pytest.raises(download.DownloadError, match="404"):
         download.with_retries(API, missing, backoff=0)
     assert len(calls) == 1
+
+
+# an engine with no release yet pins an empty sha256
+def test_an_empty_sha256_pin_rejects_every_archive(tmp_path):
+    archive = tmp_path / "segment-engine.zip"
+    archive.write_bytes(CONTENT)
+    with pytest.raises(download.DownloadError, match="sha256"):
+        download.verify_sha256(archive, "")

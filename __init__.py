@@ -52,6 +52,12 @@ from .src.ops.part_overrides import (
     stop_part_overrides,
 )
 from .src.ops.proxy import UVGAMI_OT_preview_proxy
+
+# from .src.ops.segment_edit import (
+#     UVGAMI_OT_edit_regions,
+#     UVGAMI_OT_reset_regions,
+#     stop_segment_edit,
+# )
 from .src.ops.start import UVGAMI_OT_start
 from .src.ops.stop import (
     UVGAMI_OT_cancel,
@@ -98,6 +104,8 @@ classes = (
     UVGAMI_OT_clear_draw,
     UVGAMI_OT_edit_part_overrides,
     UVGAMI_OT_exit_part_overrides,
+    # UVGAMI_OT_edit_regions,
+    # UVGAMI_OT_reset_regions,
     UVGAMI_OT_pack,
     UVGAMI_OT_preview_proxy,
     UVGAMI_OT_unwrap_island,
@@ -134,6 +142,7 @@ def _on_load_pre(*args):
     # load_pre, not post, so cleanup can still touch the objects it made
     manager.shutdown()
     stop_part_overrides()
+    # stop_segment_edit()
 
 
 def register():
@@ -149,6 +158,7 @@ def register():
 def unregister():
     manager.shutdown()
     stop_part_overrides()
+    # stop_segment_edit()
     if _on_load_pre in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(_on_load_pre)
     del bpy.types.Scene.uvgami

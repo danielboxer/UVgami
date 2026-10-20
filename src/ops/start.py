@@ -9,6 +9,7 @@ import bpy
 import numpy
 
 from ..engines import active_engine, get_engine
+from ..engines.bundled import resolve_bundled_command
 from ..handler import handle_error
 from ..job import (
     HideInput,
@@ -34,9 +35,17 @@ from ..seams import (
     islands_overlap,
     uv_island_groups,
 )
+from ..seams.worker import WorkerError
+from ..segmentation import (
+    SegmentWeld,
+    make_segmented_proxy,
+    segment_work,
+    split_on_borders,
+)
 from ..similar import find_twins, write_twin_output
 from ..ui.panels import describe_settings, unwrap_settings
 from ..unwrap import Unwrap
+from ..utils.geometry import applied_matrix
 from ..utils.io import export_obj
 from ..utils.mesh import (
     check_exists,
@@ -47,17 +56,19 @@ from ..utils.mesh import (
     new_bmesh,
     set_bmesh,
     triangulate,
+    world_positions,
 )
 from ..utils.paths import (
     clear_io_dir,
-    engine_file_stem,
     get_io_dir_paths,
     get_preferences,
+    unused_input_path,
 )
 from ..utils.ui import tag_redraw
-from .guides import SEAM_RESTRICTIONS_GROUP
+from .guides import seam_restriction_weights
 
-Preseeding = namedtuple("Preseeding", ["task", "apply", "obj", "had_uv_layer"])
+# finish is called with the done task
+PendingWork = namedtuple("PendingWork", ["task", "obj", "finish"])
 
 # seconds of work per tick before yielding to the event loop
 TICK_BUDGET = 0.033
@@ -99,7 +110,7 @@ def normalize_uvs(mesh):
     layer.uv.foreach_get("vector", coords)
     coords = coords.reshape(-1, 2)
 
-    # the grouping helpers walk plain lists
+    # the grouping helpers take plain lists
     vert_list = loop_verts.tolist()
     uv_list = coords.tolist()
     faces = []
@@ -110,7 +121,7 @@ def normalize_uvs(mesh):
 
     groups = uv_island_groups(faces, uvs, face_edges(faces))
 
-    # shoelace per face, each loop paired with the next one around its own face
+    # shoelace area per face
     following = numpy.arange(1, len(coords) + 1)
     following[starts + totals - 1] = starts
     cross = coords[:, 0] * coords[following, 1] - coords[following, 0] * coords[:, 1]
@@ -157,24 +168,22 @@ def normalize_uvs(mesh):
     mesh.update()
 
 
-# writes across timer ticks so the UI stays responsive
 class InputExporter:
-    def __init__(self, engine, engine_ctx, pieces, start_objects, temp_collection):
+    def __init__(self, engine, pieces, start_objects, temp_collection):
         self.engine = engine
-        self.engine_ctx = engine_ctx
         self.pieces = pieces
         self.remaining = deque(pieces)
         self.start_objects = start_objects
         self.temp_collection = temp_collection
 
     def tick(self):
-        # exports need object mode, the user may have entered edit mode between ticks
+        # exports need object mode
         if bpy.context.mode != "OBJECT":
             return 0.2
 
-        # the session we joined was cancelled mid-export (Cancel All)
+        # Cancel All ended the session mid-export
         if self.pieces and not manager.is_active:
-            # reported first so a failure below can't leave the count stuck
+            # called first so a failure below can't leave the count stuck
             manager.finished_adding()
             for obj, _ in self.remaining:
                 bpy.data.objects.remove(obj, do_unlink=True)
@@ -182,13 +191,12 @@ class InputExporter:
             return None
 
         try:
-            # frozen, so a slider moved during the export can't reach the engine
+            # a copy, a slider moved during the export doesn't reach the engine
             props = manager.props
             start = time.monotonic()
             while self.remaining:
                 self._export_object(*self.remaining.popleft(), props)
                 if time.monotonic() - start >= TICK_BUDGET:
-                    # yield to the event loop
                     return 0.0
 
             self._finish()
@@ -196,12 +204,12 @@ class InputExporter:
 
         except Exception as e:
             handle_error(e, "START", objects=self.start_objects)
-            # handle_error leaves these alone during a live session
+            # handle_error doesn't delete these during a live session
             for piece in list(self.temp_collection.objects):
                 bpy.data.objects.remove(piece, do_unlink=True)
             bpy.data.collections.remove(self.temp_collection)
             manager.finished_adding()
-            # settle the pieces that never got exported or the session can't finish
+            # the session can't finish while a piece has no result
             for _, unwrap in self.pieces:
                 if unwrap.result is None and not unwrap.is_exported:
                     manager.record_result(unwrap, Result.INVALID)
@@ -234,23 +242,11 @@ class InputExporter:
             matrix=matrix,
         )
 
-        guide_path = self._create_guide_file(obj, path, props, vt_verts)
-
-        materials, material_indices, vertex_groups, face_smooth = (
-            self._get_mesh_metadata(obj)
-        )
-
         unwrap.set_export_data(
-            guide_path=guide_path,
+            guide_path=self._create_guide_file(obj, path, props, vt_verts),
             origin=matrix.translation,
-            materials=materials,
             added_edges=new_edges,
-            vertex_count=len(obj.data.vertices),
-            material_indices=material_indices,
-            vertex_groups=vertex_groups,
-            face_smooth=face_smooth,
-            shading_modifiers=get_shading_modifiers(obj),
-            overrides=read_overrides(obj.data),
+            **self._mesh_metadata(obj),
         )
 
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -277,20 +273,11 @@ class InputExporter:
             )
         else:
             new_edges = self._triangulate_mesh(obj, unwrap, unwrap.path, props)
-            materials, material_indices, vertex_groups, face_smooth = (
-                self._get_mesh_metadata(obj)
-            )
             unwrap.set_export_data(
                 # pieces of one object share a transform
                 origin=representative.origin,
-                materials=materials,
                 added_edges=new_edges,
-                vertex_count=len(obj.data.vertices),
-                material_indices=material_indices,
-                vertex_groups=vertex_groups,
-                face_smooth=face_smooth,
-                shading_modifiers=get_shading_modifiers(obj),
-                overrides=read_overrides(obj.data),
+                **self._mesh_metadata(obj),
             )
 
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -336,21 +323,14 @@ class InputExporter:
         set_bmesh(bm, obj)
         return new_edges
 
-    # _weights repels seams, _importance protects faces from stretching
+    # _weights raises the seam cost of faces, _importance raises their stretch cost
     def _create_guide_file(self, obj, path, props, vt_verts):
-        weights = {}
-        if (
-            self.engine.supports_guided
-            and (props.avoid_seams or props.reduce_stretching)
-            and SEAM_RESTRICTIONS_GROUP in obj.vertex_groups
+        if not (
+            self.engine.supports_guided and props.avoid_seams
+            # (props.avoid_seams or props.reduce_stretching)
         ):
-            group_idx = obj.vertex_groups[SEAM_RESTRICTIONS_GROUP].index
-            for v in obj.data.vertices:
-                for g in v.groups:
-                    if g.group == group_idx:
-                        weights[v.index] = g.weight
-                        break
-
+            return None
+        weights = seam_restriction_weights(obj)
         if not weights:
             return None
 
@@ -361,19 +341,18 @@ class InputExporter:
             }
 
         guide = ",".join(f"{index},{weight}" for index, weight in weights.items())
-        guide_path = None
-        if props.avoid_seams:
-            guide_path = path.parent / f"{path.stem}_weights"
-            with guide_path.open("w") as f:
-                f.write(f"{guide}\n")
-        if props.reduce_stretching:
-            importance_path = path.parent / f"{path.stem}_importance"
-            with importance_path.open("w") as f:
-                f.write(f"{guide}\n")
+        guide_path = path.parent / f"{path.stem}_weights"
+        with guide_path.open("w") as f:
+            f.write(f"{guide}\n")
+        # if props.reduce_stretching:
+        #     importance_path = path.parent / f"{path.stem}_importance"
+        #     with importance_path.open("w") as f:
+        #         f.write(f"{guide}\n")
 
         return guide_path
 
-    def _get_mesh_metadata(self, obj):
+    # the export data read off the piece itself
+    def _mesh_metadata(self, obj):
         # keep empty slots as None so the per-face indices below stay valid
         materials = [
             slot.material.name if slot.material else None for slot in obj.material_slots
@@ -395,7 +374,15 @@ class InputExporter:
                         break
             vertex_groups[group.name] = weights
 
-        return materials, material_indices.tolist(), vertex_groups, face_smooth.tolist()
+        return {
+            "materials": materials,
+            "material_indices": material_indices.tolist(),
+            "vertex_groups": vertex_groups,
+            "face_smooth": face_smooth.tolist(),
+            "vertex_count": len(obj.data.vertices),
+            "shading_modifiers": get_shading_modifiers(obj),
+            "overrides": read_overrides(obj.data),
+        }
 
 
 def invalid_piece_reason(obj, *, had_uv_layer):
@@ -408,49 +395,48 @@ def invalid_piece_reason(obj, *, had_uv_layer):
     return None
 
 
-# proxied says the mesh was decimated, one under Proxy Faces never is
-def input_job(props, proxied):
+# proxied is true when the mesh was decimated
+def input_job(props, proxied, input_mesh):
     if proxied:
-        return ProxyUVs() if props.transfer_uvs else ProxyCopyUVs()
+        return ProxyUVs(input_mesh) if props.transfer_uvs else ProxyCopyUVs(input_mesh)
     if props.transfer_uvs:
-        return TransferUVs()
+        return TransferUVs(input_mesh)
     return None
 
 
-# the preseed runs on a worker thread and the rest across timer ticks
+# copy is the unlinked duplicate that gets unwrapped, original is the selected object
+MeshInput = namedtuple("MeshInput", ["copy", "original", "name", "proxied"])
+
+
+# segmentation and the preseed run in worker processes, the rest across timer ticks
 class SessionBuilder:
     def __init__(
         self,
         engine,
-        engine_ctx,
+        segment_command,
         input_path,
-        names,
-        input_for,
-        objects,
-        proxied_objects,
+        inputs,
         start_objects,
         temp_collection,
     ):
         self.engine = engine
-        self.engine_ctx = engine_ctx
+        self.segment_command = segment_command
         self.input_path = input_path
-        self.names = names
-        self.input_for = input_for
-        self.proxied_objects = proxied_objects
-        self.remaining = deque(objects)
+        self.inputs = {entry.copy: entry for entry in inputs}
+        self.remaining = deque(entry.copy for entry in inputs)
         self.start_objects = start_objects
         self.temp_collection = temp_collection
         self.pieces = []
         self.piece_unwrap = {}
         self.pending = None
-        # cancelled mid preseed, dropped when the worker exits
+        # cancelled while its worker runs, dropped when the worker exits
         self.cancelled = set()
         # queue ui placeholders until each object's pieces exist
         self.preparing = {
-            obj: Preparing(
-                names[obj.name][0], functools.partial(self.cancel_object, obj)
+            entry.copy: Preparing(
+                entry.name, functools.partial(self.cancel_object, entry.copy)
             )
-            for obj in self.remaining
+            for entry in inputs
         }
         manager.preparing.extend(self.preparing.values())
 
@@ -462,9 +448,9 @@ class SessionBuilder:
             return self._advance()
         except Exception as e:
             handle_error(e, "START", objects=self.start_objects)
-            # an undo past the session start kills the collection datablock
+            # an undo past the session start removes the collection datablock
             if check_exists(self.temp_collection):
-                # handle_error leaves these alone during a live session
+                # handle_error doesn't delete these during a live session
                 for piece in list(self.temp_collection.objects):
                     bpy.data.objects.remove(piece, do_unlink=True)
                 bpy.data.collections.remove(self.temp_collection)
@@ -483,7 +469,7 @@ class SessionBuilder:
         if entry is not None:
             manager.drop_preparing(entry)
 
-    # a running preseed only stops at its next check, so it is left to unwind
+    # a running worker stops only at its next cancel check
     def cancel_object(self, obj):
         if self.pending is not None and self.pending.obj is obj:
             self.pending.task.cancel()
@@ -499,9 +485,14 @@ class SessionBuilder:
         if check_exists(obj):
             bpy.data.objects.remove(obj, do_unlink=True)
 
+    # finish is called with the task once its worker exits
+    def _wait(self, task, obj, finish):
+        self.pending = PendingWork(task, obj, finish)
+        return 0.1
+
     def _advance(self):
         if self.pending is not None:
-            task, apply, obj, had_uv_layer = self.pending
+            task, obj, finish = self.pending
             if not task.done():
                 return 0.1
             self.pending = None
@@ -514,58 +505,115 @@ class SessionBuilder:
             if not check_exists(obj):
                 task.close()
                 raise RuntimeError("Undo removed the working copy mid unwrap")
-            try:
-                result = task.result()
-            except EngineError as error:
-                # each part then fails in the engine or gets the engine's own seams
-                logger.add_data(
-                    "errors",
-                    f"{self.names[obj.name][0]}: hard surface seams failed, {error}",
-                )
-                result = None
-            props = manager.props
-            preseeded = apply(result)
-            has_uvs = preseeded or self.engine.uses_import_uvs(props)
-            self._separate(obj, has_uvs, had_uv_layer=had_uv_layer, preseeded=preseeded)
-            return 0.0
+            return finish(task)
         if not self.remaining:
             return self._finish()
 
         obj = self.remaining.popleft()
         props = manager.props
-        # the seams package reads region widths off the full model
-        had_uv_layer = obj.data.uv_layers.active is not None
-        work = self.engine.preseed_work(obj, props)
-        if work is None:
-            self._separate(
-                obj, self.engine.uses_import_uvs(props), had_uv_layer=had_uv_layer
-            )
-            return 0.0
-        worker, apply = work
-        self.pending = Preseeding(worker, apply, obj, had_uv_layer)
-        return 0.1
+        if not self.engine.splits_regions(props):
+            return self._start_preseed(obj)
+        worker = segment_work(
+            obj.data,
+            world_positions(obj.data, applied_matrix(obj)),
+            self.segment_command,
+            self.engine.unset_surface_mode(props),
+        )
+        return self._wait(
+            worker,
+            obj,
+            functools.partial(self._finish_segmenting, obj=obj),
+        )
 
-    def _input_jobs(self, props, obj, proxied):
-        transfer_uvs_job = input_job(props, proxied)
-        hide_job = None
-        if transfer_uvs_job is not None:
-            manager.input[transfer_uvs_job] = self.input_for[obj]
+    def _finish_segmenting(self, task, *, obj):
+        try:
+            segmentation = task.result()
+        except (EngineError, WorkerError) as error:
+            logger.add_data(
+                "errors", f"{self.inputs[obj].name}: segmentation failed, {error}"
+            )
+            return self._start_preseed(obj)
+        border_positions = None
+        parts = None
+        if segmentation.border_edges:
+            border_positions, parts = split_on_borders(obj, segmentation.border_edges)
+        # the preseed's classifier calls a small segment hard surface
+        return self._start_preseed(
+            obj,
+            surface_modes=segmentation.surface_modes,
+            parts=parts,
+            border_positions=border_positions,
+        )
+
+    # parts is part_triangles from before the segment split
+    def _start_preseed(
+        self,
+        obj,
+        surface_modes=None,
+        parts=None,
+        border_positions=None,
+    ):
+        props = manager.props
+        proxied = self.inputs[obj].proxied
+        if proxied:
+            surface_modes = self._make_proxy(obj, props, parts, surface_modes)
+
+        separate = functools.partial(
+            self._separate,
+            obj,
+            had_uv_layer=obj.data.uv_layers.active is not None,
+            border_positions=border_positions,
+        )
+        # the seams package reads region widths off the full model
+        work = self.engine.preseed_work(obj, props, surface_modes)
+        if work is None:
+            return separate(preseeded=False)
+        worker, apply = work
+        return self._wait(
+            worker,
+            obj,
+            functools.partial(
+                self._finish_preseed, obj=obj, apply=apply, separate=separate
+            ),
+        )
+
+    # returns surface_modes for the decimated faces
+    def _make_proxy(self, obj, props, parts, surface_modes):
+        # the decimate only runs on an object in the scene
+        bpy.context.scene.collection.objects.link(obj)
+        if surface_modes is None:
+            make_proxy(obj, props.proxy_faces, parts)
         else:
-            # the hide job doesn't depend on the unwrapped objects
-            hide_job = HideInput()
-            manager.input[hide_job] = self.input_for[obj]
+            surface_modes = make_segmented_proxy(
+                obj, props.proxy_faces, parts, surface_modes
+            )
+        bpy.context.scene.collection.objects.unlink(obj)
+        return surface_modes
+
+    def _finish_preseed(self, task, *, obj, apply, separate):
+        try:
+            result = task.result()
+        except EngineError as error:
+            # each part then fails in the engine or gets the engine's own seams
+            logger.add_data(
+                "errors",
+                f"{self.inputs[obj].name}: hard surface seams failed, {error}",
+            )
+            result = None
+        return separate(preseeded=apply(result))
+
+    def _input_jobs(self, props, obj):
+        entry = self.inputs[obj]
+        transfer_uvs_job = input_job(props, entry.proxied, entry.original)
+        # the hide job doesn't depend on the unwrapped objects
+        hide_job = HideInput(entry.original) if transfer_uvs_job is None else None
         return hide_job, transfer_uvs_job
 
-    def _add_piece(
-        self, obj, input_name, piece_name, jobs, has_uvs, props, preseeded, keeps_output
-    ):
-        # created before the input file exists, so the queue ui is complete upfront
-        path = self.input_path / f"{engine_file_stem(piece_name)}.obj"
-        # names can repeat across pieces, and the output file is keyed by stem
+    def _add_piece(self, obj, input_name, piece_name, has_uvs, props, preseeded, jobs):
+        # the queue ui lists every piece before any input file exists
         claimed = {u.path for u in manager.active}
         claimed.update(u.path for u, _ in manager.results)
-        while path.is_file() or path in claimed:
-            path = path.parent / f"{path.stem}1.obj"
+        path = unused_input_path(self.input_path, piece_name, claimed)
 
         uses_uvs = (
             self.engine.piece_uses_uvs(obj, props, has_uvs)
@@ -576,116 +624,95 @@ class SessionBuilder:
             name=piece_name,
             input_name=input_name,
             path=path,
-            jobs=jobs,
             preseeded=preseeded and uses_uvs and not keeps_uvs,
+            **jobs,
         )
         unwrap.has_uvs = uses_uvs
         unwrap.keeps_uvs = keeps_uvs
         # unwrap.priority_override = piece_priority_override(obj.data)
-        unwrap.keeps_output = keeps_output
         self.piece_unwrap[obj] = unwrap
         manager.add(unwrap)
 
-    def _separate(self, obj, has_uvs, *, had_uv_layer, preseeded=False):
+    def _separate(self, obj, *, preseeded, had_uv_layer, border_positions):
         props = manager.props
-        proxied = obj in self.proxied_objects
+        has_uvs = preseeded or self.engine.uses_import_uvs(props)
         # relink for the ops selection, all within one tick so nothing shows
         bpy.context.scene.collection.objects.link(obj)
         self.temp_collection.objects.unlink(obj)
         bpy.context.view_layer.update()
         # the pieces share this transform, their own matrix is never updated
         matrix = obj.matrix_world.copy()
+        weld_job = None
+        if border_positions is not None:
+            weld_job = SegmentWeld(border_positions, matrix)
         deselect_all()
         obj.select_set(True)
 
         bpy.ops.mesh.separate(type="LOOSE")
-        s = bpy.context.selected_objects
-        added = []
-        if len(s) > 1:
-            unwrap_name = self.names[obj.name][0]
-            valid = []
-            for o in s:
-                reason = invalid_piece_reason(o, had_uv_layer=had_uv_layer)
-                if reason is not None:
-                    mark_not_unwrapped(o, reason, unwrap_name)
-                    manager.moved_to_invalid = True
-                else:
-                    valid.append(o)
-
-            join_job = Join(len(valid))
-            hide_job, transfer_uvs_job = self._input_jobs(props, obj, proxied)
-            for obj_idx, o in enumerate(valid):
-                jobs = (None, join_job, hide_job, transfer_uvs_job)
-                piece_name = f"{unwrap_name}_{obj_idx + 1}"
-                self._add_piece(
-                    o,
-                    unwrap_name,
-                    piece_name,
-                    jobs,
-                    has_uvs,
-                    props,
-                    preseeded,
-                    transfer_uvs_job is None,
-                )
-                added.append(o)
-            if props.stack_similar:
-                # the new pieces' matrix_world needs an evaluation first
-                bpy.context.view_layer.update()
-                # a kept piece can't take a twin's uvs
-                engine_pieces = [o for o in valid if not self.piece_unwrap[o].keeps_uvs]
-                # a representative always precedes its twins in valid order
-                for twin_obj, (rep_obj, twin_matrix, exact) in find_twins(
-                    engine_pieces
-                ).items():
-                    twin = self.piece_unwrap[twin_obj]
-                    representative = self.piece_unwrap[rep_obj]
-                    twin.copy_of = representative
-                    twin.copy_matrix = twin_matrix
-                    twin.copy_reordered = not exact
-                    representative.twins.append(twin)
-        else:
-            unwrap_name = self.names[obj.name][0]
-            reason = invalid_piece_reason(obj, had_uv_layer=had_uv_layer)
-            if reason is not None:
-                mark_not_unwrapped(obj, reason, unwrap_name)
+        pieces = bpy.context.selected_objects
+        unwrap_name = self.inputs[obj].name
+        valid = []
+        for piece in pieces:
+            reason = invalid_piece_reason(piece, had_uv_layer=had_uv_layer)
+            if reason is None:
+                valid.append(piece)
+            else:
+                mark_not_unwrapped(piece, reason, unwrap_name)
                 manager.moved_to_invalid = True
-                self._drop_preparing(obj)
-                deselect_all()
-                return
-            hide_job, transfer_uvs_job = self._input_jobs(props, obj, proxied)
-            jobs = (None, None, hide_job, transfer_uvs_job)
+
+        hide_job, transfer_uvs_job = self._input_jobs(props, obj)
+        jobs = {
+            "join_job": Join(len(valid)) if len(pieces) > 1 else None,
+            "hide_job": hide_job,
+            "transfer_uvs_job": transfer_uvs_job,
+            "segment_weld_job": weld_job,
+        }
+        for index, piece in enumerate(valid):
+            piece_name = unwrap_name
+            if jobs["join_job"] is not None:
+                piece_name = f"{unwrap_name}_{index + 1}"
             self._add_piece(
-                obj,
-                unwrap_name,
-                unwrap_name,
-                jobs,
-                has_uvs,
-                props,
-                preseeded,
-                transfer_uvs_job is None,
+                piece, unwrap_name, piece_name, has_uvs, props, preseeded, jobs
             )
-            added.append(obj)
+        if props.stack_similar and len(valid) > 1:
+            self._stack_twins(valid)
 
         self._drop_preparing(obj)
 
         deselect_all()
-        for piece in added:
+        for piece in valid:
             unwrap = self.piece_unwrap[piece]
             unwrap.matrix = matrix
             self.pieces.append((piece, unwrap))
             for coll in piece.users_collection:
                 coll.objects.unlink(piece)
             self.temp_collection.objects.link(piece)
+        return 0.0
+
+    def _stack_twins(self, valid):
+        # the new pieces' matrix_world needs an evaluation first
+        bpy.context.view_layer.update()
+        # a kept piece can't take a twin's uvs
+        engine_pieces = [o for o in valid if not self.piece_unwrap[o].keeps_uvs]
+        # a representative always precedes its twins in valid order
+        for twin_obj, (rep_obj, twin_matrix, exact) in find_twins(
+            engine_pieces
+        ).items():
+            twin = self.piece_unwrap[twin_obj]
+            representative = self.piece_unwrap[rep_obj]
+            twin.copy_of = representative
+            twin.copy_matrix = twin_matrix
+            twin.copy_reordered = not exact
+            representative.twins.append(twin)
 
     def _finish(self):
         exporter = InputExporter(
             engine=self.engine,
-            engine_ctx=self.engine_ctx,
             pieces=self.pieces,
             start_objects=self.start_objects,
             temp_collection=self.temp_collection,
         )
-        # the exporter takes over the count entry this builder was carrying
+        # this builder's count entry passes to the exporter
         bpy.app.timers.register(exporter.tick)
         return None
 
@@ -695,229 +722,183 @@ class UVGAMI_OT_start(bpy.types.Operator):
     bl_label = "Unwrap"
     bl_description = "Start UV unwrap process"
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.reset_variables()
-
-    def reset_variables(self):
-        self.engine = None
-        self.engine_ctx = None
-        self.input_path = None
-
-        self.input_objs = None
-
-        self.objects = None
-        self.names = None
-        self.input_for = None
-        self.proxied_objects = None
-        self.reports = []
-
-        self.temp_collection = None
-
     def execute(self, context):
         start_objects = set(bpy.data.objects)
+        temp_collection = None
         builder_registered = False
 
         try:
             info = logger.new_info()
-            self.engine = active_engine(context.scene.uvgami.engine)
-            if self.engine is None:
+            props = context.scene.uvgami
+            engine = active_engine(props.engine)
+            if engine is None:
                 _, error = get_engine("OPTCUTS").validate(get_preferences())
                 self.report({"ERROR"}, error)
                 logger.discard_info()
                 return {"CANCELLED"}
-            info.engine = self.engine.describe()
-            info.settings = describe_settings(
-                context.scene.uvgami, unwrap_settings(context.scene.uvgami)
-            )
+            info.engine = engine.describe()
+            info.settings = describe_settings(props, unwrap_settings(props))
 
-            # a mesh added to a running session would take the first one's settings
+            # a mesh added to a running session gets the first one's settings
             if manager.is_active:
                 self.report({"ERROR"}, "Finish or cancel the current unwrap first")
                 logger.discard_info()
                 return {"CANCELLED"}
 
-            if self.check_for_errors() is not None:
+            prefs = get_preferences()
+            if self._autosave_blocks(prefs):
                 logger.discard_info()
                 return {"CANCELLED"}
-            if self._prepare_unwrap_session(context) is not None:
+            engine_ctx, error = engine.validate(prefs)
+            if error is not None:
+                self.report({"ERROR"}, error)
+                logger.discard_info()
+                return {"CANCELLED"}
+            segment_command = None
+            if engine.splits_regions(props):
+                try:
+                    segment_command = resolve_bundled_command("segment", "Segmentation")
+                except RuntimeError as error:
+                    self.report({"ERROR"}, str(error))
+                    logger.discard_info()
+                    return {"CANCELLED"}
+
+            # leaving edit mode flushes the mesh the copies below take
+            active = context.active_object
+            if active is not None and active.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+
+            inputs, reports = prepare_meshes(context, engine)
+            if not inputs:
+                reason = reports[0][1] if reports else "No object selected"
+                self.report({"ERROR"}, reason)
                 logger.discard_info()
                 return {"CANCELLED"}
 
+            input_path, output_path = get_io_dir_paths()
+            if not manager.is_active:
+                clear_io_dir(input_path)
+                clear_io_dir(output_path)
+            deselect_all()
+
+            # an unlinked collection doesn't flash in the viewport between ticks
+            temp_collection = bpy.data.collections.new("UVgami Temp")
+            for entry in inputs:
+                for coll in entry.copy.users_collection:
+                    coll.objects.unlink(entry.copy)
+                temp_collection.objects.link(entry.copy)
+
             builder = SessionBuilder(
-                engine=self.engine,
-                engine_ctx=self.engine_ctx,
-                input_path=self.input_path,
-                names=self.names,
-                input_for=self.input_for,
-                objects=self.objects,
-                proxied_objects=self.proxied_objects,
+                engine=engine,
+                segment_command=segment_command,
+                input_path=input_path,
+                inputs=inputs,
                 start_objects=start_objects,
-                temp_collection=self.temp_collection,
+                temp_collection=temp_collection,
             )
             bpy.app.timers.register(builder.tick)
             builder_registered = True
 
             # before the first piece exists, the bar is up while the builder works
-            manager.engine = self.engine
-            manager.engine_ctx = self.engine_ctx
+            manager.engine = engine
+            manager.engine_ctx = engine_ctx
             manager.pieces_still_arriving += 1
             manager.start()
             tag_redraw()
 
-            for level, text in self.reports:
+            for level, text in reports:
                 self.report({level}, text)
 
         except Exception as e:
             handle_error(e, "START", objects=start_objects)
             # once the builder is registered tick() removes the collection
-            if not builder_registered and self.temp_collection is not None:
-                bpy.data.collections.remove(self.temp_collection)
+            if not builder_registered and temp_collection is not None:
+                bpy.data.collections.remove(temp_collection)
 
-        # only valid while the operator is running
-        self.reset_variables()
         return {"FINISHED"}
 
-    def _prepare_unwrap_session(self, context):
-        # leaving edit mode flushes the mesh the copies below take
-        active = context.active_object
-        if active is not None and active.mode != "OBJECT":
-            bpy.ops.object.mode_set(mode="OBJECT")
-
-        self.input_objs = context.selected_objects
-        self.objects, self.names, self.reports, self.proxied_objects, self.input_for = (
-            self.prepare_meshes(context)
-        )
-        if len(self.objects) == 0:
-            reason = self.reports[0][1] if self.reports else "No object selected"
-            self.report({"ERROR"}, reason)
-            return {"CANCELLED"}
-
-        self.input_path, _ = self.prepare_io_folders()
-        deselect_all()
-
-        # an unlinked collection doesn't flash in the viewport between ticks
-        self.temp_collection = bpy.data.collections.new("UVgami Temp")
-        for obj in self.objects:
-            for coll in obj.users_collection:
-                coll.objects.unlink(obj)
-            self.temp_collection.objects.link(obj)
-        return None
-
-    def check_for_errors(self):
-        prefs = get_preferences()
-
-        if self._run_autosave_check(prefs) is not None:
-            return {"CANCELLED"}
-
-        engine_ctx, error = self.engine.validate(prefs)
-        if error is not None:
-            self.report({"ERROR"}, error)
-            return {"CANCELLED"}
-        self.engine_ctx = engine_ctx
-
-        return None
-
-    def _run_autosave_check(self, prefs):
+    def _autosave_blocks(self, prefs):
         if not prefs.autosave:
-            return None
+            return False
 
         if bpy.data.is_saved:
             bpy.ops.wm.save_mainfile()
-            return None
+            return False
 
         bpy.ops.wm.save_as_mainfile("INVOKE_DEFAULT")
         self.report(
             {"WARNING"},
             "Autosave is turned on. Save the file before starting UVgami",
         )
-        return {"CANCELLED"}
+        return True
 
-    def prepare_meshes(self, context):
-        props = context.scene.uvgami
 
-        objects = []
-        names = {}
-        input_for = {}
-        input_sizes = []
-        skipped = set()
-        seen_mesh_data = set()
-        applied_modifiers = False
-        proxied_objects = set()
-        warn = get_preferences().show_warnings
-        depsgraph = context.evaluated_depsgraph_get()
-        for obj in self.input_objs:
-            if obj.type != "MESH":
-                skipped.add("non mesh objects")
-                continue
-            if len(obj.data.polygons) == 0:
-                skipped.add("objects with zero polygons")
-                continue
-            # the transfer writes into obj.data
-            if props.transfer_uvs and obj.data in seen_mesh_data:
-                skipped.add("duplicates sharing a mesh")
-                continue
-            seen_mesh_data.add(obj.data)
+# returns the MeshInput of each mesh to unwrap and the (level, text) reports
+def prepare_meshes(context, engine):
+    props = context.scene.uvgami
 
-            # unlinked duplicate, so the original is never touched
-            copy_object = obj.copy()
-            copy_object.data = obj.data.copy()
-            copy_object.animation_data_clear()
+    inputs = []
+    input_sizes = []
+    skipped = set()
+    seen_mesh_data = set()
+    applied_modifiers = False
+    depsgraph = context.evaluated_depsgraph_get()
+    for obj in context.selected_objects:
+        if obj.type != "MESH":
+            skipped.add("non mesh objects")
+            continue
+        if len(obj.data.polygons) == 0:
+            skipped.add("objects with zero polygons")
+            continue
+        # the transfer writes into obj.data
+        if props.transfer_uvs and obj.data in seen_mesh_data:
+            skipped.add("duplicates sharing a mesh")
+            continue
+        seen_mesh_data.add(obj.data)
 
-            obj.users_collection[0].objects.link(copy_object)
+        # unlinked duplicate, so the original is never touched
+        copy_object = obj.copy()
+        copy_object.data = obj.data.copy()
+        copy_object.animation_data_clear()
 
-            # the count is the modifier bake, what a plain run would unwrap
-            evaluated = obj.evaluated_get(depsgraph)
-            triangles = triangle_count(evaluated)
-            input_sizes.append((obj.name, triangles))
-            # the budget reads the mesh make_proxy will decimate
-            proxied = self.engine.uses_proxy(props) and needs_proxy(
-                copy_object, props.proxy_faces
-            )
-            # the engine has to see the input mesh itself, not a modifier bake of it
-            if input_job(props, proxied) is not None:
-                copy_object.modifiers.clear()
-            elif self._apply_modifiers(context, copy_object):
-                applied_modifiers = True
+        obj.users_collection[0].objects.link(copy_object)
 
-            if proxied:
-                make_proxy(copy_object, props.proxy_faces)
-                proxied_objects.add(copy_object)
+        # counted on the modifier bake, the mesh a plain run unwraps
+        evaluated = obj.evaluated_get(depsgraph)
+        triangles = triangle_count(evaluated)
+        input_sizes.append((obj.name, triangles))
+        # the budget reads the mesh make_proxy will decimate
+        proxied = engine.uses_proxy(props) and needs_proxy(
+            copy_object, props.proxy_faces
+        )
+        # the engine input must be the input mesh itself, not a modifier bake of it
+        if proxied or props.transfer_uvs:
+            copy_object.modifiers.clear()
+        elif _apply_modifiers(context, copy_object):
+            applied_modifiers = True
 
-            # format: input name, unwrap name
-            names[copy_object.name] = [obj.name, obj.name]
-            input_for[copy_object] = obj
-            objects.append(copy_object)
+        inputs.append(MeshInput(copy_object, obj, obj.name, proxied))
 
-        logger.get_latest().objects = input_sizes
+    logger.get_latest().objects = input_sizes
 
-        reports = []
-        if skipped:
-            reports.append(("WARNING", f"Input contains {', '.join(sorted(skipped))}"))
-        if warn and applied_modifiers:
-            reports.append(
-                ("WARNING", "Modifiers will be applied on the unwrapped copy")
-            )
+    reports = []
+    if skipped:
+        reports.append(("WARNING", f"Input contains {', '.join(sorted(skipped))}"))
+    if applied_modifiers:
+        reports.append(("WARNING", "Modifiers are applied to the unwrapped copy"))
 
-        return objects, names, reports, proxied_objects, input_for
+    return inputs, reports
 
-    def _apply_modifiers(self, context, obj):
-        context.view_layer.objects.active = obj
-        applied = False
-        for modifier in obj.modifiers:
-            if is_shading_modifier(modifier):
-                continue
 
-            # a disabled modifier can't be applied
-            with contextlib.suppress(RuntimeError):
-                bpy.ops.object.modifier_apply(modifier=modifier.name)
-                applied = True
-        return applied
+def _apply_modifiers(context, obj):
+    context.view_layer.objects.active = obj
+    applied = False
+    for modifier in obj.modifiers:
+        if is_shading_modifier(modifier):
+            continue
 
-    def prepare_io_folders(self):
-        input_path, output_path = get_io_dir_paths()
-        if not manager.is_active:
-            clear_io_dir(input_path)
-            clear_io_dir(output_path)
-
-        return input_path, output_path
+        # a disabled modifier can't be applied
+        with contextlib.suppress(RuntimeError):
+            bpy.ops.object.modifier_apply(modifier=modifier.name)
+            applied = True
+    return applied

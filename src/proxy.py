@@ -28,23 +28,23 @@ def part_triangles(data):
     return labels, part_labels, counts
 
 
-# the budget is per loose part
-def needs_proxy(obj, target_faces):
+# the budget is per loose part, parts is the part_triangles a caller already has
+def needs_proxy(obj, target_faces, parts=None):
     if triangle_count(obj) <= target_faces:
         return False
-    _, _, counts = part_triangles(obj.data)
+    _, _, counts = part_triangles(obj.data) if parts is None else parts
     return int(counts.max()) > target_faces
 
 
-# evaluating the object bakes every modifier on it, not just the decimate
-def make_proxy(obj, target_faces):
-    triangles = triangle_count(obj)
-    if triangles <= target_faces:
+# the bake also applies the object's other modifiers
+def make_proxy(obj, target_faces, parts=None):
+    if parts is None:
+        parts = part_triangles(obj.data)
+    if not needs_proxy(obj, target_faces, parts):
         return False
-    labels, part_labels, counts = part_triangles(obj.data)
+    labels, part_labels, counts = parts
     over = numpy.flatnonzero(counts > target_faces).tolist()
-    if not over:
-        return False
+    triangles = triangle_count(obj)
 
     modifiers = []
     groups = []

@@ -28,6 +28,12 @@ def unwrap_settings(props):
                 is_non_default(props, "priority"),
             ),
             (
+                "MOD_EXPLODE",
+                "Segmentation",
+                "split_regions",
+                engine.supports_regions and is_non_default(props, "split_regions"),
+            ),
+            (
                 "IMPORT",
                 "Import UVs",
                 "import_uvs",
@@ -380,6 +386,11 @@ class UVGAMI_PT_main(bpy.types.Panel):
         split = box.split(factor=0.7)
         split.label(icon="MOD_DATA_TRANSFER", text="Transfer UVs")
         split.prop(props, "transfer_uvs")
+
+        if engine.supports_regions:
+            split = box.split(factor=0.7)
+            split.label(icon="MOD_EXPLODE", text="Segmentation")
+            split.prop(props, "split_regions")
 
 
 def draw_concurrent(layout, props, engine):

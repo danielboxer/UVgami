@@ -9,6 +9,19 @@ from ..utils.mesh import validate_obj
 SEAM_RESTRICTIONS_GROUP = "UVgami_seam_restrictions"
 
 
+# vertex index to painted weight, empty without the group
+def seam_restriction_weights(obj):
+    if SEAM_RESTRICTIONS_GROUP not in obj.vertex_groups:
+        return {}
+    group_index = obj.vertex_groups[SEAM_RESTRICTIONS_GROUP].index
+    return {
+        vertex.index: group.weight
+        for vertex in obj.data.vertices
+        for group in vertex.groups
+        if group.group == group_index
+    }
+
+
 def _sphere_dirs(n=64):
     # fibonacci sphere
     dirs = []

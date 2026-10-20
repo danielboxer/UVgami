@@ -11,6 +11,11 @@ class XatlasEngine(XatlasInstall):
     label = "xatlas"
     description = "Fast CPU engine for baking lightmaps and texture painting"
     icon = "MESH_GRID"
+    supports_regions = True
+
+    # xatlas has no hard surface route
+    def unset_surface_mode(self, props):
+        return "ORGANIC"
 
     def build_args(self, ctx, input_path, props):
         output_path = get_extension_dir_path() / "output" / f"{input_path.stem}.obj"

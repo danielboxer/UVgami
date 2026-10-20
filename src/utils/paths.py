@@ -47,6 +47,14 @@ def engine_file_stem(name):
     return "".join(c if c.isascii() else "_" for c in bpy.path.clean_name(name))
 
 
+# names can repeat across pieces, and the output file is keyed by stem
+def unused_input_path(folder, name, claimed=frozenset()):
+    path = folder / f"{engine_file_stem(name)}.obj"
+    while path.is_file() or path in claimed:
+        path = path.parent / f"{path.stem}1.obj"
+    return path
+
+
 ENGINE_FILE_SUFFIXES = (
     ".obj",
     "_weights",

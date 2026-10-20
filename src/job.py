@@ -32,6 +32,7 @@ from .utils.mesh import (
     set_bmesh,
     set_loop_uvs,
     triangulate,
+    world_positions,
 )
 
 TransferReport = namedtuple(
@@ -46,21 +47,13 @@ class Result(Enum):
     STOPPED = "stopped"
 
 
-def world_positions(obj):
-    mesh = obj.data
-    flat = numpy.empty(len(mesh.vertices) * 3)
-    mesh.vertices.foreach_get("co", flat)
-    matrix = numpy.array(obj.matrix_world)
-    return flat.reshape(-1, 3) @ matrix[:3, :3].T + matrix[:3, 3]
-
-
 # in the flat form transfer_exact_job takes
 def output_mesh_data(output):
     output_data = output.data
     coords = numpy.empty(len(output_data.loops) * 2)
     output_data.uv_layers.active.uv.foreach_get("vector", coords)
     return (
-        world_positions(output),
+        world_positions(output_data, output.matrix_world),
         *face_vertex_arrays(output_data),
         coords.reshape(-1, 2),
     )
@@ -147,9 +140,12 @@ class Join:
 
 
 class HideInput:
-    def finish(self, input_mesh):
-        if check_exists(input_mesh):
-            input_mesh.hide_set(True)
+    def __init__(self, input_mesh):
+        self.input_mesh = input_mesh
+
+    def finish(self):
+        if check_exists(self.input_mesh):
+            self.input_mesh.hide_set(True)
 
 
 # the read is bpy-free and runs in a worker process
@@ -162,8 +158,8 @@ class Transfer:
     # poll() does a slice of the work itself
     works_in_poll = False
 
-    def __init__(self):
-        self.input_mesh = None
+    def __init__(self, input_mesh):
+        self.input_mesh = input_mesh
         self.output = None
         self.target = None
         self.task = None
@@ -172,14 +168,13 @@ class Transfer:
         self.settled = False
 
     # None means poll() finishes it, a report means it failed before starting
-    def start(self, input_mesh, output):
-        if not check_exists(input_mesh) or not check_exists(output):
+    def start(self, output):
+        if not check_exists(self.input_mesh) or not check_exists(output):
             return TransferReport(False, 0, "input or output object missing")
         if output.data.uv_layers.active is None:
             return TransferReport(False, 0, "output mesh has no uv layer")
-        self.input_mesh = input_mesh
         self.output = output
-        self.target = self._target(input_mesh)
+        self.target = self._target(self.input_mesh)
         inputs = in_object_mode(self.target, self._extract, self.target, output)
         self.loop_count = len(self.target.data.loops)
         self._begin(inputs)
@@ -239,7 +234,7 @@ class Transfer:
 class TransferUVs(Transfer):
     def _extract(self, target, output):
         return (
-            world_positions(target),
+            world_positions(target.data, target.matrix_world),
             *face_vertex_arrays(target.data),
             *output_mesh_data(output),
         )
@@ -336,8 +331,8 @@ class IslandUVs(TransferUVs):
     repack_input = False
     allows_missing_pieces = False
 
-    def __init__(self, faces, bbox, area, mirrored=False):
-        super().__init__()
+    def __init__(self, input_mesh, faces, bbox, area, mirrored=False):
+        super().__init__(input_mesh)
         self.faces = faces
         self.bbox = bbox
         self.area = area
@@ -473,8 +468,8 @@ class IslandUVs(TransferUVs):
 
 # the engine held the patch border in place, the pins undo its normalization
 class AreaUVs(IslandUVs):
-    def __init__(self, faces, pins, mirrored):
-        super().__init__(faces, None, None, mirrored)
+    def __init__(self, input_mesh, faces, pins, mirrored):
+        super().__init__(input_mesh, faces, None, None, mirrored)
         self.pins = pins  # (face index, corner, old uv)
 
     def _fit(self, plan):
@@ -589,8 +584,8 @@ class ProxyCopyUVs(ProxyUVs):
 class ProxyIslandUVs(ProxyUVs):
     repack_input = False
 
-    def __init__(self, faces, bbox, area):
-        super().__init__()
+    def __init__(self, input_mesh, faces, bbox, area):
+        super().__init__(input_mesh)
         self.faces = faces
         self.bbox = bbox
         self.area = area

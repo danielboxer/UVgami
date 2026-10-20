@@ -8,6 +8,7 @@ from ..utils.paths import (
 )
 
 # each must match that engine's VERSION
+SEGMENT_VERSION = "0.2.0"
 HARDSURFACE_VERSION = "0.1.0"
 
 

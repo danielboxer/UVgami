@@ -81,7 +81,7 @@ PRIORITY_VALUES = {"LESS_STRETCH": "1.1", "BALANCED": "1.25", "FEWER_SEAMS": "1.
 
 class UVGAMI_PG_partuv(bpy.types.PropertyGroup):
     segmentation: bpy.props.EnumProperty(
-        name="Segmentation",
+        name="Mode",
         description="How PartUV splits the mesh into parts",
         items=_segmentation_items,
         get=_segmentation_get,
@@ -159,7 +159,7 @@ class PartuvEngine(Engine):
 
     def draw_settings(self, layout, props):
         row = layout.row()
-        row.label(icon="MOD_EXPLODE", text="Segmentation")
+        row.label(icon="MOD_EXPLODE", text="Mode")
         row.prop(props.partuv, "segmentation", text="")
 
     def active_settings(self, props):

@@ -66,6 +66,11 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         ),
         default="BALANCED",
     )
+    split_regions: bpy.props.BoolProperty(
+        name="",
+        description="Split each Organic part into regions that are unwrapped separately",
+        default=True,
+    )
     import_uvs: bpy.props.BoolProperty(
         name="", description="Use the UV map on the mesh as input"
     )

@@ -251,6 +251,13 @@ class CutCrossings:
         return numpy.where(valid.any(axis=1), best, -1)
 
 
+# segments decimated apart share no vertex along their border
+def proxy_pieces(faces, vertex_count):
+    edges = numpy.array(sorted(face_edges(faces)), dtype=numpy.int64).reshape(-1, 2)
+    labels = connected_labels(vertex_count, edges)
+    return labels[[face[0] for face in faces]]
+
+
 class ProxyMap:
     def __init__(self, proxy):
         faces, corner_uvs = proxy["faces"], proxy["corner_uvs"]
@@ -258,6 +265,12 @@ class ProxyMap:
         self.links = proxy_links(faces, corner_uvs)
         self.edge_links = proxy_edge_links(faces, corner_uvs)
         self.crossings = CutCrossings(proxy["positions"], faces, corner_uvs)
+        self.piece = proxy_pieces(
+            faces, len(numpy.reshape(proxy["positions"], (-1, 3)))
+        )
+
+    def apart(self, faces_a, faces_b):
+        return self.piece[faces_a] != self.piece[faces_b]
 
 
 # faces are laid out one after another
@@ -367,6 +380,7 @@ def _torn(proxy_map, face_of_vertex, positions, uvs, tail, head):
     faces_tail, faces_head = face_of_vertex[tail], face_of_vertex[head]
     return (
         _linked(crossings.pairs, faces_tail, faces_head)
+        | proxy_map.apart(faces_tail, faces_head)
         | crossings.crosses(faces_tail, faces_head, positions[tail], positions[head])
         | crossings.crosses(faces_head, faces_tail, positions[head], positions[tail])
         | _stretched(proxy_map, face_of_vertex, positions, uvs, tail, head)
@@ -391,12 +405,16 @@ def _redraw_torn_faces(proxy_map, face_of_vertex, positions, uvs, mesh, torn):
     second = numpy.concatenate(
         [numpy.tile(corners[mesh.face(f)], len(mesh.face(f))) for f in torn_faces]
     )
-    crossed = crossings.crosses(
-        face_of_vertex[first],
-        face_of_vertex[second],
-        positions[first],
-        positions[second],
-    ) | _stretched(proxy_map, face_of_vertex, positions, uvs, first, second)
+    crossed = (
+        crossings.crosses(
+            face_of_vertex[first],
+            face_of_vertex[second],
+            positions[first],
+            positions[second],
+        )
+        | proxy_map.apart(face_of_vertex[first], face_of_vertex[second])
+        | _stretched(proxy_map, face_of_vertex, positions, uvs, first, second)
+    )
     for f, pair_start in zip(torn_faces.tolist(), pair_starts.tolist()):
         ring = mesh.face(f)
         size = len(ring)
@@ -433,6 +451,7 @@ def _weld_vertices(corner_uvs, drawn_by, proxy_map, mesh, vertices):
     b = starts[pair_of] + local % sizes[pair_of]
     joins = _linked(proxy_map.edge_links, drawn_by[corners[a]], drawn_by[corners[b]])
     joins |= numpy.linalg.norm(uvs[a] - uvs[b], axis=1) <= tolerance[pair_of]
+    joins &= ~proxy_map.apart(drawn_by[corners[a]], drawn_by[corners[b]])
     cluster = _components(len(corners), a[joins], b[joins])
     sums = numpy.zeros((len(corners), 2))
     numpy.add.at(sums, cluster, uvs)

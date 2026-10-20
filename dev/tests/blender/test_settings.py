@@ -1,6 +1,7 @@
 import bpy
 import pytest
 from blender_fixtures import (
+    addon,
     island_count,
     logger,
     manager,
@@ -72,6 +73,8 @@ def test_chart_and_seam_counts_are_pinned(
 ):
     load_obj(model)
     bpy.context.scene.uvgami.optcuts.mode = surface_mode
+    # the pinned counts are the engine's own cuts
+    bpy.context.scene.uvgami.split_regions = False
 
     unwrap()
 
@@ -95,8 +98,9 @@ def test_quality_levels_trade_seams_for_stretch(load_obj, unwrap, outputs):
     for quality in QUALITY_LEVELS:
         bpy.ops.wm.read_homefile(use_empty=True)
         load_obj("cylinder")
-        # priority moves only the engine's cuts, never the preseed's
+        # priority moves only the engine's cuts, never the preseed's or a segment border
         bpy.context.scene.uvgami.optcuts.mode = "ORGANIC"
+        bpy.context.scene.uvgami.split_regions = False
         bpy.context.scene.uvgami.priority = quality
         unwrap()
         (output,) = outputs().values()
@@ -189,6 +193,18 @@ def test_auto_grid_lands_on_the_input_when_uvs_transfer(unwrap, outputs):
         slot.material and slot.material.name == GRID_MATERIAL
         for slot in cube.material_slots
     )
+
+
+def test_partuv_alone_skips_splitting():
+    props = bpy.context.scene.uvgami
+    engines = addon.src.engines.ENGINES
+    for splitting in ("OPTCUTS", "XATLAS"):
+        assert engines[splitting].splits_regions(props)
+    if "PARTUV" in engines:
+        assert not engines["PARTUV"].splits_regions(props)
+
+    props.split_regions = False
+    assert not engines["OPTCUTS"].splits_regions(props)
 
 
 def test_reset_settings_restores_the_defaults():

@@ -80,7 +80,6 @@ class UnwrapManager:
         self._shared_processes = []
         self._pack_output_objects = []
         self._pack_topology = {}
-        self.input = {}
         self.engine = None
         # run context returned by engine.validate, opaque to the manager
         self.engine_ctx = None
@@ -509,7 +508,7 @@ class UnwrapManager:
             unwrap.preserve_job.finish(output, added_edges)
 
         if unwrap.hide_job is not None:
-            unwrap.hide_job.finish(self.input[unwrap.hide_job])
+            unwrap.hide_job.finish()
 
         pieces = unwrap.join_job.finished if unwrap.join_job is not None else [unwrap]
         if any(u.preseeded for u in pieces):
@@ -536,9 +535,16 @@ class UnwrapManager:
         if props.pack_after_unwrap:
             self._pack_output_objects.append(output)
 
-        edit_restore([output], show_seams)
-
         self._restore_vertex_groups(unwrap, output)
+
+        # vertex groups restore by index, and the weld renumbers vertices
+        weld_job = unwrap.segment_weld_job
+        if weld_job is not None and unwrap.transfer_uvs_job is None:
+            weld_job.finish(output)
+            # its vertex indices are from before the weld
+            self._pack_topology.pop(output, None)
+
+        edit_restore([output], show_seams)
 
         if unwrap.transfer_uvs_job is not None:
             job = unwrap.transfer_uvs_job
@@ -559,7 +565,7 @@ class UnwrapManager:
                 )
                 self._settle_transfer(job, output, pack_index, report)
                 return
-            report = job.start(self.input[job], output)
+            report = job.start(output)
             if report is None:
                 # _finish_transfers settles it when the worker is done
                 self.pending_transfers.append(
@@ -583,7 +589,7 @@ class UnwrapManager:
     def _settle_transfer(self, job, output, pack_index, report):
         job.settled = True
         props = self.props
-        input_mesh = self.input[job]
+        input_mesh = job.input_mesh
         if report.applied:
             self.transfer_uv_split_count += report.split_count
             if pack_index is not None and job.repack_input:
@@ -937,7 +943,6 @@ class UnwrapManager:
         self.is_active = False
         self._pack_output_objects.clear()
         self._pack_topology.clear()
-        self.input.clear()
         for path in get_io_dir_paths():
             clear_io_dir(path)
         # erasing the progress bar needs a repaint

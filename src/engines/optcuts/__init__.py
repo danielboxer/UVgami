@@ -56,6 +56,7 @@ class OptcutsEngine(OptcutsInstall):
     supports_import_uvs = True
     supports_proxy = True
     supports_hard_surface = True
+    supports_regions = True
 
     def draw_settings(self, layout, props):
         row = layout.row()
@@ -81,10 +82,11 @@ class OptcutsEngine(OptcutsInstall):
     def unset_surface_mode(self, props):
         return props.optcuts.mode
 
-    def preseed_work(self, obj, props):
-        surface_modes = part_overrides.surface_modes(
-            obj.data, self.unset_surface_mode(props)
-        )
+    def preseed_work(self, obj, props, surface_modes):
+        if surface_modes is None:
+            surface_modes = part_overrides.surface_modes(
+                obj.data, self.unset_surface_mode(props)
+            )
         if (surface_modes == SURFACE_MODE_CODES["ORGANIC"]).all():
             return None
         return preseed_work(

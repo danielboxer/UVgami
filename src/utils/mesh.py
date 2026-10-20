@@ -7,6 +7,7 @@ import numpy
 
 # re-export, callers import it from here
 from ..seams.mesh import split_per_face as split_per_face
+from ..seams.mesh import transformed
 
 
 def new_bmesh(obj):
@@ -43,6 +44,10 @@ def vertex_position_array(mesh):
     flat = numpy.empty(len(mesh.vertices) * 3)
     mesh.vertices.foreach_get("co", flat)
     return flat.reshape(-1, 3)
+
+
+def world_positions(mesh, matrix):
+    return transformed(vertex_position_array(mesh), matrix)
 
 
 # each loop triangle's corners moved off the surface along its face normal, and its face

@@ -92,6 +92,8 @@ def test_part_mode_overrides_the_panel_mode(
 ):
     (obj,) = load_obj("cube-bevel2")
     bpy.context.scene.uvgami.optcuts.mode = panel_mode
+    # the pinned counts are the engine's own cuts
+    bpy.context.scene.uvgami.split_regions = False
     set_override(
         obj, part_overrides.SURFACE_MODE_ATTRIBUTE, SURFACE_MODE_CODES[part_mode]
     )

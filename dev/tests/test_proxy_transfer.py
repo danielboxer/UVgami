@@ -217,6 +217,44 @@ def test_transfer_projected_tears_the_dense_mesh_along_the_proxy_cut():
     assert seams == {(y * side + 3, (y + 1) * side + 3) for y in range(GRID)}
 
 
+# the halves share no vertex, like segments decimated apart, packed a short gap apart
+def loose_halves_proxy(gap):
+    verts = [
+        (0.0, 0.0, 0.0),
+        (CUT_X, 0.0, 0.0),
+        (CUT_X, GRID, 0.0),
+        (0.0, GRID, 0.0),
+        (CUT_X, 0.0, 0.0),
+        (GRID, 0.0, 0.0),
+        (GRID, GRID, 0.0),
+        (CUT_X, GRID, 0.0),
+    ]
+    faces = [[0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7]]
+    uvs = grid_uvs(verts, faces)
+    for f in (0, 1):
+        uvs[f] = [(u + gap, v) for u, v in uvs[f]]
+    return proxy_arrays(verts, faces, uvs)
+
+
+def test_transfer_projected_tears_between_loose_proxy_pieces():
+    verts, faces = quad_grid(GRID)
+    gap = 1.5
+    proxy = loose_halves_proxy(gap)
+    dense = dense_arrays(verts, faces)
+
+    seams, uvs = transfer_projected(dense, proxy, plane_locator(proxy))
+
+    xy = numpy.array(verts)[dense["corners"]][:, :2]
+    corner_face = numpy.repeat(numpy.arange(len(faces)), 4)
+    left, straddling, right = torn_columns(faces, verts)
+    shifted = numpy.isin(corner_face, numpy.concatenate([left, straddling]))
+    assert numpy.allclose(uvs[shifted], xy[shifted] + (gap, 0.0))
+    kept = numpy.isin(corner_face, right)
+    assert numpy.allclose(uvs[kept], xy[kept])
+    side = GRID + 1
+    assert seams == {(y * side + 3, (y + 1) * side + 3) for y in range(GRID)}
+
+
 def test_transfer_projected_never_tears_between_linked_proxy_faces():
     verts, faces = quad_grid(GRID)
     proxy = split_proxy(right_corner_uv=(SHIFT + 2.0, GRID + 2.0))

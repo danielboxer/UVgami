@@ -21,6 +21,10 @@ needs_engine = pytest.mark.skipif(
     addon.src.utils.paths.get_local_engine_path("optcuts") is None,
     reason="no local optcuts binary, and downloading one would need the network",
 )
+needs_segment = pytest.mark.skipif(
+    addon.src.utils.paths.get_local_engine_path("segment") is None,
+    reason="no local segment binary, and no release exists to download",
+)
 needs_xatlas = pytest.mark.skipif(
     addon.src.utils.paths.get_local_engine_path("xatlas") is None,
     reason="no local xatlas binary, and downloading one would need the network",
