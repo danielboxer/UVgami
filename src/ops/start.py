@@ -218,7 +218,7 @@ class InputExporter:
 
         path = unwrap.path
         fix_inconsistent_winding(obj)
-        edge_path, new_edges = self._triangulate_mesh(obj, unwrap, path, props)
+        new_edges = self._triangulate_mesh(obj, unwrap, path, props)
 
         matrix = unwrap.matrix
 
@@ -242,7 +242,6 @@ class InputExporter:
 
         unwrap.set_export_data(
             guide_path=guide_path,
-            edge_path=edge_path,
             origin=matrix.translation,
             materials=materials,
             added_edges=new_edges,
@@ -266,7 +265,6 @@ class InputExporter:
         representative = unwrap.copy_of
         if unwrap.copy_reordered:
             unwrap.set_export_data(
-                edge_path=representative.edge_path,
                 origin=representative.origin,
                 materials=representative.materials,
                 added_edges=representative.added_edges,
@@ -278,14 +276,11 @@ class InputExporter:
                 overrides=representative.overrides,
             )
         else:
-            edge_path, new_edges = self._triangulate_mesh(
-                obj, unwrap, unwrap.path, props
-            )
+            new_edges = self._triangulate_mesh(obj, unwrap, unwrap.path, props)
             materials, material_indices, vertex_groups, face_smooth = (
                 self._get_mesh_metadata(obj)
             )
             unwrap.set_export_data(
-                edge_path=edge_path,
                 # pieces of one object share a transform
                 origin=representative.origin,
                 materials=materials,
@@ -311,56 +306,35 @@ class InputExporter:
         bpy.data.collections.remove(self.temp_collection)
         manager.finished_adding()
 
+    # a preseeded piece locks the added edges, keep quads also dissolves them
     def _triangulate_mesh(self, obj, unwrap, path, props):
-        new_edges = []
         bm = new_bmesh(obj)
-
-        must_triangulate = False
-        ngon_dict = {}
-        for face_idx, face in enumerate(bm.faces):
-            if len(face.edges) > 3:
-                must_triangulate = True
-                # if props.maintain_mode == "PARTIAL":
-                #     break
-
-            if len(face.edges) > 4:
-                for vert in face.verts:
-                    if vert.index not in ngon_dict:
-                        ngon_dict[vert.index] = set()
-                    ngon_dict[vert.index].add(face_idx)
+        if all(len(face.verts) == 3 for face in bm.faces):
+            bm.free()
+            return []
 
         # the panel hides the setting where it doesn't apply but the value persists
-        untriangulate = props.preserve_mesh
+        keep_quads = props.keep_quads and self.engine.supports_keep_quads
+        lock = keep_quads or unwrap.preseeded
+        if keep_quads:
+            unwrap.preserve_job = Preserve()
+        if lock:
+            old_edges = set(bm.edges)
 
-        edge_path = None
-        if must_triangulate:
-            if untriangulate:
-                unwrap.preserve_job = Preserve()
-                old_edges = set(bm.edges)
+        triangulate(bm, obj.data)
 
-            triangulate(bm, obj.data)
+        new_edges = []
+        if lock:
+            new_edges = [
+                (edge.verts[0].index, edge.verts[1].index)
+                for edge in bm.edges
+                if edge not in old_edges
+            ]
+            with (path.parent / f"{path.stem}_locked").open("w") as f:
+                f.writelines(f"{a} {b}\n" for a, b in new_edges)
 
-            if untriangulate:
-                edge_path = path.parent / f"{path.stem}_edges"
-                with edge_path.open("w") as f:
-                    for bm_e in set(bm.edges).difference(old_edges):
-                        edge = (bm_e.verts[0].index, bm_e.verts[1].index)
-                        if (
-                            edge[0] in ngon_dict
-                            and edge[1] in ngon_dict
-                            and len(ngon_dict[edge[0]].intersection(ngon_dict[edge[1]]))
-                            > 0
-                        ):
-                            # both ends sit on the same ngon, the edge is inside it
-                            continue
-                        new_edges.append(edge)
-                        f.write(f"{edge[0]} {edge[1]}\n")
-
-            set_bmesh(bm, obj)
-        else:
-            bm.free()
-
-        return edge_path, new_edges
+        set_bmesh(bm, obj)
+        return new_edges
 
     # _weights repels seams, _importance protects faces from stretching
     def _create_guide_file(self, obj, path, props, vt_verts):
@@ -603,7 +577,6 @@ class SessionBuilder:
             input_name=input_name,
             path=path,
             jobs=jobs,
-            # maintain_mode=props.maintain_mode,
             preseeded=preseeded and uses_uvs and not keeps_uvs,
         )
         unwrap.has_uvs = uses_uvs

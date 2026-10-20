@@ -59,7 +59,12 @@ def unwrap_settings(props):
                 "unwrap_timeout",
                 is_non_default(props, "unwrap_timeout"),
             ),
-            # ("MOD_TRIANGULATE", "Preserve Mesh", "untriangulate", props.preserve_mesh),
+            (
+                "MOD_TRIANGULATE",
+                "Keep Quads",
+                "keep_quads",
+                engine.supports_keep_quads and is_non_default(props, "keep_quads"),
+            ),
             (
                 "MOD_DATA_TRANSFER",
                 "Transfer UVs",
@@ -366,6 +371,11 @@ class UVGAMI_PT_main(bpy.types.Panel):
             split.active = not engine.import_uvs_ignored(props)
             split.label(icon="IMPORT", text="Import UVs")
             split.prop(props, "import_uvs")
+
+        if engine.supports_keep_quads:
+            split = box.split(factor=0.7)
+            split.label(icon="MOD_TRIANGULATE", text="Keep Quads")
+            split.prop(props, "keep_quads")
 
         split = box.split(factor=0.7)
         split.label(icon="MOD_DATA_TRANSFER", text="Transfer UVs")

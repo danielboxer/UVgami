@@ -62,6 +62,8 @@ def test_transfer_on_an_organic_mesh(unwrap, outputs):
 def test_transfer_that_cannot_apply_keeps_the_output(unwrap, outputs):
     suzanne = add_primitive("suzanne", bpy.ops.mesh.primitive_monkey_add)
     bpy.context.scene.uvgami.transfer_uvs = True
+    # rebuilt quads match the input, so the transfer applies
+    bpy.context.scene.uvgami.keep_quads = False
 
     unwrap()
 

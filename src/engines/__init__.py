@@ -16,7 +16,7 @@ class Engine:
     supports_guided = False
     supports_viewer = False
     supports_early_stop = False
-    supports_preserve = False
+    supports_keep_quads = False
     supports_hard_surface = False
     supports_import_uvs = False
     # the proxy finish flattens with optcuts

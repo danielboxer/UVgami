@@ -52,7 +52,7 @@ class OptcutsEngine(OptcutsInstall):
     supports_guided = True
     supports_viewer = True
     supports_early_stop = True
-    supports_preserve = True
+    supports_keep_quads = True
     supports_import_uvs = True
     supports_proxy = True
     supports_hard_surface = True

@@ -56,7 +56,7 @@ class Settings:
             elif isinstance(value, set):
                 value = set(value)
             setattr(self, prop.identifier, value)
-        # bl_rna skips the plain python properties like preserve_mesh
+        # bl_rna skips the plain python properties like avoid_seams
         for cls in type(props).__mro__:
             for name, attribute in vars(cls).items():
                 if isinstance(attribute, property) and not hasattr(self, name):
@@ -450,11 +450,10 @@ class UnwrapManager:
             unwrap = item.finished[-1] if is_group else item
             try:
                 if is_group and len(item.finished) > 1:
-                    path, edge_path, added_edges = item.finish()
+                    path, added_edges = item.finish()
                 else:
-                    path = unwrap.output_path
-                    edge_path, added_edges = unwrap.edge_path, []
-                self._import_and_finalize(unwrap, path, edge_path, added_edges)
+                    path, added_edges = unwrap.output_path, unwrap.added_edges
+                self._import_and_finalize(unwrap, path, added_edges)
                 # a mid-session ctrl z would otherwise discard the result
                 if self._running or self._queue or self.pieces_still_arriving:
                     bpy.ops.ed.undo_push(message="UVgami Unwrap")
@@ -488,12 +487,8 @@ class UnwrapManager:
             tag_redraw()
         self.record_result(unwrap, Result.FINISHED)
 
-    def _import_and_finalize(self, unwrap, path, edge_path, added_edges):
+    def _import_and_finalize(self, unwrap, path, added_edges):
         props = self.props
-
-        # from .reroute_seams import reroute_seams
-        # if unwrap.preserve_job is not None and unwrap.maintain_mode == "FULL":
-        #     reroute_seams(path, edge_path)
 
         output = import_obj(path, f"{unwrap.input_name}_unwrapped")
 
@@ -511,7 +506,7 @@ class UnwrapManager:
         add_shading_modifiers(output, unwrap.shading_modifiers)
 
         if unwrap.preserve_job is not None:
-            unwrap.preserve_job.finish(unwrap, output, added_edges)
+            unwrap.preserve_job.finish(output, added_edges)
 
         if unwrap.hide_job is not None:
             unwrap.hide_job.finish(self.input[unwrap.hide_job])

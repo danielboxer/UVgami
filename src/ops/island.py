@@ -86,7 +86,6 @@ def queue_fix(obj, job, name, path, vertex_count, props):
         input_name=name,
         path=path,
         jobs=(None, None, None, job),
-        # maintain_mode=props.maintain_mode,
     )
     unwrap.set_export_data(
         origin=obj.matrix_world.translation, vertex_count=vertex_count

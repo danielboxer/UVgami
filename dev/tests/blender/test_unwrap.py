@@ -1,8 +1,16 @@
+import math
 import pathlib
 
 import bpy
 import pytest
-from blender_fixtures import addon, manager, needs_engine, needs_partuv, needs_xatlas
+from blender_fixtures import (
+    addon,
+    island_count,
+    manager,
+    needs_engine,
+    needs_partuv,
+    needs_xatlas,
+)
 
 pytestmark = [needs_engine, pytest.mark.smoke]
 
@@ -30,6 +38,21 @@ def test_unwrap_runs_to_completion(load_obj, unwrap, outputs):
             continue
         assert piece.process.returncode is not None
         assert piece.process.stdin.closed
+
+
+# without the lock the torus handle cut runs along diagonals
+def test_keep_quads_rebuilds_every_face(load_obj, unwrap, outputs):
+    obj = load_obj("torus")[0]
+    sizes = sorted(len(polygon.vertices) for polygon in obj.data.polygons)
+    assert 4 in sizes
+    unwrap()
+
+    assert manager.error_messages == []
+    assert manager.summary_failed is False, manager.summary
+    assert len(outputs()) == 1
+    output = next(iter(outputs().values()))
+    assert sorted(len(polygon.vertices) for polygon in output.data.polygons) == sizes
+    assert output.data.uv_layers.active is not None
 
 
 def test_flipped_face_is_rewound_instead_of_refused(load_obj, unwrap, outputs):
@@ -90,3 +113,74 @@ def test_other_engines_unwrap_the_cylinder(load_obj, unwrap, outputs, engine):
     layer = outputs()["cylinder_unwrapped"].data.uv_layers.active
     assert layer is not None
     assert any(any(datum.uv) for datum in layer.data)
+
+
+def capped_quad_cylinder(around=24, along=6):
+    verts = [
+        (math.cos(2 * math.pi * i / around), math.sin(2 * math.pi * i / around), r / 2)
+        for r in range(along + 1)
+        for i in range(around)
+    ]
+    faces = []
+    for r in range(along):
+        for i in range(around):
+            j = (i + 1) % around
+            faces.append(
+                (
+                    r * around + i,
+                    r * around + j,
+                    (r + 1) * around + j,
+                    (r + 1) * around + i,
+                )
+            )
+    faces.append(tuple(reversed(range(around))))
+    faces.append(tuple(along * around + i for i in range(around)))
+    return verts, faces
+
+
+# hard surface locks the triangulation diagonals, so no seam may run along one
+def test_hard_surface_keeps_seams_off_the_diagonals(make_mesh, unwrap, outputs):
+    verts, faces = capped_quad_cylinder()
+    obj = make_mesh("cylinder", verts, faces, [[(0.0, 0.0)] * len(f) for f in faces])
+    mesh = obj.data
+    mesh_edges = {
+        frozenset(
+            tuple(round(c, 5) for c in mesh.vertices[v].co) for v in edge.vertices
+        )
+        for edge in mesh.edges
+    }
+    bpy.context.scene.uvgami.optcuts.mode = "HARD"
+    bpy.context.scene.uvgami.keep_quads = False
+    unwrap()
+
+    assert manager.error_messages == []
+    assert manager.summary_failed is False, manager.summary
+    output = next(iter(outputs().values())).data
+    layer = output.uv_layers.active.data
+    corner_uv = {}
+    for polygon in output.polygons:
+        for loop_index in polygon.loop_indices:
+            vertex = output.loops[loop_index].vertex_index
+            corner_uv.setdefault((polygon.index, vertex), tuple(layer[loop_index].uv))
+    owners_of = {}
+    for polygon in output.polygons:
+        for key in polygon.edge_keys:
+            owners_of.setdefault(key, []).append(polygon)
+    diagonal_seams = 0
+    for edge in output.edges:
+        key = frozenset(
+            tuple(round(c, 5) for c in output.vertices[v].co) for v in edge.vertices
+        )
+        if key in mesh_edges:
+            continue
+        owners = owners_of.get(edge.key, [])
+        if len(owners) != 2:
+            continue
+        a, b = owners
+        for vertex in edge.vertices:
+            if corner_uv[(a.index, vertex)] != corner_uv[(b.index, vertex)]:
+                diagonal_seams += 1
+                break
+    assert diagonal_seams == 0
+    # the two caps and the wall opened once
+    assert island_count(next(iter(outputs().values()))) == 3

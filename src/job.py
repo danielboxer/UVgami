@@ -66,84 +66,40 @@ def output_mesh_data(output):
     )
 
 
+# a corner uv that differs between the edge's two faces means a seam runs along it
+def _carries_seam(edge, uv_layer):
+    faces = edge.link_faces
+    if len(faces) != 2:
+        return True
+    for vert in edge.verts:
+        uvs = {
+            tuple(loop[uv_layer].uv)
+            for face in faces
+            for loop in face.loops
+            if loop.vert is vert
+        }
+        if len(uvs) > 1:
+            return True
+    return False
+
+
 class Preserve:
-    # welding the uv layout's coincident corners leaves seams as the only boundary
-    @staticmethod
-    def _seam_edges(bm):
-        uvs = []
-        uv_idcs = []
-        mesh_verts = []
-        uv_count = 0
-        uv_layer = bm.loops.layers.uv.active
-
-        for face in bm.faces:
-            uv_i = []
-            for loop in face.loops:
-                uv = loop[uv_layer].uv
-                uvs.append((uv.x, uv.y, 0))
-                # every face point is added, so the index is new each time
-                uv_i.append(uv_count)
-                uv_count += 1
-                # store the original mesh vertex so it can be accessed using the uvs
-                mesh_verts.append(loop.vert)
-            uv_idcs.append(uv_i)
-
-        mesh_data = bpy.data.meshes.new("")
-        mesh_data.from_pydata(uvs, [], uv_idcs)
-        uvbm = bmesh.new()
-        uvbm.from_mesh(mesh_data)
-
-        uvvert_to_meshvert = {}
-        for uv_v_idx, uv_v in enumerate(uvbm.verts):
-            uvvert_to_meshvert[uv_v] = mesh_verts[uv_v_idx]
-
-        # the faces will all be separate, so merging by distance joins them
-        bmesh.ops.remove_doubles(uvbm, verts=uvbm.verts, dist=0.0001)
-
-        seams = []
-        for e in uvbm.edges:
-            if e.is_boundary:
-                m_v1 = uvvert_to_meshvert[e.verts[0]]
-                m_v2 = uvvert_to_meshvert[e.verts[1]]
-                for edge in m_v1.link_edges:
-                    if edge.other_vert(m_v1) is m_v2:
-                        seams.append(edge)
-        uvbm.free()
-        return seams
-
-    def finish(self, unwrap, output, added_edges):
+    def finish(self, output, added_edges):
         bm = new_bmesh(output)
-
-        e_dict = {}
-        for edge in bm.edges:
-            e_dict[(edge.verts[0].index, edge.verts[1].index)] = edge
-
-        if not added_edges:
-            added_edges = unwrap.added_edges
-
-        # partial keeps the seams, so only non-seam edges may dissolve
-        seams = self._seam_edges(bm) if unwrap.maintain_mode == "PARTIAL" else ()
+        uv_layer = bm.loops.layers.uv.active
+        edges = {(edge.verts[0].index, edge.verts[1].index): edge for edge in bm.edges}
 
         dissolve_edges = []
-        for e in added_edges:
-            bm_edge = None
-
-            if e in e_dict:
-                bm_edge = e_dict[e]
-            elif (e[1], e[0]) in e_dict:
-                bm_edge = e_dict[(e[1], e[0])]
-            else:
-                if (
-                    logger.get_latest().errors
-                    and logger.get_latest().errors[-1]
-                    == "    Error removing added edge"
-                ):
-                    continue
-                logger.add_data("errors", "Error removing added edge")
+        for a, b in added_edges:
+            edge = edges.get((a, b)) or edges.get((b, a))
+            if edge is None:
+                errors = logger.get_latest().errors
+                if not errors or errors[-1] != "    Error removing added edge":
+                    logger.add_data("errors", "Error removing added edge")
                 continue
-
-            if bm_edge not in seams:
-                dissolve_edges.append(bm_edge)
+            # the engine locks these edges, so a seam here comes from an input map
+            if not _carries_seam(edge, uv_layer):
+                dissolve_edges.append(edge)
 
         bmesh.ops.dissolve_edges(bm, edges=dissolve_edges)
         set_bmesh(bm, output)
@@ -177,33 +133,17 @@ class Join:
 
     def finish(self):
         unwraps = self.finished
-        edge_path = unwraps[-1].edge_path
 
         # the merge writes into the first obj, and that is what gets imported
         path = merge_obj_files([u.output_path for u in unwraps])
 
         added_edges = []
-        if unwraps[-1].preserve_job is not None:
-            v_count = 0
-            for e_idx, edges in enumerate([u.added_edges for u in unwraps]):
-                for v1, v2 in edges:
-                    added_edges.append((v1 + v_count, v2 + v_count))
-                v_count += unwraps[e_idx].vertex_count
+        offset = 0
+        for unwrap in unwraps:
+            added_edges.extend((a + offset, b + offset) for a, b in unwrap.added_edges)
+            offset += unwrap.vertex_count
 
-            edge_path = unwraps[0].edge_path
-            v_count = unwraps[0].vertex_count
-            e_paths = [u.edge_path for u in unwraps]
-            with e_paths[0].open("a") as f:
-                for e_idx, e_path in enumerate(e_paths[1:], 1):
-                    with e_path.open() as f2:
-                        for line in f2:
-                            line = line.split()
-                            f.write(
-                                f"{int(line[0]) + v_count} {int(line[1]) + v_count}\n"
-                            )
-                    v_count += unwraps[e_idx].vertex_count
-
-        return (path, edge_path, added_edges)
+        return path, added_edges
 
 
 class HideInput:

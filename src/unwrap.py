@@ -22,7 +22,6 @@ class Unwrap:
         input_name: str,
         path: pathlib.Path,
         jobs: tuple,
-        maintain_mode: str = "FULL",
         preseeded: bool = False,
     ):
         self.name = name
@@ -47,9 +46,6 @@ class Unwrap:
         self.copy_reordered = False
         self.twins = []
 
-        # the edge file was written for this mode
-        self.maintain_mode = maintain_mode
-
         # result state, set once through manager.record_result
         self.result = None
 
@@ -63,7 +59,6 @@ class Unwrap:
         # export data, filled by set_export_data
         self.is_exported = False
         self.guide_path = None
-        self.edge_path = None
         self.origin = None
         self.materials = []
         self.added_edges = []
@@ -100,7 +95,6 @@ class Unwrap:
         origin,
         vertex_count,
         guide_path=None,
-        edge_path=None,
         materials=(),
         added_edges=(),
         material_indices=(),
@@ -110,7 +104,6 @@ class Unwrap:
         overrides=None,
     ):
         self.guide_path = guide_path
-        self.edge_path = edge_path
         self.origin = mathutils.Vector(origin)
         self.materials = materials
         self.added_edges = added_edges
@@ -257,8 +250,9 @@ class Unwrap:
                 self.path.unlink()
             if self.guide_path is not None and self.guide_path.is_file():
                 self.guide_path.unlink()
-            importance_path = self.path.parent / f"{self.path.stem}_importance"
-            if importance_path.is_file():
-                importance_path.unlink()
+            for suffix in ("_locked",):
+                sidecar = self.path.parent / f"{self.path.stem}{suffix}"
+                if sidecar.is_file():
+                    sidecar.unlink()
         except PermissionError:
             logger.add_data("errors", "Error deleting file")
