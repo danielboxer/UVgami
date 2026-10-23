@@ -510,6 +510,10 @@ class UnwrapManager:
         if unwrap.hide_job is not None:
             unwrap.hide_job.finish()
 
+        symmetrize_job = unwrap.symmetrize_job
+        if symmetrize_job is not None:
+            symmetrize_job.finish(output, unwrap.matrix)
+
         pieces = unwrap.join_job.finished if unwrap.join_job is not None else [unwrap]
         if any(u.preseeded for u in pieces):
             # imported here: ops.island imports this module back

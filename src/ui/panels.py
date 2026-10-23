@@ -60,6 +60,12 @@ def unwrap_settings(props):
                 is_non_default(props, "stack_similar"),
             ),
             (
+                "MOD_MIRROR",
+                "Symmetry",
+                "symmetry",
+                is_non_default(props, "symmetry"),
+            ),
+            (
                 "TIME",
                 "Timeout",
                 "unwrap_timeout",
@@ -391,6 +397,23 @@ class UVGAMI_PT_main(bpy.types.Panel):
             split = box.split(factor=0.7)
             split.label(icon="MOD_EXPLODE", text="Segmentation")
             split.prop(props, "split_regions")
+
+        if engine.supports_symmetry:
+            draw_symmetry(box, props)
+
+
+def draw_symmetry(layout, props):
+    split = layout.split(factor=0.7)
+    split.label(icon="MOD_MIRROR", text="Symmetry")
+    split.prop(props, "symmetry", text="")
+    # if props.symmetry == "AXES":
+    #     layout.row().prop(props, "sym_axes")
+    # overlap = row.row()
+    # overlap.active = engine.uses_symmetry(props)
+    # overlap.prop(props, "sym_overlap")
+    # weld = layout.row()
+    # weld.active = engine.uses_symmetry(props) and engine.supports_plane_glue
+    # weld.prop(props, "sym_weld")
 
 
 def draw_concurrent(layout, props, engine):

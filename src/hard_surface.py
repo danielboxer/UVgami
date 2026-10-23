@@ -3,7 +3,7 @@ import functools
 import numpy
 
 from .ops.guides import SEAM_RESTRICTIONS_GROUP, exposure_weights
-from .seams import EngineError, preseed_job
+from .seams import EngineError, OptcutsRun, preseed_job
 from .seams.worker import WorkerProcess
 from .utils.mesh import (
     face_vertex_arrays,
@@ -13,7 +13,20 @@ from .utils.mesh import (
     set_loop_uvs,
     vertex_position_array,
 )
-from .utils.paths import get_extension_dir_path
+from .utils.paths import get_extension_dir_path, get_preferences
+
+
+def optcuts_run(engine_args):
+    # imported here: engines imports this module back
+    from .engines import get_engine
+
+    engine = get_engine("OPTCUTS")
+    engine_ctx, error = engine.validate(get_preferences())
+    if error is not None:
+        raise EngineError(error)
+    return OptcutsRun(
+        engine.command(engine_ctx), engine.build_env(engine_ctx), engine_args
+    )
 
 
 # the same group the engine reads, higher repels seams
@@ -115,16 +128,18 @@ def hardsurface_command():
 
 
 # compute is bpy-free so a worker thread can run it, the exposure ray cast is not
-def preseed_work(obj, angle, split_target, weights, surface_modes):
+def preseed_work(obj, angle, split_target, engine_args, weights, surface_modes, plane):
     mesh = obj.data
     worker = WorkerProcess(
         preseed_job,
         hardsurface_command(),
+        optcuts_run(engine_args),
         get_extension_dir_path() / "preseed",
         vertex_position_array(mesh),
         *face_vertex_arrays(mesh),
         weights,
         exposure_weights(obj),
+        plane,
         surface_modes,
         angle,
         split_target,

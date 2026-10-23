@@ -1,3 +1,5 @@
+import collections
+import os
 import tempfile
 from pathlib import Path
 
@@ -5,7 +7,7 @@ import numpy
 
 from .cancel import check_cancelled
 from .cuts import restriction_weights
-from .engine_run import EngineError, EngineRun, launch, poll_run, write_obj
+from .engine_run import EngineError, EngineRun, launch, poll_run, stdout_path, write_obj
 from .mesh import faces_from_arrays, polygon_area, vertex_components
 from .surface_type import is_hard_surface
 from .worker import remove_folder
@@ -61,6 +63,8 @@ def hard_faces(verts, faces, surface_modes, cancelled=None):
 
 HARDSURFACE_SEAMS_NAME = "seams.txt"
 HARDSURFACE_UVS_NAME = "uvs.txt"
+HALVES_NAME = "halves"
+DONE_PREFIX = "done: "
 
 
 # a flattened face's index then its corner uvs on each line, None when nothing flattened
@@ -79,6 +83,21 @@ def _read_hardsurface(uvs_path, face_count):
     return seams, loop_uvs, flattened
 
 
+def _read_half_count(run_folder, face_count):
+    done = [
+        line
+        for line in stdout_path(run_folder).read_text().splitlines()
+        if line.startswith(DONE_PREFIX)
+    ]
+    if len(done) != 1:
+        raise EngineError("hard surface engine printed no half part count")
+    return int(done[0][len(DONE_PREFIX) :])
+
+
+def _read_nothing(run_folder, face_count):
+    return None
+
+
 # each run keeps its output files in a folder of its own, removed once read
 def _start(folder, args, env, out_path, face_count, read):
     run_folder = Path(tempfile.mkdtemp(dir=folder))
@@ -93,14 +112,21 @@ def _write_weights(path, weights):
         )
 
 
+# optcuts' command, environment and arguments for the organic half's unwraps
+OptcutsRun = collections.namedtuple("OptcutsRun", "engine_command env engine_args")
+
+
+# with a plane, optcuts unwraps the organic half's parts between the exe's two runs
 def preseed_job(
     command,
+    optcuts,
     workdir,
     positions,
     corners,
     totals,
     weights,
     exposure,
+    plane,
     surface_modes,
     angle,
     split_target,
@@ -120,6 +146,31 @@ def preseed_job(
         (folder / f"{ENGINE_INPUT_STEM}_modes").write_text(
             "".join(f"{mode}\n" for mode in numpy.asarray(surface_modes).tolist())
         )
+        plane_args = []
+        if plane is not None:
+            axis, partners = plane
+            (folder / f"{ENGINE_INPUT_STEM}_partners").write_text(
+                "".join(f"{v} {image}\n" for v, image in partners.items())
+            )
+            _write_weights(folder / f"{ENGINE_INPUT_STEM}_painted", weights)
+            halves = folder / HALVES_NAME
+            halves_args = [*command, "halves", obj_path, halves, "--plane-axis", axis]
+            count = poll_run(
+                _start(folder, halves_args, None, None, len(faces), _read_half_count),
+                cancelled,
+            )
+            for index in range(count):
+                engine_args = [
+                    *optcuts.engine_command,
+                    "-i",
+                    halves / f"half{index}.obj",
+                    "-o",
+                    f"{halves / 'out'}{os.sep}",
+                    *optcuts.engine_args,
+                ]
+                run = _start(folder, engine_args, optcuts.env, None, 0, _read_nothing)
+                poll_run(run, cancelled)
+            plane_args = ["--plane-axis", axis, "--halves", halves]
         uvs_path = folder / HARDSURFACE_UVS_NAME
         args = [
             *command,
@@ -131,6 +182,7 @@ def preseed_job(
             angle,
             "--split-target",
             repr(float(split_target)),
+            *plane_args,
         ]
         run = _start(folder, args, None, uvs_path, len(faces), _read_hardsurface)
         return poll_run(run, cancelled)

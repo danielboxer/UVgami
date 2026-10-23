@@ -112,8 +112,9 @@ def test_the_dumbbell_splits_on_the_neck_and_welds_back(load_obj, unwrap, output
     (dumbbell,) = load_obj("dumbbell")
     vertex_count = len(dumbbell.data.vertices)
     props = bpy.context.scene.uvgami
-    # the split is under test, not the classifier's pick
+    # the split is under test, not the classifier's pick or the mirror cut
     props.optcuts.mode = "ORGANIC"
+    props.symmetry = False
     unwrap()
 
     assert manager.error_messages == []
@@ -139,6 +140,7 @@ def test_the_dumbbell_splits_on_the_neck_and_welds_back(load_obj, unwrap, output
     assert coords.max() <= 1.0
 
 
+# symmetry stays on for the uv mirror after the unwrap
 @needs_xatlas
 @needs_segment
 def test_xatlas_splits_the_dumbbell_and_welds_back(load_obj, unwrap, outputs):
@@ -158,6 +160,8 @@ def test_segment_off_keeps_the_dumbbell_whole(load_obj, unwrap, outputs):
     props = bpy.context.scene.uvgami
     props.optcuts.mode = "ORGANIC"
     props.split_regions = False
+    # the dumbbell mirrors whole, and the plane seam would split it in two
+    props.symmetry = False
     unwrap()
 
     assert manager.error_messages == []
@@ -192,6 +196,7 @@ def test_cancel_stops_a_running_segmentation(load_obj, unwrap, outputs, monkeypa
         addon.src.ops.start, "resolve_bundled_command", lambda name, label: stalled
     )
     bpy.context.scene.uvgami.optcuts.mode = "ORGANIC"
+    bpy.context.scene.uvgami.symmetry = False
     runs = addon.src.utils.paths.get_extension_dir_path() / "segment"
     pump = unwrap(until=lambda: runs.is_dir() and any(runs.iterdir()))
 

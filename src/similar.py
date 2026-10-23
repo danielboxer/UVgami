@@ -2,6 +2,8 @@ import itertools
 
 import numpy
 
+from .seams.mesh import NEIGHBOR_CELLS, transformed
+
 # rms fit error as a fraction of the piece's bounding box diagonal
 MATCH_TOLERANCE = 1e-4
 
@@ -19,14 +21,6 @@ def rigid_fit(source, target):
     matrix[:3, :3] = rotation
     matrix[:3, 3] = translation
     return matrix, error
-
-
-def _world_positions(obj):
-    mesh = obj.data
-    positions = numpy.empty(len(mesh.vertices) * 3)
-    mesh.vertices.foreach_get("co", positions)
-    matrix = numpy.array(obj.matrix_world)
-    return positions.reshape(-1, 3) @ matrix[:3, :3].T + matrix[:3, 3]
 
 
 def _topology(mesh):
@@ -53,7 +47,7 @@ class _Piece:
         self.obj = obj
         self.signature = (len(mesh.vertices), len(mesh.loops), len(mesh.polygons))
         self.totals, self.corners = _topology(mesh)
-        self.positions = _world_positions(obj)
+        self.positions = transformed(_mesh_positions(mesh), obj.matrix_world)
         self.diagonal = numpy.linalg.norm(
             self.positions.max(axis=0) - self.positions.min(axis=0)
         )
@@ -71,13 +65,6 @@ def _grid(local, cell):
     return lookup
 
 
-_NEIGHBOR_CELLS = [
-    offsets
-    for offsets in itertools.product((0, -1, 1), repeat=3)
-    if offsets != (0, 0, 0)
-]
-
-
 def _match_vertices(rep_local, grid, aligned, cell):
     permutation = numpy.empty(len(aligned), dtype=numpy.int64)
     used = numpy.zeros(len(rep_local), dtype=bool)
@@ -85,7 +72,7 @@ def _match_vertices(rep_local, grid, aligned, cell):
     for index, (x, y, z) in enumerate(keys):
         options = [i for i in grid.get((x, y, z), ()) if not used[i]]
         if not options:
-            for dx, dy, dz in _NEIGHBOR_CELLS:
+            for dx, dy, dz in NEIGHBOR_CELLS:
                 options += [
                     i for i in grid.get((x + dx, y + dy, z + dz), ()) if not used[i]
                 ]
@@ -239,7 +226,7 @@ def _mesh_positions(mesh):
     return positions.reshape(-1, 3)
 
 
-# loose rounding merges distinct islands average_islands_scale lands together
+# with fewer decimals, distinct islands at nearly the same uvs count as one stack
 STACK_DECIMALS = 9
 
 

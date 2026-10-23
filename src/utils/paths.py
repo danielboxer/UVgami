@@ -61,6 +61,7 @@ ENGINE_FILE_SUFFIXES = (
     "_importance",
     "_edges",
     "_fixed",
+    "_plane",
     "_locked",
     "_inputs.txt",
 )

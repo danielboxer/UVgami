@@ -6,6 +6,7 @@ from collections import deque, namedtuple
 
 import bmesh
 import bpy
+import mathutils
 import numpy
 
 from ..engines import active_engine, get_engine
@@ -14,11 +15,15 @@ from ..handler import handle_error
 from ..job import (
     HideInput,
     Join,
+    MirrorUVs,
     Preserve,
     ProxyCopyUVs,
     ProxyUVs,
     Result,
+    Symmetrise,
     TransferUVs,
+    paints_seams,
+    unwrap_plan,
 )
 from ..logger import logger
 from ..manager import Preparing, manager
@@ -27,7 +32,12 @@ from ..part_overrides import (
     # piece_priority_override,
     read_overrides,
 )
-from ..proxy import make_proxy, needs_proxy, triangle_count
+from ..proxy import (
+    make_proxy,
+    mirror_proxy,
+    needs_proxy,
+    triangle_count,
+)
 from ..seams import (
     EngineError,
     face_edges,
@@ -35,14 +45,16 @@ from ..seams import (
     islands_overlap,
     uv_island_groups,
 )
+from ..seams.segmentation import border_edges, edge_face_pairs
 from ..seams.worker import WorkerError
 from ..segmentation import (
     SegmentWeld,
     make_segmented_proxy,
     segment_work,
     split_on_borders,
+    symmetric_regions,
 )
-from ..similar import find_twins, write_twin_output
+from ..similar import find_twins, mirror_partners, write_twin_output
 from ..ui.panels import describe_settings, unwrap_settings
 from ..unwrap import Unwrap
 from ..utils.geometry import applied_matrix
@@ -50,12 +62,14 @@ from ..utils.io import export_obj
 from ..utils.mesh import (
     check_exists,
     deselect_all,
+    face_vertex_arrays,
     get_shading_modifiers,
     is_shading_modifier,
     mark_not_unwrapped,
     new_bmesh,
     set_bmesh,
     triangulate,
+    vertex_position_array,
     world_positions,
 )
 from ..utils.paths import (
@@ -242,6 +256,17 @@ class InputExporter:
             matrix=matrix,
         )
 
+        # an imported uv map keeps its layout, so the engine only mirrors it
+        symmetrize_job = unwrap.symmetrize_job
+        if (
+            symmetrize_job is not None
+            and not unwrap.keeps_uvs
+            and (unwrap.preseeded or not unwrap.has_uvs)
+        ):
+            symmetrize_job.write_plane_sidecar(
+                path, obj.data, keep_charts=unwrap.preseeded
+            )
+
         unwrap.set_export_data(
             guide_path=self._create_guide_file(obj, path, props, vt_verts),
             origin=matrix.translation,
@@ -408,6 +433,21 @@ def input_job(props, proxied, input_mesh):
 MeshInput = namedtuple("MeshInput", ["copy", "original", "name", "proxied"])
 
 
+# the engine's own job for each symmetry plan, None for a whole mesh the preseed mirrors
+def symmetry_job(symmetry):
+    if symmetry is None or symmetry.kind == "WHOLE":
+        return None
+    if symmetry.kind == "MIRROR_UVS":
+        return MirrorUVs(symmetry.axis, symmetry.center, symmetry.tolerance)
+    return Symmetrise(
+        symmetry.axis,
+        mathutils.Vector(symmetry.center),
+        # props.sym_overlap,
+        symmetry.tolerance,
+        symmetry.kept_side,
+    )
+
+
 # segmentation and the preseed run in worker processes, the rest across timer ticks
 class SessionBuilder:
     def __init__(
@@ -511,8 +551,14 @@ class SessionBuilder:
 
         obj = self.remaining.popleft()
         props = manager.props
-        if not self.engine.splits_regions(props):
-            return self._start_preseed(obj)
+        plan = unwrap_plan(
+            self.engine,
+            props,
+            obj.data,
+            painted=paints_seams(obj, self.engine, props),
+        )
+        if not plan.splits_regions:
+            return self._start_preseed(obj, plan.symmetry)
         worker = segment_work(
             obj.data,
             world_positions(obj.data, applied_matrix(obj)),
@@ -522,24 +568,39 @@ class SessionBuilder:
         return self._wait(
             worker,
             obj,
-            functools.partial(self._finish_segmenting, obj=obj),
+            functools.partial(self._finish_segmenting, obj=obj, symmetry=plan.symmetry),
         )
 
-    def _finish_segmenting(self, task, *, obj):
+    def _finish_segmenting(self, task, *, obj, symmetry):
         try:
             segmentation = task.result()
         except (EngineError, WorkerError) as error:
             logger.add_data(
                 "errors", f"{self.inputs[obj].name}: segmentation failed, {error}"
             )
-            return self._start_preseed(obj)
+            return self._start_preseed(obj, symmetry)
         border_positions = None
         parts = None
-        if segmentation.border_edges:
-            border_positions, parts = split_on_borders(obj, segmentation.border_edges)
+        edges = segmentation.border_edges
+        mirrored = symmetry is not None and symmetry.kind in ("BISECT", "WHOLE")
+        if mirrored and edges:
+            # the segmentation isn't mirrored
+            positions = vertex_position_array(obj.data)
+            corners, totals = face_vertex_arrays(obj.data)
+            kept_side, labels = symmetric_regions(
+                positions, corners, totals, segmentation, symmetry
+            )
+            symmetry = symmetry._replace(kept_side=kept_side)
+            # the bisect drops the other half
+            if symmetry.kind == "WHOLE":
+                face_pairs = edge_face_pairs(positions, corners, totals)
+                edges = border_edges(face_pairs, labels)
+        if edges:
+            border_positions, parts = split_on_borders(obj, edges)
         # the preseed's classifier calls a small segment hard surface
         return self._start_preseed(
             obj,
+            symmetry,
             surface_modes=segmentation.surface_modes,
             parts=parts,
             border_positions=border_positions,
@@ -549,6 +610,7 @@ class SessionBuilder:
     def _start_preseed(
         self,
         obj,
+        symmetry,
         surface_modes=None,
         parts=None,
         border_positions=None,
@@ -556,16 +618,24 @@ class SessionBuilder:
         props = manager.props
         proxied = self.inputs[obj].proxied
         if proxied:
-            surface_modes = self._make_proxy(obj, props, parts, surface_modes)
+            surface_modes = self._make_proxy(obj, props, parts, surface_modes, symmetry)
+        plane = None
+        if symmetry is not None and symmetry.kind == "WHOLE":
+            partners = symmetry.partners
+            # the proxy and the region split both renumber the vertices
+            if proxied or border_positions is not None:
+                partners = mirror_partners(obj.data, symmetry.center, symmetry.axis)
+            plane = ("XYZ".index(symmetry.axis), partners)
 
         separate = functools.partial(
             self._separate,
             obj,
+            symmetrize_job=symmetry_job(symmetry),
             had_uv_layer=obj.data.uv_layers.active is not None,
             border_positions=border_positions,
         )
         # the seams package reads region widths off the full model
-        work = self.engine.preseed_work(obj, props, surface_modes)
+        work = self.engine.preseed_work(obj, props, plane, surface_modes)
         if work is None:
             return separate(preseeded=False)
         worker, apply = work
@@ -578,7 +648,7 @@ class SessionBuilder:
         )
 
     # returns surface_modes for the decimated faces
-    def _make_proxy(self, obj, props, parts, surface_modes):
+    def _make_proxy(self, obj, props, parts, surface_modes, symmetry):
         # the decimate only runs on an object in the scene
         bpy.context.scene.collection.objects.link(obj)
         if surface_modes is None:
@@ -588,6 +658,17 @@ class SessionBuilder:
                 obj, props.proxy_faces, parts, surface_modes
             )
         bpy.context.scene.collection.objects.unlink(obj)
+        if symmetry is None:
+            return surface_modes
+        source_faces = mirror_proxy(
+            obj,
+            symmetry.axis,
+            mathutils.Vector(symmetry.center),
+            symmetry.tolerance,
+            symmetry.kept_side,
+        )
+        if surface_modes is not None:
+            surface_modes = surface_modes[source_faces]
         return surface_modes
 
     def _finish_preseed(self, task, *, obj, apply, separate):
@@ -633,8 +714,12 @@ class SessionBuilder:
         self.piece_unwrap[obj] = unwrap
         manager.add(unwrap)
 
-    def _separate(self, obj, *, preseeded, had_uv_layer, border_positions):
+    def _separate(
+        self, obj, *, preseeded, symmetrize_job, had_uv_layer, border_positions
+    ):
         props = manager.props
+        if symmetrize_job is not None:
+            symmetrize_job.cut(obj)
         has_uvs = preseeded or self.engine.uses_import_uvs(props)
         # relink for the ops selection, all within one tick so nothing shows
         bpy.context.scene.collection.objects.link(obj)
@@ -644,6 +729,8 @@ class SessionBuilder:
         matrix = obj.matrix_world.copy()
         weld_job = None
         if border_positions is not None:
+            if symmetrize_job is not None:
+                border_positions = symmetrize_job.with_mirrored(border_positions)
             weld_job = SegmentWeld(border_positions, matrix)
         deselect_all()
         obj.select_set(True)
@@ -664,6 +751,7 @@ class SessionBuilder:
         jobs = {
             "join_job": Join(len(valid)) if len(pieces) > 1 else None,
             "hide_job": hide_job,
+            "symmetrize_job": symmetrize_job,
             "transfer_uvs_job": transfer_uvs_job,
             "segment_weld_job": weld_job,
         }

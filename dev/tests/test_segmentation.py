@@ -1,19 +1,10 @@
-import importlib.util
 import sys
-from pathlib import Path
 
 import numpy
 import pytest
 
-# loaded from file, the addon package imports bpy
-PKG = Path(__file__).parents[2] / "src" / "seams"
-spec = importlib.util.spec_from_file_location(
-    "seams", PKG / "__init__.py", submodule_search_locations=[str(PKG)]
-)
-sys.modules["seams"] = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(sys.modules["seams"])
-from seams import SURFACE_MODE_CODES, EngineError  # noqa: E402
-from seams.segmentation import (  # noqa: E402
+from seams import SURFACE_MODE_CODES, EngineError
+from seams.segmentation import (
     border_edges,
     # split_loop_job,
     # split_region_job,
@@ -21,41 +12,12 @@ from seams.segmentation import (  # noqa: E402
     # merge_region,
     segment_job,
 )
-from seams.worker import WorkerProcess  # noqa: E402
+from seams.worker import WorkerProcess
 
-BUNDLED = Path(__file__).parents[2] / "engine-builds" / "windows" / "segment.exe"
-FIXTURES = Path(__file__).parent / "fixtures"
 # the dumbbell fixture's bulbs meet a straight neck of this radius around the x axis
 NECK_RADIUS = 0.3
-
-CUBE_VERTS = [
-    (0.0, 0.0, 0.0),
-    (1.0, 0.0, 0.0),
-    (1.0, 1.0, 0.0),
-    (0.0, 1.0, 0.0),
-    (0.0, 0.0, 1.0),
-    (1.0, 0.0, 1.0),
-    (1.0, 1.0, 1.0),
-    (0.0, 1.0, 1.0),
-]
-CUBE_FACES = [
-    (0, 3, 2, 1),
-    (4, 5, 6, 7),
-    (0, 1, 5, 4),
-    (1, 2, 6, 5),
-    (2, 3, 7, 6),
-    (3, 0, 4, 7),
-]
-
-
-def read_obj(path):
-    verts, faces = [], []
-    for line in open(path):
-        if line.startswith("v "):
-            verts.append([float(x) for x in line.split()[1:4]])
-        elif line.startswith("f "):
-            faces.append([int(t.split("/")[0]) - 1 for t in line.split()[1:]])
-    return verts, faces
+# an all organic mesh never starts the classifier
+NO_HARDSURFACE = ["no-such-hardsurface-engine.exe"]
 
 
 # (verts, faces, mode code, kept) per loose part, flattened into the worker's inputs
@@ -76,24 +38,30 @@ def mesh_inputs(parts):
     )
 
 
-def cube_at(y):
-    return [[x, cy + y, z] for x, cy, z in CUBE_VERTS], CUBE_FACES
+def cube_at(unit_cube, y):
+    verts, faces = unit_cube
+    return [[x, cy + y, z] for x, cy, z in verts], faces
 
 
-@pytest.mark.skipif(not BUNDLED.is_file(), reason="segment.exe not built")
-def test_dumbbell_splits_on_the_neck_and_skips_hard_and_kept_parts(tmp_path):
-    dumbbell_verts, dumbbell_faces = read_obj(FIXTURES / "dumbbell.obj")
+@pytest.mark.smoke
+def test_dumbbell_splits_on_the_neck_and_skips_hard_and_kept_parts(
+    tmp_path, engine_binary, fixture_mesh, unit_cube
+):
+    dumbbell_verts, dumbbell_faces = fixture_mesh("dumbbell")
     inputs = mesh_inputs(
         [
             (dumbbell_verts, dumbbell_faces, "ORGANIC", False),
-            (*cube_at(5.0), "HARD", False),
-            (*cube_at(8.0), "ORGANIC", True),
-            (*cube_at(11.0), "AUTO", False),
+            (*cube_at(unit_cube, 5.0), "HARD", False),
+            (*cube_at(unit_cube, 8.0), "ORGANIC", True),
+            (*cube_at(unit_cube, 11.0), "AUTO", False),
         ]
     )
     positions = inputs[0]
 
-    result = WorkerProcess(segment_job, [BUNDLED], tmp_path, *inputs).result()
+    tools = [engine_binary("uvgami-tools")]
+    result = WorkerProcess(
+        segment_job, [*tools, "segment"], tools, tmp_path, *inputs
+    ).result()
 
     assert SURFACE_MODE_CODES["AUTO"] not in result.surface_modes
     assert result.region_count >= 2
@@ -105,26 +73,31 @@ def test_dumbbell_splits_on_the_neck_and_skips_hard_and_kept_parts(tmp_path):
     assert numpy.allclose(radii, NECK_RADIUS, atol=1e-4)
 
 
-def test_a_missing_engine_raises(tmp_path):
-    verts, faces = read_obj(FIXTURES / "dumbbell.obj")
+def test_a_missing_engine_raises(tmp_path, fixture_mesh):
+    verts, faces = fixture_mesh("dumbbell")
     inputs = mesh_inputs([(verts, faces, "ORGANIC", False)])
     with pytest.raises(EngineError, match="failed to start"):
-        segment_job(["no-such-segment-engine.exe"], tmp_path, *inputs)
+        segment_job(["no-such-segment-engine.exe"], NO_HARDSURFACE, tmp_path, *inputs)
 
 
-def test_a_failing_engine_raises(tmp_path):
-    verts, faces = read_obj(FIXTURES / "dumbbell.obj")
+def test_a_failing_engine_raises(tmp_path, fixture_mesh):
+    verts, faces = fixture_mesh("dumbbell")
     inputs = mesh_inputs([(verts, faces, "ORGANIC", False)])
     failing = [sys.executable, "-c", "import sys; sys.exit(2)"]
     with pytest.raises(EngineError, match="exited 2"):
-        segment_job(failing, tmp_path, *inputs)
+        segment_job(failing, NO_HARDSURFACE, tmp_path, *inputs)
 
 
-def test_hard_and_kept_parts_never_start_the_engine(tmp_path):
+@pytest.mark.smoke
+def test_hard_and_kept_parts_never_start_the_engine(tmp_path, engine_binary, unit_cube):
     inputs = mesh_inputs(
-        [(*cube_at(0.0), "HARD", False), (*cube_at(5.0), "ORGANIC", True)]
+        [
+            (*cube_at(unit_cube, 0.0), "HARD", False),
+            (*cube_at(unit_cube, 5.0), "ORGANIC", True),
+        ]
     )
-    result = segment_job(["no-such-segment-engine.exe"], tmp_path, *inputs)
+    tools = [engine_binary("uvgami-tools")]
+    result = segment_job(["no-such-segment-engine.exe"], tools, tmp_path, *inputs)
     assert result.border_edges == []
     assert (
         result.surface_modes.tolist()
@@ -156,7 +129,8 @@ def strip_arrays():
 
 
 def test_edge_face_pairs_lists_each_shared_edge_once():
-    face_pairs = edge_face_pairs(*strip_arrays())
+    _, corners, totals = strip_arrays()
+    face_pairs = edge_face_pairs(corners, totals)
     pairs = sorted(zip(face_pairs.first.tolist(), face_pairs.second.tolist()))
     assert pairs == [(0, 1), (1, 2), (2, 3)]
     # assert sorted(face_pairs.lengths.tolist()) == [1.0, 1.0, 3.0]
@@ -164,18 +138,9 @@ def test_edge_face_pairs_lists_each_shared_edge_once():
 
 
 def test_border_edges_lists_a_three_face_edge_once():
-    positions = numpy.array(
-        [
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (0.0, -1.0, 0.0),
-        ]
-    )
     corners = numpy.array([0, 1, 2, 0, 1, 3, 0, 1, 4], dtype=numpy.int64)
     totals = numpy.array([3, 3, 3], dtype=numpy.int64)
-    face_pairs = edge_face_pairs(positions, corners, totals)
+    face_pairs = edge_face_pairs(corners, totals)
     assert border_edges(face_pairs, numpy.array([1, 2, 3])) == [(0, 1)]
 
 

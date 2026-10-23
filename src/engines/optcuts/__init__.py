@@ -56,7 +56,9 @@ class OptcutsEngine(OptcutsInstall):
     supports_import_uvs = True
     supports_proxy = True
     supports_hard_surface = True
+    supports_plane_glue = True
     supports_regions = True
+    supports_symmetry = True
 
     def draw_settings(self, layout, props):
         row = layout.row()
@@ -82,19 +84,22 @@ class OptcutsEngine(OptcutsInstall):
     def unset_surface_mode(self, props):
         return props.optcuts.mode
 
-    def preseed_work(self, obj, props, surface_modes):
+    # a plane mirrors the seams of every face, organic ones included
+    def preseed_work(self, obj, props, plane, surface_modes):
         if surface_modes is None:
             surface_modes = part_overrides.surface_modes(
                 obj.data, self.unset_surface_mode(props)
             )
-        if (surface_modes == SURFACE_MODE_CODES["ORGANIC"]).all():
+        if plane is None and (surface_modes == SURFACE_MODE_CODES["ORGANIC"]).all():
             return None
         return preseed_work(
             obj,
             HARD_SURFACE_ANGLES[props.priority],
             SPLIT_TARGETS[props.priority],
+            self._bound_and_weight_args(props, props.priority),
             seam_restrictions(obj) if props.avoid_seams else None,
             surface_modes,
+            plane,
         )
 
     def piece_uses_uvs(self, obj, props, has_uvs):

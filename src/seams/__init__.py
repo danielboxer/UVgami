@@ -41,6 +41,7 @@ from .mesh import (
 )
 from .preseed import (
     SURFACE_MODE_CODES,
+    OptcutsRun,
     hard_faces,
     preseed_job,
 )
@@ -54,6 +55,7 @@ __all__ = [
     "Cancelled",
     "check_cancelled",
     "EngineError",
+    "OptcutsRun",
     "build",
     "connect_loops",
     "crease_relief",

@@ -1,14 +1,5 @@
-import importlib.util
-from pathlib import Path
-
 import numpy
-
-# loaded from file, the addon package imports bpy
-spec = importlib.util.spec_from_file_location(
-    "addon_similar", Path(__file__).parents[2] / "src" / "similar.py"
-)
-similar = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(similar)
+from addon_src import similar
 
 ROTATE_Z = numpy.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
 MIRROR_X = numpy.diag([-1.0, 1.0, 1.0])

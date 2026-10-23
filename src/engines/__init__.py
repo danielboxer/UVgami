@@ -11,17 +11,19 @@ class Engine:
     # saved in blend files, never change or reuse one
     enum_value = 0
     property_group = None
-    # every bpy class the engine needs, its property group plus any operators
     classes = ()
     supports_guided = False
     supports_viewer = False
     supports_early_stop = False
     supports_keep_quads = False
-    supports_hard_surface = False
-    supports_regions = False
     supports_import_uvs = False
     # the proxy finish flattens with optcuts
     supports_proxy = False
+    supports_hard_surface = False
+    # vertices in a _plane sidecar end up on the uv line u = 0
+    supports_plane_glue = False
+    supports_regions = False
+    supports_symmetry = False
     has_install_controls = False
 
     def describe(self):
@@ -33,7 +35,7 @@ class Engine:
     def is_installed(self, prefs):
         return self.validate(prefs)[1] is None
 
-    # returns (ctx, None) or (None, error_message). ctx comes back to build_* and stop
+    # returns (ctx, None) or (None, error_message)
     def validate(self, prefs):
         raise NotImplementedError
 
@@ -60,14 +62,17 @@ class Engine:
     def uses_proxy(self, props):
         return props.use_proxy and self.supports_proxy
 
+    def splits_regions(self, props):
+        return props.split_regions and self.supports_regions
+
+    def uses_symmetry(self, props):
+        return props.symmetry and self.supports_symmetry
+
     def unset_surface_mode(self, props):
         return "AUTO"
 
     # (running worker, apply), or None when nothing is preseeded
-    def splits_regions(self, props):
-        return props.split_regions and self.supports_regions
-
-    def preseed_work(self, obj, props, surface_modes):
+    def preseed_work(self, obj, props, plane, surface_modes):
         return None
 
     # has_uvs is true for a preseeded object or one with imported uvs
@@ -169,7 +174,6 @@ def installed_engines():
     return _installed_cache
 
 
-# the scene enum's getter clamps to an installed engine
 def active_engine(engine_id):
     engine = ENGINES.get(engine_id)
     if engine is not None and engine in installed_engines():

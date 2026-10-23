@@ -129,6 +129,7 @@ class PartuvEngine(Engine):
     label = "PartUV"
     description = "GPU engine. Fewer islands and can be faster on dense meshes"
     icon = "MOD_EXPLODE"
+    supports_symmetry = True
     property_group = UVGAMI_PG_partuv
     has_install_controls = True
     classes = (UVGAMI_PG_partuv, UVGAMI_OT_install_partuv, UVGAMI_OT_uninstall_partuv)
@@ -270,7 +271,7 @@ class PartuvEngine(Engine):
             ]
         else:
             base = [str(get_partuv_venv_python()), "-m", "partuv"]
-        # windows caps a command line near 32k chars, which a large batch overflows
+        # windows caps a command line near 32k characters
         input_list = (
             get_extension_dir_path() / "input" / f"{input_paths[0].stem}_inputs.txt"
         )
@@ -287,7 +288,7 @@ class PartuvEngine(Engine):
             props.partuv.segmentation.lower(),
             "--threshold",
             PRIORITY_VALUES[props.priority],
-            # drives the progress bar and the live chart viewer
+            # the progress bar and the live chart viewer come from this output
             "--visual",
         ]
 
@@ -304,7 +305,7 @@ class PartuvEngine(Engine):
     def describe_failure(self, code):
         return {
             2: ("Invalid input mesh", True),
-            # missing module, config, checkpoint or cuda, stderr says which
+            # missing module, config, checkpoint or cuda, the cause is in stderr
             3: ("PartUV could not start", False),
             4: ("PartUV failed on this mesh", True),
             5: ("PartUV produced invalid output", True),
@@ -312,7 +313,7 @@ class PartuvEngine(Engine):
 
     def stop(self, process, ctx):
         if platform.system() == "Windows":
-            # kill the whole tree, uv spawns the engine as a child
+            # uv starts the engine as a child process
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(process.pid)],
                 capture_output=True,

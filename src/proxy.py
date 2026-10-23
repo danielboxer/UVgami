@@ -8,6 +8,7 @@ from mathutils.bvhtree import BVHTree
 from mathutils.kdtree import KDTree
 
 from .seams import proxy_transfer
+from .utils.geometry import cut_on_axis
 from .utils.mesh import corner_uvs, face_vertices, loop_totals, new_bmesh, set_bmesh
 
 
@@ -81,6 +82,30 @@ def make_proxy(obj, target_faces, parts=None):
 
     clean_proxy(obj)
     return True
+
+
+SOURCE_FACE_ATTRIBUTE = "uvgami_proxy_source_face"
+
+
+def mirror_proxy(obj, axis, center, tolerance, kept_side):
+    obj.data.attributes.new(SOURCE_FACE_ATTRIBUTE, "INT", "FACE").data.foreach_set(
+        "value", numpy.arange(len(obj.data.polygons), dtype=numpy.int32)
+    )
+    cut_on_axis(obj, center, axis, tolerance, kept_side)
+    bm = new_bmesh(obj)
+    bmesh.ops.mirror(
+        bm,
+        geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
+        matrix=Matrix.Translation(-Vector(center)),
+        merge_dist=tolerance,
+        axis=axis,
+    )
+    set_bmesh(bm, obj)
+    attribute = obj.data.attributes[SOURCE_FACE_ATTRIBUTE]
+    source_faces = numpy.empty(len(obj.data.polygons), dtype=numpy.int32)
+    attribute.data.foreach_get("value", source_faces)
+    obj.data.attributes.remove(attribute)
+    return source_faces
 
 
 # neighbour normals this far apart are a triangle folded over the other

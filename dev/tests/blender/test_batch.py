@@ -62,6 +62,8 @@ def test_loose_parts_unwrap_as_pieces_and_join_back(unwrap, outputs):
     select([a, b])
     bpy.ops.object.join()
     joined = bpy.context.active_object
+    # the scene mirrors onto itself, and the mirror cut changes the pieces
+    bpy.context.scene.uvgami.symmetry = False
 
     unwrap()
 
@@ -191,6 +193,8 @@ def test_group_stop_merges_the_queued_pieces_into_one_object(unwrap, invalid_obj
     select(spheres)
     bpy.ops.object.join()
     bpy.context.scene.uvgami.max_cores = 1
+    # the scene mirrors onto itself, and the mirror cut changes the pieces
+    bpy.context.scene.uvgami.symmetry = False
 
     pump = unwrap(until=solving)
     piece = solving()

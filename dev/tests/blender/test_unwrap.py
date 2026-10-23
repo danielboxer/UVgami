@@ -151,6 +151,8 @@ def test_hard_surface_keeps_seams_off_the_diagonals(make_mesh, unwrap, outputs):
     }
     bpy.context.scene.uvgami.optcuts.mode = "HARD"
     bpy.context.scene.uvgami.keep_quads = False
+    # a mirrored seam set would split the tube in two
+    bpy.context.scene.uvgami.symmetry = False
     unwrap()
 
     assert manager.error_messages == []

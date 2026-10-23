@@ -1,4 +1,5 @@
 import collections
+import itertools
 import math
 
 import numpy
@@ -18,12 +19,6 @@ def cross(u, v):
 def norm(v):
     x, y, z = v
     return math.sqrt(x * x + y * y + z * z)
-
-
-def diagonal(verts):
-    lo = [min(v[i] for v in verts) for i in range(3)]
-    hi = [max(v[i] for v in verts) for i in range(3)]
-    return norm([hi[i] - lo[i] for i in range(3)])
 
 
 def pair(a, b):
@@ -106,13 +101,6 @@ def polygon_area(verts, face):
     return total
 
 
-# per-face weighted normals and areas, plus edge -> owning faces
-def build(verts, faces):
-    weighted = weighted_normals(verts, faces)
-    areas = [polygon_area(verts, face) for face in faces]
-    return weighted, areas, face_edges(faces)
-
-
 def signed_area(pts):
     total = 0.0
     for i in range(len(pts)):
@@ -146,46 +134,104 @@ def island_groups(faces, seams, edges):
     return list(members.values())
 
 
-# edges whose faces don't share their corner uvs, boundary edges never count
-def uv_seams(faces, uvs, edges):
-    seams = set()
-    for (u, v), owners in edges.items():
-        if len(owners) < 2:
-            continue
-        first = faces[owners[0]]
-        first_uv = uvs[owners[0]]
-        at_u = first_uv[first.index(u)]
-        at_v = first_uv[first.index(v)]
-        for g in owners[1:]:
-            face = faces[g]
-            face_uv = uvs[g]
-            if face_uv[face.index(u)] != at_u or face_uv[face.index(v)] != at_v:
-                seams.add((u, v))
+# one integer per undirected edge, the same for both directions
+def edge_keys(tail, head):
+    tail = numpy.asarray(tail, dtype=numpy.int64)
+    head = numpy.asarray(head, dtype=numpy.int64)
+    return (numpy.minimum(tail, head) << 32) | numpy.maximum(tail, head)
+
+
+# faces are laid out one after another
+def following_corners(face_sizes):
+    sizes = numpy.asarray(face_sizes, dtype=numpy.int64)
+    starts = numpy.cumsum(sizes) - sizes
+    face_of = numpy.repeat(numpy.arange(len(sizes)), sizes)
+    local = numpy.arange(len(face_of)) - starts[face_of]
+    return starts[face_of] + (local + 1) % sizes[face_of]
+
+
+# the corner starting the same edge in the other face, -1 on a boundary or non-manifold edge
+def edge_twins(corners, following):
+    keys = edge_keys(corners, corners[following])
+    order = numpy.argsort(keys, kind="stable")
+    _, first, counts = numpy.unique(keys[order], return_index=True, return_counts=True)
+    paired = first[counts == 2]
+    twin = numpy.full(len(corners), -1, dtype=numpy.int64)
+    a, b = order[paired], order[paired + 1]
+    twin[a] = b
+    twin[b] = a
+    return twin
+
+
+# the ranges starts[i] to starts[i] + sizes[i], one after another
+def index_ranges(starts, sizes):
+    offsets = numpy.cumsum(sizes) - sizes
+    return numpy.repeat(starts - offsets, sizes) + numpy.arange(int(sizes.sum()))
+
+
+# a part's label is its lowest index, never a dense range
+def connected_labels(count, edges):
+    # int64, keys built from these overflow a windows int32
+    label = numpy.arange(count, dtype=numpy.int64)
+    a = edges[:, 0]
+    b = edges[:, 1]
+    while a.size:
+        # minimum.at is far slower than sorting for the reduceat
+        targets = numpy.concatenate([a, b])
+        sources = numpy.concatenate([b, a])
+        order = numpy.argsort(targets, kind="stable")
+        targets = targets[order]
+        sources = sources[order]
+        starts = numpy.flatnonzero(numpy.diff(targets, prepend=-1))
+        grouped = targets[starts]
+        low = label.copy()
+        low[grouped] = numpy.minimum(
+            low[grouped], numpy.minimum.reduceat(label[sources], starts)
+        )
+        # low[low] shortcuts label chains
+        while True:
+            jumped = low[low]
+            if numpy.array_equal(jumped, low):
                 break
-    return seams
+            low = jumped
+        label = low
+        a = label[a]
+        b = label[b]
+        keep = a != b
+        a = a[keep]
+        b = b[keep]
+    return label
+
+
+# edges given as corner rows, the vertex and uv at each end
+def edge_tears(tail, head, tail_uv, head_uv, tolerance):
+    low_first = (tail < head)[:, None]
+    at_low = numpy.where(low_first, tail_uv, head_uv)
+    at_high = numpy.where(low_first, head_uv, tail_uv)
+    keys = edge_keys(tail, head)
+    unique, first, group = numpy.unique(keys, return_index=True, return_inverse=True)
+    agrees = numpy.all(numpy.abs(at_low - at_low[first][group]) <= tolerance, axis=1)
+    agrees &= numpy.all(numpy.abs(at_high - at_high[first][group]) <= tolerance, axis=1)
+    torn = unique[numpy.unique(group[~agrees])]
+    return {(int(key >> 32), int(key & 0xFFFFFFFF)) for key in torn.tolist()}
+
+
+# (low, high) pairs of edges whose faces don't share their corner uvs, boundary edges never count
+def uv_tears(faces, corner_uvs, tolerance=0.0):
+    sizes = [len(face) for face in faces]
+    corners = numpy.fromiter(
+        (v for face in faces for v in face), dtype=numpy.int64, count=sum(sizes)
+    )
+    uvs = numpy.array(
+        [uv for face in corner_uvs for uv in face], dtype=numpy.float64
+    ).reshape(-1, 2)
+    following = following_corners(sizes)
+    return edge_tears(corners, corners[following], uvs, uvs[following], tolerance)
 
 
 # follows the uv map itself, so it needs no seam marks
 def uv_island_groups(faces, uvs, edges):
-    return island_groups(faces, uv_seams(faces, uvs, edges), edges)
-
-
-# joined by any shared vertex, what mesh.separate(type="LOOSE") splits on
-def vertex_components(faces):
-    parent = {}
-
-    for face in faces:
-        for v in face:
-            parent.setdefault(v, v)
-        for v in face[1:]:
-            ra, rb = find(parent, face[0]), find(parent, v)
-            if ra != rb:
-                parent[ra] = rb
-
-    members = collections.defaultdict(list)
-    for fi, face in enumerate(faces):
-        members[find(parent, face[0])].append(fi)
-    return list(members.values())
+    return island_groups(faces, uv_tears(faces, uvs), edges)
 
 
 # boxes can touch without the boundaries crossing
@@ -248,3 +294,11 @@ def uv_area_fit(polygons, area, bbox):
 def transformed(positions, matrix):
     matrix = numpy.asarray(matrix)
     return positions @ matrix[:3, :3].T + matrix[:3, 3]
+
+
+# the 26 cells around a grid cell
+NEIGHBOR_CELLS = [
+    offsets
+    for offsets in itertools.product((0, -1, 1), repeat=3)
+    if offsets != (0, 0, 0)
+]

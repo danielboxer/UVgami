@@ -1,7 +1,11 @@
 import bpy
+import mathutils
+import numpy
 from blender_fixtures import addon
 
 make_proxy = addon.src.proxy.make_proxy
+mirror_proxy = addon.src.proxy.mirror_proxy
+mirror_partners = addon.src.similar.mirror_partners
 needs_proxy = addon.src.proxy.needs_proxy
 part_triangles = addon.src.proxy.part_triangles
 triangle_count = addon.src.proxy.triangle_count
@@ -54,3 +58,28 @@ def test_a_single_part_lands_on_the_budget():
     assert needs_proxy(obj, PROXY_FACES)
     assert make_proxy(obj, PROXY_FACES)
     assert triangle_count(obj) == PROXY_FACES
+
+
+def test_a_part_at_the_face_count_keeps_its_faces():
+    obj = add_dense_sphere()
+    triangles = triangle_count(obj)
+
+    assert not needs_proxy(obj, triangles)
+    assert not make_proxy(obj, triangles)
+    assert triangle_count(obj) == triangles
+
+
+def test_a_mirrored_proxy_has_a_partner_for_every_vertex():
+    obj = add_dense_sphere()
+    make_proxy(obj, PROXY_FACES)
+    center = mathutils.Vector((0, 0, 0))
+    assert len(mirror_partners(obj.data, center, "X")) < len(obj.data.vertices)
+    faces = len(obj.data.polygons)
+
+    source_faces = mirror_proxy(obj, "X", center, 1e-4, 1)
+
+    partners = mirror_partners(obj.data, center, "X")
+    assert len(partners) == len(obj.data.vertices)
+    # each kept face and its mirror image come from one decimated face
+    uses = numpy.bincount(source_faces, minlength=faces)
+    assert set(uses[uses > 0].tolist()) == {2}

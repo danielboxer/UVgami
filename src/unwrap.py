@@ -24,6 +24,7 @@ class Unwrap:
         *,
         join_job=None,
         hide_job=None,
+        symmetrize_job=None,
         transfer_uvs_job=None,
         segment_weld_job=None,
         preseeded: bool = False,
@@ -41,6 +42,7 @@ class Unwrap:
         if self.join_job is not None:
             self.join_job.members.append(self)
         self.hide_job = hide_job
+        self.symmetrize_job = symmetrize_job
         self.transfer_uvs_job = transfer_uvs_job
         self.segment_weld_job = segment_weld_job
 
@@ -256,7 +258,7 @@ class Unwrap:
                 self.path.unlink()
             if self.guide_path is not None and self.guide_path.is_file():
                 self.guide_path.unlink()
-            for suffix in ("_locked",):
+            for suffix in ("_plane", "_locked"):
                 sidecar = self.path.parent / f"{self.path.stem}{suffix}"
                 if sidecar.is_file():
                     sidecar.unlink()

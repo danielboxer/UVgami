@@ -152,6 +152,44 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         max=5,
         default=3,
     )
+    symmetry: bpy.props.BoolProperty(
+        name="Symmetry",
+        description=(
+            "Mirror the UV map across the symmetry plane of a symmetrical mesh."
+            " Has no effect on a mesh that isn't symmetrical"
+        ),
+        default=True,
+    )
+    # sym_axes: bpy.props.EnumProperty(
+    #     name="Axes",
+    #     description=(
+    #         "The axis of symmetry of the input mesh."
+    #         " Hold down Shift to select or deselect multiple axes"
+    #     ),
+    #     items=(
+    #         ("X", "X", "X axis"),
+    #         ("Y", "Y", "Y axis"),
+    #         ("Z", "Z", "Z axis"),
+    #     ),
+    #     default={"X"},
+    #     options={"ENUM_FLAG"},
+    # )
+    # sym_overlap: bpy.props.BoolProperty(
+    #     name="Overlap",
+    #     description=(
+    #         "Overlap the two halves in UV space."
+    #         " Only for meshes that are perfectly symmetrical"
+    #     ),
+    #     default=False,
+    # )
+    # sym_weld: bpy.props.BoolProperty(
+    #     name="Weld Plane",
+    #     description=(
+    #         "Join the two halves across the symmetry plane in UV space."
+    #         " Off cuts a seam along the plane"
+    #     ),
+    #     default=True,
+    # )
     # grid
     grid_type: bpy.props.EnumProperty(
         name="Grid Type",

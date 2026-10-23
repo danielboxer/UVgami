@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy
 
 from .engine_run import EngineError, EngineRun, launch, poll_run, stdout_path, write_obj
-from .mesh import faces_from_arrays
+from .mesh import edge_keys, faces_from_arrays, following_corners
 from .preseed import SURFACE_MODE_CODES, hard_faces, submesh
 
 # from .proxy_transfer import connected_labels
@@ -89,9 +89,11 @@ def start_segmentation(
 
 
 # Auto faces get the classifier's pick
-def resolve_surface_modes(verts, faces, surface_modes, cancelled):
-    hard = numpy.fromiter(
-        hard_faces(verts, faces, surface_modes, cancelled), dtype=numpy.int64
+def resolve_surface_modes(
+    hardsurface_command, workdir, verts, faces, surface_modes, cancelled
+):
+    hard = hard_faces(
+        hardsurface_command, workdir, verts, faces, surface_modes, cancelled
     )
     resolved = surface_modes.copy()
     resolved[resolved == SURFACE_MODE_CODES["AUTO"]] = SURFACE_MODE_CODES["ORGANIC"]
@@ -99,20 +101,36 @@ def resolve_surface_modes(verts, faces, surface_modes, cancelled):
     return resolved
 
 
-def classify_job(positions, corners, totals, surface_modes, cancelled=None):
+def classify_job(
+    hardsurface_command,
+    workdir,
+    positions,
+    corners,
+    totals,
+    surface_modes,
+    cancelled=None,
+):
     faces = faces_from_arrays(corners, totals)
-    return resolve_surface_modes(positions.tolist(), faces, surface_modes, cancelled)
+    return resolve_surface_modes(
+        hardsurface_command,
+        workdir,
+        positions.tolist(),
+        faces,
+        surface_modes,
+        cancelled,
+    )
 
 
-def edge_face_pairs(positions, corners, totals):
-    face_count = len(totals)
-    starts = numpy.cumsum(totals) - totals
-    face_of_corner = numpy.repeat(numpy.arange(face_count), totals)
-    offsets = numpy.arange(len(corners)) - starts[face_of_corner]
-    next_corner = starts[face_of_corner] + (offsets + 1) % totals[face_of_corner]
+def edge_face_pairs(
+    # positions,
+    corners,
+    totals,
+):
+    face_of_corner = numpy.repeat(numpy.arange(len(totals)), totals)
+    next_corner = following_corners(totals)
     low = numpy.minimum(corners, corners[next_corner])
     high = numpy.maximum(corners, corners[next_corner])
-    keys = low * len(positions) + high
+    keys = edge_keys(corners, corners[next_corner])
     order = numpy.argsort(keys, kind="stable")
     shared = keys[order][:-1] == keys[order][1:]
     first = face_of_corner[order[:-1][shared]]
@@ -151,6 +169,7 @@ def border_edges(face_pairs, labels):
 
 def segment_job(
     segment_command,
+    hardsurface_command,
     workdir,
     positions,
     corners,
@@ -162,7 +181,9 @@ def segment_job(
 ):
     verts = positions.tolist()
     faces = faces_from_arrays(corners, totals)
-    resolved = resolve_surface_modes(verts, faces, surface_modes, cancelled)
+    resolved = resolve_surface_modes(
+        hardsurface_command, workdir, verts, faces, surface_modes, cancelled
+    )
     segmented = (resolved == SURFACE_MODE_CODES["ORGANIC"]) & ~kept_faces
     labels = numpy.zeros(len(faces), dtype=numpy.int64)
     if not segmented.any():
@@ -172,11 +193,11 @@ def segment_job(
     #     labels[segmented] = stored_labels[segmented]
     # else:
     segmented_faces = numpy.flatnonzero(segmented)
-    sub_verts, sub_faces, _ = submesh(verts, faces, segmented_faces.tolist(), ())
+    sub_verts, sub_faces = submesh(verts, faces, segmented_faces.tolist())
     run = start_segmentation(segment_command, workdir, sub_verts, sub_faces)
     labels[segmented_faces] = poll_run(run, cancelled) + 1
     region_count = len(numpy.unique(labels[labels > 0]))
-    face_pairs = edge_face_pairs(positions, corners, totals)
+    face_pairs = edge_face_pairs(corners, totals)
     return SegmentRegions(
         resolved, border_edges(face_pairs, labels), region_count, labels
     )
@@ -197,9 +218,7 @@ def segment_job(
 # ):
 #     faces = faces_from_arrays(corners, totals)
 #     region_faces = numpy.flatnonzero(labels == labels[seed])
-#     sub_verts, sub_faces, _ = submesh(
-#         positions.tolist(), faces, region_faces.tolist(), ()
-#     )
+#     sub_verts, sub_faces = submesh(positions.tolist(), faces, region_faces.tolist())
 #     sub_seed = int(numpy.searchsorted(region_faces, seed))
 #     run = start_segmentation(
 #         segment_command,
@@ -237,9 +256,7 @@ def segment_job(
 #         len(faces), numpy.stack([face_pairs.first, face_pairs.second], axis=1)
 #     )
 #     part_faces = numpy.flatnonzero(part == part[seed])
-#     sub_verts, sub_faces, _ = submesh(
-#         positions.tolist(), faces, part_faces.tolist(), ()
-#     )
+#     sub_verts, sub_faces = submesh(positions.tolist(), faces, part_faces.tolist())
 #     sub_seed = int(numpy.searchsorted(part_faces, seed))
 #     run = start_segmentation(
 #         segment_command,

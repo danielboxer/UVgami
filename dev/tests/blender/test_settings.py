@@ -75,6 +75,7 @@ def test_chart_and_seam_counts_are_pinned(
     bpy.context.scene.uvgami.optcuts.mode = surface_mode
     # the pinned counts are the engine's own cuts
     bpy.context.scene.uvgami.split_regions = False
+    bpy.context.scene.uvgami.symmetry = False
 
     unwrap()
 
@@ -85,6 +86,8 @@ def test_chart_and_seam_counts_are_pinned(
 
 def test_auto_unwraps_a_beveled_cube_as_hard_surface(load_obj, unwrap, outputs):
     load_obj("cube-bevel2")
+    # the pinned counts are without the mirror cut
+    bpy.context.scene.uvgami.symmetry = False
 
     unwrap()
 
@@ -101,6 +104,7 @@ def test_quality_levels_trade_seams_for_stretch(load_obj, unwrap, outputs):
         # priority moves only the engine's cuts, never the preseed's or a segment border
         bpy.context.scene.uvgami.optcuts.mode = "ORGANIC"
         bpy.context.scene.uvgami.split_regions = False
+        bpy.context.scene.uvgami.symmetry = False
         bpy.context.scene.uvgami.priority = quality
         unwrap()
         (output,) = outputs().values()
@@ -124,6 +128,8 @@ def test_one_core_gives_the_same_unwrap_as_many(unwrap, outputs):
 def test_stack_similar_copies_the_twin_instead_of_unwrapping_it(unwrap, outputs):
     joined = two_loose_cubes()
     bpy.context.scene.uvgami.stack_similar = True
+    # the two cubes mirror each other, and the mirror would copy one onto the other
+    bpy.context.scene.uvgami.symmetry = False
 
     unwrap()
 
@@ -195,16 +201,20 @@ def test_auto_grid_lands_on_the_input_when_uvs_transfer(unwrap, outputs):
     )
 
 
-def test_partuv_alone_skips_splitting():
+def test_partuv_alone_skips_splitting_and_every_engine_mirrors_by_default():
     props = bpy.context.scene.uvgami
     engines = addon.src.engines.ENGINES
     for splitting in ("OPTCUTS", "XATLAS"):
         assert engines[splitting].splits_regions(props)
+        assert engines[splitting].uses_symmetry(props)
     if "PARTUV" in engines:
         assert not engines["PARTUV"].splits_regions(props)
+        assert engines["PARTUV"].uses_symmetry(props)
 
     props.split_regions = False
+    props.symmetry = False
     assert not engines["OPTCUTS"].splits_regions(props)
+    assert not engines["OPTCUTS"].uses_symmetry(props)
 
 
 def test_reset_settings_restores_the_defaults():
