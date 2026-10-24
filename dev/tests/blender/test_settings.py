@@ -227,7 +227,7 @@ def test_reset_settings_restores_the_defaults():
     bpy.ops.uvgami.reset_settings()
 
     assert props.margin == pytest.approx(0.001)
-    assert props.use_proxy is False
+    assert not props.use_proxy
     assert props.max_cores > 1
     assert props.priority == "BALANCED"
 

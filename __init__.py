@@ -18,6 +18,11 @@ import bpy
 
 from .src.engines import ENGINES
 from .src.manager import manager
+from .src.ops.auto_preview import (
+    UVGAMI_OT_clear_auto_preview,
+    UVGAMI_OT_preview_auto_settings,
+    stop_auto_preview,
+)
 from .src.ops.grid import (
     UVGAMI_OT_add_grid,
     UVGAMI_OT_remove_grid,
@@ -26,7 +31,7 @@ from .src.ops.guides import (
     UVGAMI_OT_clear_draw,
     UVGAMI_OT_draw_guides,
     UVGAMI_OT_exit_draw,
-    UVGAMI_OT_seed_restrictions,
+    # UVGAMI_OT_seed_restrictions,
 )
 from .src.ops.info import (
     UVGAMI_OT_clear_summary,
@@ -51,7 +56,6 @@ from .src.ops.part_overrides import (
     UVGAMI_PG_part_overrides,
     stop_part_overrides,
 )
-from .src.ops.proxy import UVGAMI_OT_preview_proxy
 
 # from .src.ops.segment_edit import (
 #     UVGAMI_OT_edit_regions,
@@ -68,13 +72,13 @@ from .src.ops.stop import (
 from .src.ops.uv import UVGAMI_OT_pack
 from .src.ops.viewer import UVGAMI_OT_view_unwrap
 from .src.ui.panels import (
+    UVGAMI_PT_advanced,
     UVGAMI_PT_grid,
     UVGAMI_PT_island_settings,
     UVGAMI_PT_island_uv,
     UVGAMI_PT_main,
     UVGAMI_PT_misc,
     UVGAMI_PT_pack,
-    UVGAMI_PT_part_overrides,
     UVGAMI_PT_speed,
     UVGAMI_PT_weights,
 )
@@ -83,7 +87,6 @@ from .src.ui.props import (
     UVGAMI_PG_properties,
 )
 
-# every bpy class each engine needs registered (property groups and operators)
 # two engines can list the same operator
 engine_classes = tuple(
     dict.fromkeys(cls for engine in ENGINES.values() for cls in engine.classes)
@@ -99,15 +102,16 @@ classes = (
     UVGAMI_OT_open_preferences,
     UVGAMI_OT_add_grid,
     UVGAMI_OT_draw_guides,
-    UVGAMI_OT_seed_restrictions,
+    # UVGAMI_OT_seed_restrictions,
     UVGAMI_OT_exit_draw,
     UVGAMI_OT_clear_draw,
     UVGAMI_OT_edit_part_overrides,
     UVGAMI_OT_exit_part_overrides,
+    UVGAMI_OT_preview_auto_settings,
+    UVGAMI_OT_clear_auto_preview,
     # UVGAMI_OT_edit_regions,
     # UVGAMI_OT_reset_regions,
     UVGAMI_OT_pack,
-    UVGAMI_OT_preview_proxy,
     UVGAMI_OT_unwrap_island,
     UVGAMI_OT_relax_island,
     UVGAMI_OT_combine_islands,
@@ -121,14 +125,14 @@ classes = (
     UVGAMI_OT_clear_summary,
     UVGAMI_OT_open_logs,
     UVGAMI_PT_main,
-    UVGAMI_PT_part_overrides,
+    UVGAMI_PT_advanced,
     UVGAMI_PT_weights,
     UVGAMI_PT_island_uv,
     UVGAMI_PT_island_settings,
     UVGAMI_PT_speed,
-    UVGAMI_PT_grid,
-    UVGAMI_PT_pack,
     UVGAMI_PT_misc,
+    UVGAMI_PT_pack,
+    UVGAMI_PT_grid,
     # engine groups must register before the main group that points to them
     *engine_classes,
     UVGAMI_PG_properties,
@@ -139,10 +143,11 @@ classes = (
 
 @bpy.app.handlers.persistent
 def _on_load_pre(*args):
-    # load_pre, not post, so cleanup can still touch the objects it made
+    # load_post runs after the old file's objects are gone
     manager.shutdown()
     stop_part_overrides()
     # stop_segment_edit()
+    stop_auto_preview()
 
 
 def register():
@@ -159,6 +164,7 @@ def unregister():
     manager.shutdown()
     stop_part_overrides()
     # stop_segment_edit()
+    stop_auto_preview()
     if _on_load_pre in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(_on_load_pre)
     del bpy.types.Scene.uvgami

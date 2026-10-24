@@ -6,18 +6,6 @@ def newline_label(label, layout):
         layout.label(text=line)
 
 
-def toggle(layout, props, name, text, icon, active=True):
-    split = layout.split(factor=0.7)
-    split.active = active
-    split.label(icon=icon, text=text)
-    split.prop(props, name)
-    if not getattr(props, name):
-        return None
-    box = layout.box()
-    box.active = active
-    return box
-
-
 # entries are (icon, label, path, on)
 def only_active(entries):
     return [entry[:3] for entry in entries if entry[3]]

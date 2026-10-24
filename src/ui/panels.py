@@ -4,14 +4,16 @@ from ..engines import ENGINES, active_engine, get_engine, installed_engines
 from ..job import Result
 from ..logger import logger
 from ..manager import manager
+from ..ops.auto_preview import draw_auto_preview
 from ..ops.part_overrides import is_editing, selected_part_count
+
+# from ..ops.segment_edit import draw_segment_edit
 from ..utils.paths import get_addon_name
 from ..utils.ui import (
     draw_active,
     header_icon_limit,
     is_non_default,
     only_active,
-    toggle,
 )
 from .props import PRIORITY_LABELS
 
@@ -192,11 +194,10 @@ def draw_queue(box):
 
     _draw_unwrap_groups(box, groups, active_groups)
 
-    # objects still preseeding, their pieces don't exist yet
+    # preseeding objects have no pieces yet
     for entry in manager.preparing:
         _draw_background_row(box, entry.name, entry.name)
 
-    # transfers whose worker is still running
     for transfer in manager.pending_transfers:
         _draw_background_row(box, f"{transfer.name} (finishing)", transfer.name)
 
@@ -209,7 +210,7 @@ def _draw_background_row(box, label, name):
     row.operator("uvgami.cancel_background", text="", icon="CANCEL").name = name
 
 
-# the key type tells a join job from a lone piece when drawing
+# the key type separates a join job from a lone piece when drawing
 def _build_unwrap_groups(active_unwraps):
     groups = {}
     active_groups = []
@@ -228,7 +229,6 @@ def _draw_unwrap_groups(box, groups, active_groups):
     for group_id, group in groups.items():
         display_box = box.box()
         row = display_box.row()
-        # if the key isn't an int, it's part of a group, and can be expanded
         expand_layout = not isinstance(group_id, int)
 
         if expand_layout:
@@ -373,66 +373,36 @@ class UVGAMI_PT_main(bpy.types.Panel):
         row = box.row()
         row.label(icon="TOOL_SETTINGS", text="Engine")
         row.prop(props, "engine", text="")
+
+        engine.draw_settings(box, props)
         row = box.row()
         row.label(icon="SOLO_OFF", text="Priority")
         row.prop(props, "priority", text="")
-        engine.draw_settings(box, props)
-
-        if engine.supports_import_uvs:
-            split = box.split(factor=0.7)
-            split.active = not engine.import_uvs_ignored(props)
-            split.label(icon="IMPORT", text="Import UVs")
-            split.prop(props, "import_uvs")
 
         if engine.supports_keep_quads:
             split = box.split(factor=0.7)
             split.label(icon="MOD_TRIANGULATE", text="Keep Quads")
             split.prop(props, "keep_quads")
 
-        split = box.split(factor=0.7)
-        split.label(icon="MOD_DATA_TRANSFER", text="Transfer UVs")
-        split.prop(props, "transfer_uvs")
-
-        if engine.supports_regions:
-            split = box.split(factor=0.7)
-            split.label(icon="MOD_EXPLODE", text="Segmentation")
-            split.prop(props, "split_regions")
-
-        if engine.supports_symmetry:
-            draw_symmetry(box, props)
-
-
-def draw_symmetry(layout, props):
-    split = layout.split(factor=0.7)
-    split.label(icon="MOD_MIRROR", text="Symmetry")
-    split.prop(props, "symmetry", text="")
-    # if props.symmetry == "AXES":
-    #     layout.row().prop(props, "sym_axes")
-    # overlap = row.row()
-    # overlap.active = engine.uses_symmetry(props)
-    # overlap.prop(props, "sym_overlap")
-    # weld = layout.row()
-    # weld.active = engine.uses_symmetry(props) and engine.supports_plane_glue
-    # weld.prop(props, "sym_weld")
-
 
 def draw_concurrent(layout, props, engine):
-    split = layout.split(factor=0.7)
+    row = layout.row()
     # ai mode batches every mesh into one process
-    split.active = not engine.batches_queue(props)
-    split.label(icon="MOD_ARRAY", text="Concurrent")
-    split.prop(props, "max_cores", slider=True)
+    row.active = not engine.batches_queue(props)
+    row.label(icon="MOD_ARRAY", text="Concurrent")
+    row.prop(props, "max_cores", slider=True)
 
 
 def draw_proxy(layout, props):
-    sub = toggle(layout, props, "use_proxy", "Proxy", "MOD_DECIM")
-    if sub is not None:
-        row = sub.row(align=True)
-        row.label(text="Faces", icon="MESH_DATA")
-        row.prop(props, "proxy_faces")
-        button = row.row(align=True)
-        button.ui_units_x = 1.4
-        button.operator("uvgami.preview_proxy", text="", icon="MOD_DECIM")
+    container = layout.box() if props.use_proxy else layout
+    split = container.split(factor=0.7)
+    split.label(text="Proxy", icon="MOD_DECIM")
+    split.prop(props, "use_proxy")
+    if not props.use_proxy:
+        return
+    row = container.row()
+    row.label(text="Faces", icon="MESH_DATA")
+    row.prop(props, "proxy_faces")
 
 
 def draw_timeout(layout, props):
@@ -448,15 +418,11 @@ class UVGAMI_PT_speed(EnginePanel, bpy.types.Panel):
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
-    bl_order = 3
+    bl_order = 2
 
     def draw(self, context):
         box = self.layout.box()
         props = context.scene.uvgami
-
-        row = box.row()
-        row.alignment = "CENTER"
-        row.label(text="Speed", icon="SORTTIME")
 
         engine = active_engine(props.engine)
         draw_concurrent(box, props, engine)
@@ -512,25 +478,6 @@ def draw_part_overrides(layout, context, engine):
     # row.prop(overrides, "uv_scale", text="")
 
 
-class UVGAMI_PT_part_overrides(EnginePanel, bpy.types.Panel):
-    bl_label = "Part Overrides"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "UVgami"
-    bl_parent_id = "UVGAMI_PT_main"
-    bl_order = 0
-
-    def draw(self, context):
-        engine = active_engine(context.scene.uvgami.engine)
-        box = self.layout.box()
-        if is_editing() and context.mode == "EDIT_MESH":
-            draw_part_overrides(box, context, engine)
-        else:
-            row = box.row()
-            row.scale_y = 1.5
-            row.operator("uvgami.edit_part_overrides", icon="EDITMODE_HLT")
-
-
 class UVGAMI_PT_weights(bpy.types.Panel):
     bl_label = "Weights"
     bl_space_type = "VIEW_3D"
@@ -551,16 +498,13 @@ class UVGAMI_PT_weights(bpy.types.Panel):
     def draw(self, context):
         props = context.scene.uvgami
         layout = self.layout
-        # proxy mode never unwraps the original
-        engine = active_engine(props.engine)
-        stretch_ignored = engine.uses_proxy(props) and props.reduce_stretching
+        # # proxy mode never unwraps the original
+        # engine = active_engine(props.engine)
+        # stretch_ignored = engine.uses_proxy(props) and props.reduce_stretching
         # active, not enabled: painting turns the checkbox on itself
-        layout.active = props.use_weights and not stretch_ignored
+        layout.active = props.use_weights
+        # layout.active = props.use_weights and not stretch_ignored
         box = layout.box()
-
-        row = box.row()
-        row.alignment = "CENTER"
-        row.label(text="Weights", icon="MOD_VERTEX_WEIGHT")
 
         row = box.row()
         row.scale_y = 1.5
@@ -577,15 +521,72 @@ class UVGAMI_PT_weights(bpy.types.Panel):
         row.label(text="Strength", icon="MOD_VERTEX_WEIGHT")
         row.prop(props, "weight_value", slider=True)
 
-        box.row().prop(props, "weight_mode", expand=True)
+        # box.row().prop(props, "weight_mode", expand=True)
 
-        generate = box.box()
-        row = generate.row()
-        row.label(text="Generate", icon="SHADERFX")
-        row = generate.row()
-        row.operator("uvgami.seed_restrictions", text="From View").mode = "VIEW"
-        row.operator("uvgami.seed_restrictions", text="Crevices").mode = "CREVICES"
-        row.operator("uvgami.seed_restrictions", text="Both").mode = "BOTH"
+        # generate = box.box()
+        # row = generate.row()
+        # row.label(text="Generate", icon="SHADERFX")
+        # row = generate.row()
+        # row.operator("uvgami.seed_restrictions", text="From View").mode = "VIEW"
+        # row.operator("uvgami.seed_restrictions", text="Crevices").mode = "CREVICES"
+        # row.operator("uvgami.seed_restrictions", text="Both").mode = "BOTH"
+
+
+class UVGAMI_PT_advanced(EnginePanel, bpy.types.Panel):
+    bl_label = "Advanced"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "UVgami"
+    bl_parent_id = "UVGAMI_PT_main"
+    bl_options = {"DEFAULT_CLOSED"}
+    bl_order = 3
+
+    def draw(self, context):
+        props = context.scene.uvgami
+        engine = active_engine(props.engine)
+        box = self.layout.box()
+
+        if engine.supports_import_uvs:
+            split = box.split(factor=0.7)
+            split.active = not engine.import_uvs_ignored(props)
+            split.label(icon="IMPORT", text="Import UVs")
+            split.prop(props, "import_uvs")
+
+        split = box.split(factor=0.7)
+        split.label(icon="MOD_DATA_TRANSFER", text="Transfer UVs")
+        split.prop(props, "transfer_uvs")
+
+        if engine.supports_regions:
+            split = box.split(factor=0.7)
+            split.label(icon="MOD_EXPLODE", text="Segmentation")
+            split.prop(props, "split_regions")
+        # if engine.splits_regions(props):
+        #     draw_segment_edit(box, context)
+
+        if engine.supports_symmetry:
+            draw_symmetry(box, props)
+        draw_auto_preview(box)
+
+        if is_editing() and context.mode == "EDIT_MESH":
+            draw_part_overrides(box.box(), context, engine)
+        else:
+            row = box.row()
+            row.scale_y = 1.5
+            row.operator("uvgami.edit_part_overrides", icon="EDITMODE_HLT")
+
+
+def draw_symmetry(layout, props):
+    split = layout.split(factor=0.7)
+    split.label(icon="MOD_MIRROR", text="Symmetry")
+    split.prop(props, "symmetry", text="")
+    # if props.symmetry == "AXES":
+    #     layout.row().prop(props, "sym_axes")
+    # overlap = row.row()
+    # overlap.active = engine.uses_symmetry(props)
+    # overlap.prop(props, "sym_overlap")
+    # weld = layout.row()
+    # weld.active = engine.uses_symmetry(props) and engine.supports_plane_glue
+    # weld.prop(props, "sym_weld")
 
 
 class UVGAMI_PT_grid(EnginePanel, bpy.types.Panel):
@@ -593,9 +594,9 @@ class UVGAMI_PT_grid(EnginePanel, bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "UVgami"
-    bl_parent_id = "UVGAMI_PT_main"
+    bl_parent_id = "UVGAMI_PT_misc"
     bl_options = {"DEFAULT_CLOSED"}
-    bl_order = 5
+    bl_order = 2
 
     def draw(self, context):
         props = context.scene.uvgami
@@ -603,10 +604,6 @@ class UVGAMI_PT_grid(EnginePanel, bpy.types.Panel):
         layout.use_property_split = True
         layout.use_property_decorate = False
         box = layout.box()
-
-        row = box.row()
-        row.alignment = "CENTER"
-        row.label(text="Grid", icon="TEXTURE")
 
         split = box.split(factor=ICON_BUTTON_SPLIT)
         split.scale_y = 1.5
@@ -654,7 +651,6 @@ class UVGAMI_PT_island_uv(bpy.types.Panel):
         col.operator("uvgami.relax_island", icon="UV_VERTEXSEL")
         col.operator("uvgami.combine_islands", icon="UV_ISLANDSEL")
 
-        # expand only feeds the area operators, so it's grouped with them
         area = box.box()
         row = area.row()
         row.alignment = "CENTER"
@@ -692,7 +688,7 @@ class UVGAMI_PT_island_settings(bpy.types.Panel):
         row.label(icon="SOLO_OFF", text="Priority")
         row.prop(props, "priority", text="")
 
-        # these operators always run optcuts, whatever the main panel is set to
+        # these operators always run optcuts
         engine = get_engine("OPTCUTS")
         draw_concurrent(box, props, engine)
         draw_proxy(box, props)
@@ -704,17 +700,13 @@ class UVGAMI_PT_pack(EnginePanel, bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "UVgami"
-    bl_parent_id = "UVGAMI_PT_main"
+    bl_parent_id = "UVGAMI_PT_misc"
     bl_options = {"DEFAULT_CLOSED"}
-    bl_order = 4
+    bl_order = 1
 
     def draw(self, context):
         props = context.scene.uvgami
         box = self.layout.box()
-
-        row = box.row()
-        row.alignment = "CENTER"
-        row.label(text="Pack", icon="PACKAGE")
 
         row = box.row()
         row.scale_y = 1.5
@@ -737,7 +729,7 @@ class UVGAMI_PT_misc(EnginePanel, bpy.types.Panel):
     bl_category = "UVgami"
     bl_parent_id = "UVGAMI_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
-    bl_order = 6
+    bl_order = 4
 
     def draw(self, context):
         box = self.layout.box()

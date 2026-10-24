@@ -5,7 +5,7 @@ import bpy
 from ..engines import ENGINES, installed_engines
 from ..utils.paths import get_addon_id
 
-# hang backstop, generous so a slow legitimate piece never hits it
+# a hung engine is stopped after this
 UNWRAP_TIMEOUT_DEFAULT_MINUTES = 60
 
 # blender requires a dynamic enum's item strings to stay referenced
@@ -31,7 +31,7 @@ def _engine_items(self, context):
     return [_ENGINE_ITEMS[e.id] for e in installed]
 
 
-# clamps without touching the stored value, reinstalling restores the choice
+# leaves the stored value alone so reinstalling an engine selects it again
 def _engine_get(self):
     stored = self.get("engine", -1)
     installed = installed_engines()
@@ -54,7 +54,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     )
     priority: bpy.props.EnumProperty(
         name="Priority",
-        description="Whether the unwrap favors less stretching or fewer seams",
+        description="Whether to aim for less stretching or fewer seams",
         items=(
             (
                 "LESS_STRETCH",
@@ -62,7 +62,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
                 "Lowest stretching, most seams. Slowest",
             ),
             ("BALANCED", "Balanced", "Low stretching with moderate seams"),
-            ("FEWER_SEAMS", "Fewer Seams", "Fewest seams, allows visible stretching"),
+            ("FEWER_SEAMS", "Fewer Seams", "Fewest seams, with visible stretching"),
         ),
         default="BALANCED",
     )
@@ -82,7 +82,6 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         ),
         default=True,
     )
-    # speed
     max_cores: bpy.props.IntProperty(
         name="",
         description="How many meshes to unwrap at the same time",
@@ -113,40 +112,40 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     use_proxy: bpy.props.BoolProperty(
         name="",
         description=(
-            "Unwrap a low poly copy, then transfer the seams to the original."
+            "Unwrap a low poly copy of each part over the face count,"
+            " then transfer the seams to the original."
             " Much faster for high poly meshes"
         ),
     )
     proxy_faces: bpy.props.IntProperty(
         name="",
-        description="How many triangles the decimated copy keeps",
+        description="Triangle count of the decimated copy",
         min=100,
         max=100000,
         default=20000,
     )
-    # weights
     use_weights: bpy.props.BoolProperty(
         name="", description="Use the painted weights to change the unwrap"
     )
-    weight_mode: bpy.props.EnumProperty(
-        name="Mode",
-        description="What the painted weights do",
-        items=(
-            ("SEAMS", "Avoid Seams", "Keep seams off the painted faces"),
-            (
-                "STRETCH",
-                "Reduce Stretching",
-                "Prioritize the painted faces to have less stretching"
-                " relative to the other faces",
-            ),
-        ),
-        default="SEAMS",
-    )
+    # weight_mode: bpy.props.EnumProperty(
+    #     name="Mode",
+    #     description="What the painted weights do",
+    #     items=(
+    #         ("SEAMS", "Avoid Seams", "Keep seams off the painted faces"),
+    #         (
+    #             "STRETCH",
+    #             "Reduce Stretching",
+    #             "Prioritize the painted faces to have less stretching"
+    #             " relative to the other faces",
+    #         ),
+    #     ),
+    #     default="SEAMS",
+    # )
     weight_value: bpy.props.IntProperty(
         name="",
         description=(
-            "A higher weight will follow the seam restrictions more "
-            "but will take longer to finish the unwrap"
+            "Higher values put fewer seams on the painted faces"
+            " and make the unwrap slower"
         ),
         min=1,
         max=5,
@@ -190,10 +189,9 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     #     ),
     #     default=True,
     # )
-    # grid
     grid_type: bpy.props.EnumProperty(
         name="Grid Type",
-        description="The type of grid material that will be added",
+        description="The type of grid material to add",
         items=(
             ("UV", "UV", "Normal UV grid"),
             ("COLOUR", "Colour", "Coloured UV grid"),
@@ -210,7 +208,6 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     auto_grid: bpy.props.BoolProperty(
         name="Auto Grid", description="Automatically add a UV grid after unwrapping"
     )
-    # pack
     margin: bpy.props.FloatProperty(
         name="",
         description="The space between UV islands",
@@ -243,14 +240,14 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
 
     @property
     def avoid_seams(self):
-        return self.use_weights and self.weight_mode == "SEAMS"
+        return self.use_weights
+        # return self.use_weights and self.weight_mode == "SEAMS"
 
-    @property
-    def reduce_stretching(self):
-        return self.use_weights and self.weight_mode == "STRETCH"
+    # @property
+    # def reduce_stretching(self):
+    #     return self.use_weights and self.weight_mode == "STRETCH"
 
 
-# each engine contributes a pointer to its own settings group, keyed by engine id
 for engine in ENGINES.values():
     if engine.property_group is None:
         continue
@@ -277,11 +274,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         description="Display a progress bar in the 3D view and UV editor during an unwrap",
         default=True,
     )
-    show_warnings: bpy.props.BoolProperty(
-        name="Warnings",
-        description="Show warning if modifier is applied before unwrap",
-        default=True,
-    )
 
     def draw(self, context):
         layout = self.layout
@@ -304,10 +296,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         row.label(icon="SORTTIME")
         row.prop(self, "show_progress_bar")
 
-        row = grid.row()
-        row.label(icon="INFO")
-        row.prop(self, "show_warnings")
-
         box.separator()
 
         row = box.row()
@@ -316,8 +304,6 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         )
 
         installable = [e for e in ENGINES.values() if e.has_install_controls]
-        if not installable:
-            return
 
         box = layout.box()
         row = box.row()

@@ -36,20 +36,20 @@ def _sphere_dirs(n=64):
 SPHERE_DIRS = _sphere_dirs()
 
 
-def _set_group_weights(obj, weights):
-    vertex_groups = obj.vertex_groups
-    if SEAM_RESTRICTIONS_GROUP not in vertex_groups:
-        vertex_groups.new(name=SEAM_RESTRICTIONS_GROUP)
-    group = vertex_groups[SEAM_RESTRICTIONS_GROUP]
+# def _set_group_weights(obj, weights):
+#     vertex_groups = obj.vertex_groups
+#     if SEAM_RESTRICTIONS_GROUP not in vertex_groups:
+#         vertex_groups.new(name=SEAM_RESTRICTIONS_GROUP)
+#     group = vertex_groups[SEAM_RESTRICTIONS_GROUP]
 
-    unweighted = []
-    for index, weight in weights.items():
-        if weight > 0:
-            group.add([index], weight, "REPLACE")
-        else:
-            unweighted.append(index)
-    if unweighted:
-        group.remove(unweighted)
+#     unweighted = []
+#     for index, weight in weights.items():
+#         if weight > 0:
+#             group.add([index], weight, "REPLACE")
+#         else:
+#             unweighted.append(index)
+#     if unweighted:
+#         group.remove(unweighted)
 
 
 _old_mode = None
@@ -67,7 +67,7 @@ def is_draw_active():
     )
 
 
-# remembers the old mode and group so Exit can put them back
+# saves the old mode and group for Exit
 def _enter_draw_mode(context, obj):
     vertex_groups = obj.vertex_groups
     if not is_draw_active():
@@ -101,23 +101,23 @@ class UVGAMI_OT_draw_guides(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def _view_weights(obj, rv3d):
-    view_dir = rv3d.view_rotation @ Vector((0, 0, -1))
-    view_pos = rv3d.view_matrix.inverted().translation
-    matrix = obj.matrix_world
-    normal_matrix = matrix.to_3x3().inverted().transposed()
+# def _view_weights(obj, rv3d):
+#     view_dir = rv3d.view_rotation @ Vector((0, 0, -1))
+#     view_pos = rv3d.view_matrix.inverted().translation
+#     matrix = obj.matrix_world
+#     normal_matrix = matrix.to_3x3().inverted().transposed()
 
-    weights = {}
-    for v in obj.data.vertices:
-        normal = (normal_matrix @ v.normal).normalized()
-        if rv3d.is_perspective:
-            toward_viewer = (view_pos - matrix @ v.co).normalized()
-        else:
-            toward_viewer = -view_dir
-        facing = normal.dot(toward_viewer)
-        # fade past the silhouette so seams land on the true back
-        weights[v.index] = min(max((facing + 0.25) / 0.75, 0.0), 1.0) ** 2
-    return weights
+#     weights = {}
+#     for v in obj.data.vertices:
+#         normal = (normal_matrix @ v.normal).normalized()
+#         if rv3d.is_perspective:
+#             toward_viewer = (view_pos - matrix @ v.co).normalized()
+#         else:
+#             toward_viewer = -view_dir
+#         facing = normal.dot(toward_viewer)
+#         # fade past the silhouette so seams land on the true back
+#         weights[v.index] = min(max((facing + 0.25) / 0.75, 0.0), 1.0) ** 2
+#     return weights
 
 
 def exposure_weights(obj):
@@ -147,81 +147,80 @@ def exposure_weights(obj):
     return weights
 
 
-FREE_FRACTION = 0.5
+# FREE_FRACTION = 0.5
 
 
-def _rank_normalize(weights):
-    # a mostly-convex mesh gives a near-uniform high map, which slows the engine
-    order = sorted(weights, key=weights.get)
-    n = len(order)
-    if n < 2:
-        return dict.fromkeys(weights, 0.0)
-    return {
-        index: max(0.0, (rank / (n - 1) - FREE_FRACTION) / (1 - FREE_FRACTION))
-        for rank, index in enumerate(order)
-    }
+# def _rank_normalize(weights):
+#     # a mostly-convex mesh gives a near-uniform high map, which slows the engine
+#     order = sorted(weights, key=weights.get)
+#     n = len(order)
+#     if n < 2:
+#         return dict.fromkeys(weights, 0.0)
+#     return {
+#         index: max(0.0, (rank / (n - 1) - FREE_FRACTION) / (1 - FREE_FRACTION))
+#         for rank, index in enumerate(order)
+#     }
 
 
-class UVGAMI_OT_seed_restrictions(bpy.types.Operator):
-    bl_idname = "uvgami.seed_restrictions"
-    bl_label = "Seed Restrictions"
-    bl_options = {"UNDO"}
+# class UVGAMI_OT_seed_restrictions(bpy.types.Operator):
+#     bl_idname = "uvgami.seed_restrictions"
+#     bl_label = "Seed Restrictions"
+#     bl_options = {"UNDO"}
 
-    mode: bpy.props.EnumProperty(
-        items=[
-            ("VIEW", "From View", ""),
-            ("CREVICES", "Crevices", ""),
-            ("BOTH", "Both", ""),
-        ]
-    )
+#     mode: bpy.props.EnumProperty(
+#         items=[
+#             ("VIEW", "From View", ""),
+#             ("CREVICES", "Crevices", ""),
+#             ("BOTH", "Both", ""),
+#         ]
+#     )
 
-    @classmethod
-    def description(cls, context, properties):
-        base = {
-            "VIEW": (
-                "Restrict the side of the mesh facing the current view"
-                " so seams are placed on the back"
-            ),
-            "CREVICES": (
-                "Restrict exposed areas so seams are placed in crevices"
-                " and hidden pockets"
-            ),
-            "BOTH": (
-                "Restrict areas that are facing the current view and exposed,"
-                " so seams are placed on the back and in crevices"
-            ),
-        }[properties.mode]
-        return base + ". Replaces existing restrictions"
+#     @classmethod
+#     def description(cls, context, properties):
+#         base = {
+#             "VIEW": (
+#                 "Restrict the side of the mesh facing the current view"
+#                 " so seams are placed on the back"
+#             ),
+#             "CREVICES": (
+#                 "Restrict exposed areas so seams are placed in crevices"
+#                 " and hidden pockets"
+#             ),
+#             "BOTH": (
+#                 "Restrict areas that are facing the current view and exposed,"
+#                 " so seams are placed on the back and in crevices"
+#             ),
+#         }[properties.mode]
+#         return base + ". Replaces existing restrictions"
 
-    def execute(self, context):
-        rv3d = context.region_data
-        if self.mode != "CREVICES" and rv3d is None:
-            self.report({"ERROR"}, "Only available in the 3D viewport")
-            return {"CANCELLED"}
-        if context.mode == "EDIT_MESH":
-            bpy.ops.object.mode_set(mode="OBJECT")
+#     def execute(self, context):
+#         rv3d = context.region_data
+#         if self.mode != "CREVICES" and rv3d is None:
+#             self.report({"ERROR"}, "Only available in the 3D viewport")
+#             return {"CANCELLED"}
+#         if context.mode == "EDIT_MESH":
+#             bpy.ops.object.mode_set(mode="OBJECT")
 
-        for obj in context.selected_objects:
-            if not validate_obj(self, obj):
-                continue
+#         for obj in context.selected_objects:
+#             if not validate_obj(self, obj):
+#                 continue
 
-            if self.mode == "VIEW":
-                weights = _view_weights(obj, rv3d)
-            elif self.mode == "CREVICES":
-                weights = _rank_normalize(exposure_weights(obj))
-            else:
-                view = _view_weights(obj, rv3d)
-                exposure = exposure_weights(obj)
-                weights = _rank_normalize({i: view[i] * exposure[i] for i in view})
-            _set_group_weights(obj, weights)
+#             if self.mode == "VIEW":
+#                 weights = _view_weights(obj, rv3d)
+#             elif self.mode == "CREVICES":
+#                 weights = _rank_normalize(exposure_weights(obj))
+#             else:
+#                 view = _view_weights(obj, rv3d)
+#                 exposure = exposure_weights(obj)
+#                 weights = _rank_normalize({i: view[i] * exposure[i] for i in view})
+#             _set_group_weights(obj, weights)
 
-        # weight paint so the seeded map is visible and paintable
-        active = context.active_object
-        if active is not None and validate_obj(self, active):
-            _enter_draw_mode(context, active)
-        else:
-            context.scene.uvgami.use_weights = True
-        return {"FINISHED"}
+#         active = context.active_object
+#         if active is not None and validate_obj(self, active):
+#             _enter_draw_mode(context, active)
+#         else:
+#             context.scene.uvgami.use_weights = True
+#         return {"FINISHED"}
 
 
 class UVGAMI_OT_exit_draw(bpy.types.Operator):
