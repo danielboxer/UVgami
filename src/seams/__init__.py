@@ -35,7 +35,6 @@ from .mesh import (
     uv_island_groups,
     uv_tears,
     uvs_collapsed,
-    vertex_components,
 )
 from .preseed import (
     SURFACE_MODE_CODES,
@@ -44,7 +43,6 @@ from .preseed import (
     preseed_job,
 )
 from .rectify import FLIP_NOISE, flatten_distortion, rectify_targets
-from .surface_type import is_hard_surface
 
 __all__ = [
     "FLIP_NOISE",
@@ -64,7 +62,6 @@ __all__ = [
     "face_keys",
     "find",
     "hard_faces",
-    "is_hard_surface",
     "island_groups",
     "island_layout",
     "island_eulers",
@@ -88,5 +85,4 @@ __all__ = [
     "uv_tears",
     "uv_topology",
     "uvs_collapsed",
-    "vertex_components",
 ]

@@ -16,7 +16,6 @@ from seams import (
     cut_path,
     face_edges,
     flatten_distortion,
-    is_hard_surface,
     island_eulers,
     island_groups,
     island_layout,
@@ -35,14 +34,25 @@ from seams import (
     uv_tears,
     uv_topology,
     uvs_collapsed,
-    vertex_components,
 )
 from seams.cuts import VISIBILITY_SHARE
 from seams.engine_run import write_obj
 from seams.islands import absorb_fragments, lazy_relief, split_pieces
 from seams.mesh import weighted_normals
-from seams.preseed import _write_weights
+from seams.preseed import _write_weights, hard_faces
 from seams.segmentation import classify_job
+
+
+# the hard surface exe's classifier flags with every part on Auto
+@pytest.fixture
+def classify_hard(engine_binary, tmp_path):
+    command = [engine_binary("hardsurface")]
+
+    def run(verts, faces):
+        modes = numpy.full(len(faces), SURFACE_MODE_CODES["AUTO"])
+        return hard_faces(command, tmp_path, verts, faces, modes)
+
+    return run
 
 
 # the hard surface exe's placed seams as (low, high) vertex pairs
@@ -915,22 +925,17 @@ def sphere(rings=12, sides=24):
     return verts, faces
 
 
-def test_vertex_components_join_on_a_shared_vertex():
-    verts, faces = tube(sides=4)
-    apart_verts, apart_faces = tube(sides=4)
-    offset = len(verts)
-    verts += [[v[0] + 5.0, v[1], v[2]] for v in apart_verts]
-    faces += [[i + offset for i in f] for f in apart_faces]
-    comps = vertex_components(faces)
-    assert sorted(len(c) for c in comps) == [8, 8]
-    # welding one vertex joins them, the connectivity mesh.separate uses
-    welded = [[0 if i == offset else i for i in f] for f in faces]
-    assert len(vertex_components(welded)) == 1
-
-
-def test_beveled_cube_reads_hard(fixture_mesh):
+@pytest.mark.smoke
+def test_beveled_cube_reads_hard(fixture_mesh, classify_hard):
     verts, faces = fixture_mesh("cube-bevel2")
-    assert is_hard_surface(verts, faces)
+    assert classify_hard(verts, faces).all()
+
+
+def test_beveled_cube_with_float_noise_reads_hard(fixture_mesh, classify_hard):
+    # blender's float32 positions have noise of this size
+    verts, faces = fixture_mesh("cube-bevel2")
+    noise = numpy.random.default_rng(1).normal(0, 1e-7, (len(verts), 3))
+    assert classify_hard((numpy.asarray(verts) + noise).tolist(), faces).all()
 
 
 def lumpy_blob(rings=24, sides=48):
@@ -953,14 +958,16 @@ def lumpy_blob(rings=24, sides=48):
     return verts, faces
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize("rings, sides", [(24, 48), (12, 24)])
-def test_lumpy_blob_reads_organic(rings, sides):
+def test_lumpy_blob_reads_organic(rings, sides, classify_hard):
     verts, faces = lumpy_blob(rings, sides)
-    assert not is_hard_surface(verts, faces)
+    assert not classify_hard(verts, faces).any()
 
 
 # an auto part takes the classifier's pick, a part set by hand keeps its mode
-def test_classify_resolves_only_auto_parts(fixture_mesh):
+@pytest.mark.smoke
+def test_classify_resolves_only_auto_parts(fixture_mesh, engine_binary, tmp_path):
     cube = fixture_mesh("cube-bevel2")
     blob = lumpy_blob()
     parts = [
@@ -979,6 +986,8 @@ def test_classify_resolves_only_auto_parts(fixture_mesh):
         expected += [SURFACE_MODE_CODES[resolved]] * len(faces)
 
     result = classify_job(
+        [engine_binary("hardsurface")],
+        tmp_path,
         numpy.array(positions),
         numpy.array(corners, dtype=numpy.int64),
         numpy.array(totals, dtype=numpy.int64),
@@ -988,14 +997,26 @@ def test_classify_resolves_only_auto_parts(fixture_mesh):
     assert result.tolist() == expected
 
 
-def test_tiny_part_reads_hard():
+# the blob is under a hundredth of the model's area beside a 100 by 100 quad
+@pytest.mark.smoke
+def test_tiny_part_reads_hard(classify_hard):
     verts, faces = lumpy_blob()
-    assert is_hard_surface(verts, faces, model_area=10000.0)
+    blob_faces = len(faces)
+    base = len(verts)
+    verts += [
+        [50.0, 0.0, 0.0],
+        [150.0, 0.0, 0.0],
+        [150.0, 100.0, 0.0],
+        [50.0, 100.0, 0.0],
+    ]
+    faces.append([base, base + 1, base + 2, base + 3])
+    assert classify_hard(verts, faces)[:blob_faces].all()
 
 
-def test_smooth_cylinder_reads_hard():
+@pytest.mark.smoke
+def test_smooth_cylinder_reads_hard(classify_hard):
     verts, faces = capped_tube(sides=48)
-    assert is_hard_surface(verts, faces)
+    assert classify_hard(verts, faces).all()
 
 
 def ngon_capped_cylinder(sides=32, height=2.0):
@@ -1013,9 +1034,10 @@ def ngon_capped_cylinder(sides=32, height=2.0):
     return verts, faces
 
 
-def test_default_cylinder_reads_hard():
+@pytest.mark.smoke
+def test_default_cylinder_reads_hard(classify_hard):
     verts, faces = ngon_capped_cylinder()
-    assert is_hard_surface(verts, faces)
+    assert classify_hard(verts, faces).all()
 
 
 @pytest.mark.smoke

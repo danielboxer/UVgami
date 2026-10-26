@@ -5,11 +5,9 @@ from pathlib import Path
 
 import numpy
 
-from .cancel import check_cancelled
 from .cuts import restriction_weights
 from .engine_run import EngineError, EngineRun, launch, poll_run, stdout_path, write_obj
-from .mesh import faces_from_arrays, polygon_area, vertex_components
-from .surface_type import is_hard_surface
+from .mesh import faces_from_arrays
 from .worker import remove_folder
 
 # the stem of the engine's input obj, its sidecars and its output obj
@@ -36,27 +34,8 @@ def submesh(verts, faces, subset):
 SURFACE_MODE_CODES = {"ORGANIC": 1, "HARD": 2, "AUTO": 3}
 
 
-def hard_faces(verts, faces, surface_modes, cancelled=None):
-    modes = numpy.asarray(surface_modes)
-    if (modes == SURFACE_MODE_CODES["ORGANIC"]).all():
-        return set()
-    # only the classifier reads it, and it costs a pass over every face
-    model_area = None
-    if (modes == SURFACE_MODE_CODES["AUTO"]).any():
-        model_area = sum(polygon_area(verts, face) for face in faces)
-    hard = set()
-    for part in vertex_components(faces):
-        check_cancelled(cancelled)
-        mode = surface_modes[part[0]]
-        if mode == SURFACE_MODE_CODES["HARD"] or (
-            mode == SURFACE_MODE_CODES["AUTO"]
-            and is_hard_surface(verts, [faces[i] for i in part], model_area)
-        ):
-            hard.update(part)
-    return hard
-
-
 HARDSURFACE_SEAMS_NAME = "seams.txt"
+HARD_FACES_NAME = "hard_faces.txt"
 HARDSURFACE_UVS_NAME = "uvs.txt"
 HALVES_NAME = "halves"
 DONE_PREFIX = "done: "
@@ -93,6 +72,15 @@ def _read_nothing(run_folder, face_count):
     return None
 
 
+def _read_hard_faces(path, face_count):
+    flags = numpy.loadtxt(path, dtype=numpy.int64, ndmin=1)
+    if len(flags) != face_count:
+        raise EngineError(
+            f"hard surface engine classified {len(flags)} faces, expected {face_count}"
+        )
+    return flags != 0
+
+
 # each run keeps its output files in a folder of its own, removed once read
 def _start(folder, args, env, out_path, face_count, read):
     run_folder = Path(tempfile.mkdtemp(dir=folder))
@@ -105,6 +93,31 @@ def _write_weights(path, weights):
         path.write_text(
             ",".join(f"{v},{float(w)!r}" for v, w in weights.items()) + "\n"
         )
+
+
+def _write_modes(path, surface_modes):
+    path.write_text(
+        "".join(f"{mode}\n" for mode in numpy.asarray(surface_modes).tolist())
+    )
+
+
+# a loose part takes its first face's mode, Auto parts get the classifier's pick
+def hard_faces(command, workdir, verts, faces, surface_modes, cancelled=None):
+    if (numpy.asarray(surface_modes) == SURFACE_MODE_CODES["ORGANIC"]).all():
+        return numpy.zeros(len(faces), dtype=bool)
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    folder = Path(tempfile.mkdtemp(dir=workdir))
+    try:
+        obj_path = folder / f"{ENGINE_INPUT_STEM}.obj"
+        write_obj(obj_path, verts, faces)
+        _write_modes(folder / f"{ENGINE_INPUT_STEM}_modes", surface_modes)
+        flags_path = folder / HARD_FACES_NAME
+        args = [*command, "classify", obj_path, flags_path]
+        run = _start(folder, args, None, flags_path, len(faces), _read_hard_faces)
+        return poll_run(run, cancelled)
+    finally:
+        remove_folder(folder)
 
 
 # optcuts' command, environment and arguments for the organic half's unwraps
@@ -138,9 +151,7 @@ def preseed_job(
             folder / f"{ENGINE_INPUT_STEM}_weights",
             restriction_weights(weights, exposure),
         )
-        (folder / f"{ENGINE_INPUT_STEM}_modes").write_text(
-            "".join(f"{mode}\n" for mode in numpy.asarray(surface_modes).tolist())
-        )
+        _write_modes(folder / f"{ENGINE_INPUT_STEM}_modes", surface_modes)
         plane_args = []
         if plane is not None:
             axis, partners = plane
