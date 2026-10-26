@@ -26,9 +26,14 @@ NOT_DOWNLOADED_ERROR = "Engine not downloaded. Download it in the add-on prefere
 
 def parse_version(version):
     parts = version.split(".")
-    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+    if len(parts) < 3 or not all(part.isdigit() for part in parts):
         return None
     return tuple(int(part) for part in parts)
+
+
+# False when nothing is installed
+def version_below(version, bound):
+    return version is not None and parse_version(version) < parse_version(bound)
 
 
 # Blender requires add-ons to check this before any download
@@ -78,6 +83,13 @@ class InstallTask:
         return None
 
     def execute(self, context):
+        # imported late, this module loads while the engines package is importing
+        from ..manager import manager
+
+        # an install or delete replaces the binary a running unwrap uses
+        if manager.is_active:
+            self.report({"ERROR"}, "Finish or cancel the current unwrap first")
+            return {"CANCELLED"}
         if task_state["running"]:
             self.report({"WARNING"}, "An engine install or delete is already running")
             return {"CANCELLED"}
@@ -125,7 +137,7 @@ UPDATE_LABEL_SPLIT = 0.9
 
 
 # the download button is in the preferences, not here
-def draw_update_row(layout, owner, default_phase, text, required=False):
+def draw_update_row(layout, owner, default_phase, text, required):
     if task_state["running"] and task_state["owner"] == owner:
         draw_progress(layout, default_phase)
         return
@@ -134,6 +146,29 @@ def draw_update_row(layout, owner, default_phase, text, required=False):
     split = layout.split(factor=UPDATE_LABEL_SPLIT)
     split.label(text=text, icon="ERROR" if required else "INFO")
     split.row().operator("uvgami.open_preferences", text="", icon="PREFERENCES")
+
+
+# the sidebar redraws constantly and the check reads the engine folders
+class CachedUpdateNotice:
+    # the task_state owner of the engine's install and delete
+    install_owner = ""
+    install_phase = ""
+    # (text, required), read again after invalidate_caches
+    _update_notice = None
+
+    def invalidate_caches(self):
+        super().invalidate_caches()
+        self._update_notice = None
+
+    def draw_update_notice(self, layout):
+        if self._update_notice is None:
+            required = self.install_too_old()
+            state = "required" if required else "available"
+            text = f"{self.label} update {state}" if self.update_pending() else None
+            self._update_notice = (text, required)
+        draw_update_row(
+            layout, self.install_owner, self.install_phase, *self._update_notice
+        )
 
 
 # only the first line, a label cannot wrap

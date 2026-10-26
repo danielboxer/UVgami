@@ -5,9 +5,7 @@ import bmesh.utils
 import bpy
 import numpy
 
-# re-export, callers import it from here
-from ..seams.mesh import split_per_face as split_per_face
-from ..seams.mesh import transformed
+from ..seams.mesh import edge_keys, split_per_face, transformed
 
 
 def new_bmesh(obj):
@@ -105,39 +103,28 @@ def triangulate_mesh(mesh):
     bm.free()
 
 
-# one integer per edge, the same for both directions
-def _edge_keys(tail, head, vertex_count):
-    return numpy.minimum(tail, head) * vertex_count + numpy.maximum(tail, head)
-
-
 # conflicting: the diagonal is already an edge or another quad's diagonal
 def _conflicting_quads(mesh):
-    totals = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
-    mesh.polygons.foreach_get("loop_total", totals)
+    corners, totals = face_vertex_arrays(mesh)
     quads = numpy.flatnonzero(totals == 4)
     if len(quads) == 0:
         return []
-    corners = numpy.empty(len(mesh.loops), dtype=numpy.int64)
-    mesh.loops.foreach_get("vertex_index", corners)
     edge_vertices = numpy.empty(len(mesh.edges) * 2, dtype=numpy.int64)
     mesh.edges.foreach_get("vertices", edge_vertices)
     edge_vertices = edge_vertices.reshape(-1, 2)
 
-    vertex_count = len(mesh.vertices)
     quad_corners = corners[loop_starts(mesh)[quads][:, None] + numpy.arange(4)]
     diagonals = numpy.stack(
         [
-            _edge_keys(quad_corners[:, 0], quad_corners[:, 2], vertex_count),
-            _edge_keys(quad_corners[:, 1], quad_corners[:, 3], vertex_count),
+            edge_keys(quad_corners[:, 0], quad_corners[:, 2]),
+            edge_keys(quad_corners[:, 1], quad_corners[:, 3]),
         ],
         axis=1,
     )
-    edge_keys = numpy.sort(
-        _edge_keys(edge_vertices[:, 0], edge_vertices[:, 1], vertex_count)
-    )
+    mesh_edges = numpy.sort(edge_keys(edge_vertices[:, 0], edge_vertices[:, 1]))
     # searchsorted beats isin by 7x here
-    slots = numpy.searchsorted(edge_keys, diagonals).clip(max=len(edge_keys) - 1)
-    is_edge = edge_keys[slots] == diagonals
+    slots = numpy.searchsorted(mesh_edges, diagonals).clip(max=len(mesh_edges) - 1)
+    is_edge = mesh_edges[slots] == diagonals
     _, inverse, counts = numpy.unique(
         diagonals.ravel(), return_inverse=True, return_counts=True
     )

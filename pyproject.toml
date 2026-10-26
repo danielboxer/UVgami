@@ -26,7 +26,7 @@ environments = ["sys_platform == 'win32'", "sys_platform == 'linux'"]
 [tool.ruff]
 target-version = "py311"
 # private is its own repo, so the root gitignore does not keep ruff out of it
-extend-exclude = ["private", "src/utils/pyqtree.py"]
+extend-exclude = ["private"]
 
 [tool.ruff.lint]
 extend-select = ["I", "UP"]

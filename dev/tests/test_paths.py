@@ -1,20 +1,16 @@
-import importlib.util
 import sys
 import types
-from pathlib import Path
+
+from uvgami_cli.common import load_addon_module
 
 # the stub must not outlive the load, other test dirs collect a real bpy
 bpy_stub = types.ModuleType("bpy")
 bpy_stub.path = types.SimpleNamespace(clean_name=lambda name: name)
 
-spec = importlib.util.spec_from_file_location(
-    "addon_paths", Path(__file__).parents[2] / "src" / "utils" / "paths.py"
-)
-paths = importlib.util.module_from_spec(spec)
 real_bpy = sys.modules.get("bpy")
 sys.modules["bpy"] = bpy_stub
 try:
-    spec.loader.exec_module(paths)
+    paths = load_addon_module("src/utils/paths.py")
 finally:
     if real_bpy is None:
         del sys.modules["bpy"]

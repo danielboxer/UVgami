@@ -1,19 +1,9 @@
-import importlib.util
 import re
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _load(relpath, name):
-    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / relpath)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
+from uvgami_cli.common import REPO_ROOT, load_addon_module
 
 # install.py imports bpy, this module does not
-venv_commands = _load("src/engines/partuv/venv_commands.py", "uvgami_venv_commands")
+venv_commands = load_addon_module("src/engines/partuv/venv_commands.py")
 
 WHEEL_URL = "https://example.invalid/partuv-0.1.4-cp311-cp311-win_amd64.whl"
 

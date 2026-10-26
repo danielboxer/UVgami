@@ -61,10 +61,6 @@ class UVGAMI_OT_stop(bpy.types.Operator):
         if to_cancel:
             manager.exit_viewer = True
             tag_redraw()
-
-        # without early stop the wait lasts a full unwrap
-        if manager.engine.supports_early_stop:
-            manager.run_until_settled(unwraps)
         return {"FINISHED"}
 
     def _cancel_collected(self, context, to_cancel):

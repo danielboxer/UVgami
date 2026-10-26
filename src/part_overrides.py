@@ -24,8 +24,11 @@ def face_values(mesh, name):
     # dtype = numpy.float32 if OVERRIDE_ATTRIBUTES[name] == "FLOAT" else numpy.int32
     values = numpy.zeros(len(mesh.polygons), dtype=numpy.int32)
     attribute = mesh.attributes.get(name)
-    if attribute is not None and attribute.domain == "FACE":
-        attribute.data.foreach_get("value", values)
+    if attribute is None:
+        return values
+    if attribute.domain != "FACE":
+        raise ValueError(f"{name} is a {attribute.domain} attribute, not a FACE one")
+    attribute.data.foreach_get("value", values)
     return values
 
 

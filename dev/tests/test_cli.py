@@ -47,25 +47,26 @@ def fake_partuv(monkeypatch):
 
     calls = {}
 
-    def fake_run(pairs, checkpoint, config, threshold, segmentation="ai"):
+    def fake_run(pairs, checkpoint, config, threshold, segmentation="ai", *, batch):
         calls.update(
             pairs=pairs,
             checkpoint=checkpoint,
             config=config,
             threshold=threshold,
             segmentation=segmentation,
+            batch=batch,
         )
         for _, output_path in pairs:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text("v 0 0 0\nvt 0 0\nf 1/1 1/1 1/1\n")
         return 0
 
+    def fake_resolve_checkpoint(flag):
+        calls["checkpoint_flag"] = flag
+        return str(flag) if flag else "fake.ckpt"
+
     monkeypatch.setattr(partuv.cli, "run", fake_run)
-    monkeypatch.setattr(
-        partuv.cli,
-        "resolve_checkpoint",
-        lambda flag: str(flag) if flag else "fake.ckpt",
-    )
+    monkeypatch.setattr(partuv.cli, "resolve_checkpoint", fake_resolve_checkpoint)
     return calls
 
 
@@ -306,6 +307,7 @@ def test_partuv_dispatch(triangle, tmp_path, fake_partuv):
     )
     assert code == 0
     assert fake_partuv["pairs"] == [(triangle, out)]
+    assert fake_partuv["batch"] is False
     assert fake_partuv["threshold"] == 1.5
     assert fake_partuv["segmentation"] == "geometric"
     # geometric never resolves a checkpoint
@@ -324,6 +326,8 @@ def test_partuv_ai_resolves_checkpoint(triangle, tmp_path, monkeypatch, fake_par
     assert code == 0
     assert fake_partuv["segmentation"] == "ai"
     assert fake_partuv["threshold"] == 1.25
+    # with the env var set, partuv resolves the checkpoint itself
+    assert fake_partuv["checkpoint_flag"] is None
     assert fake_partuv["checkpoint"] == "fake.ckpt"
     assert fake_partuv["config"] == config
 

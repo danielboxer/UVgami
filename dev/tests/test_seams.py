@@ -1,23 +1,15 @@
 import collections
-import importlib.util
 import math
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
+import numpy
 import pytest
 
-# loaded from file, the addon package imports bpy
-PKG = Path(__file__).parents[2] / "src" / "seams"
-spec = importlib.util.spec_from_file_location(
-    "seams", PKG / "__init__.py", submodule_search_locations=[str(PKG)]
-)
-sys.modules["seams"] = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(sys.modules["seams"])
-from seams import (  # noqa: E402
+from seams import (
+    SURFACE_MODE_CODES,
     TURN_COST,
-    build,
     crease_relief,
     cross,
     crosses,
@@ -33,67 +25,54 @@ from seams import (  # noqa: E402
     pair,
     path_cost,
     rectify_targets,
+    restriction_weights,
     signed_area,
-    snap_paths,
     split_islands,
     split_moves,
     uv_area_fit,
     uv_fit,
     uv_island_groups,
-    uv_seams,
+    uv_tears,
     uv_topology,
     uvs_collapsed,
     vertex_components,
 )
-from seams.engine_run import write_obj  # noqa: E402
-from seams.islands import absorb_fragments, split_pieces  # noqa: E402
-
-FIXTURES = Path(__file__).parent / "fixtures"
-
-
-HARDSURFACE = (
-    Path(__file__).parents[2] / "engine-builds" / "windows" / "hardsurface.exe"
-)
-needs_hardsurface = pytest.mark.skipif(
-    not HARDSURFACE.is_file(), reason="hardsurface build missing"
-)
+from seams.cuts import VISIBILITY_SHARE
+from seams.engine_run import write_obj
+from seams.islands import absorb_fragments, lazy_relief, split_pieces
+from seams.mesh import weighted_normals
+from seams.preseed import _write_weights
+from seams.segmentation import classify_job
 
 
 # the hard surface exe's placed seams as (low, high) vertex pairs
-def exe_seams(verts, faces, angle=30, weights=None):
-    with tempfile.TemporaryDirectory() as folder:
-        obj = Path(folder) / "mesh.obj"
-        write_obj(obj, verts, faces)
-        if weights:
-            (Path(folder) / "mesh_weights").write_text(
-                ",".join(f"{v},{w!r}" for v, w in weights.items()) + "\n"
+@pytest.fixture
+def exe_seams(engine_binary):
+    hardsurface = engine_binary("hardsurface")
+
+    def run(verts, faces, angle=30, weights=None):
+        with tempfile.TemporaryDirectory() as folder:
+            obj = Path(folder) / "mesh.obj"
+            write_obj(obj, verts, faces)
+            _write_weights(Path(folder) / "mesh_weights", weights)
+            out = Path(folder) / "seams.txt"
+            subprocess.run(
+                [hardsurface, "seams", obj, out, "--angle", str(angle)],
+                check=True,
+                capture_output=True,
             )
-        out = Path(folder) / "seams.txt"
-        subprocess.run(
-            [HARDSURFACE, "seams", obj, out, "--angle", str(angle)],
-            check=True,
-            capture_output=True,
-        )
-        return {
-            tuple(int(v) for v in line.split()) for line in out.read_text().splitlines()
-        }
+            return {
+                tuple(int(v) for v in line.split())
+                for line in out.read_text().splitlines()
+            }
 
-
-def read_obj(path):
-    verts, faces = [], []
-    for line in open(path):
-        if line.startswith("v "):
-            verts.append([float(x) for x in line.split()[1:4]])
-        elif line.startswith("f "):
-            faces.append([int(t.split("/")[0]) - 1 for t in line.split()[1:]])
-    return verts, faces
+    return run
 
 
 @pytest.mark.smoke
-@needs_hardsurface
-def test_seam_edges_on_plain_cube():
+def test_seam_edges_on_plain_cube(exe_seams, fixture_mesh):
     # every cube edge is a crease, so each face is its own island
-    verts, faces = read_obj(FIXTURES / "cube.obj")
+    verts, faces = fixture_mesh("cube")
     seams = exe_seams(verts, faces)
     assert len(seams) == 12
     assert all(v0 < v1 for v0, v1 in seams)
@@ -115,8 +94,7 @@ def tube(sides=4, height=1.0):
 
 
 @pytest.mark.smoke
-@needs_hardsurface
-def test_coarse_tube_unrolls_with_one_cut():
+def test_coarse_tube_unrolls_with_one_cut(exe_seams):
     # the wall merges into one annulus, which gets one lengthwise opening
     verts, faces = tube(16)
     seams = exe_seams(verts, faces)
@@ -126,8 +104,7 @@ def test_coarse_tube_unrolls_with_one_cut():
 
 
 @pytest.mark.smoke
-@needs_hardsurface
-def test_tall_coarse_tube_still_gets_one_cut():
+def test_tall_coarse_tube_still_gets_one_cut(exe_seams):
     # the wall's 22.5 degree steps merge away whatever its height
     verts, faces = tube(16, height=2.0)
     seams = exe_seams(verts, faces)
@@ -137,8 +114,7 @@ def test_tall_coarse_tube_still_gets_one_cut():
 
 
 @pytest.mark.smoke
-@needs_hardsurface
-def test_faceted_tube_is_cut_on_every_facet_edge():
+def test_faceted_tube_is_cut_on_every_facet_edge(exe_seams):
     # 45 degrees a segment is a crease, so each flat facet is its own island
     verts, faces = tube(8)
     seams = exe_seams(verts, faces)
@@ -147,18 +123,16 @@ def test_faceted_tube_is_cut_on_every_facet_edge():
 
 
 @pytest.mark.smoke
-@needs_hardsurface
-def test_lower_feature_angle_keeps_shallow_seams():
+def test_lower_feature_angle_keeps_shallow_seams(exe_seams):
     # 22.5 degree panel boundaries merge away at the default 30 but survive 15
     verts, faces = elbow(sides=16)
     assert len(exe_seams(verts, faces, angle=15)) > len(exe_seams(verts, faces))
 
 
 @pytest.mark.smoke
-@needs_hardsurface
-def test_beveled_cube_is_cut_into_its_six_faces():
+def test_beveled_cube_is_cut_into_its_six_faces(exe_seams, fixture_mesh):
     # each bevel band dissolves into one neighbour, so every cut sits on one crease
-    verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
+    verts, faces = fixture_mesh("cube-bevel2")
     seams = exe_seams(verts, faces)
     edges = face_edges(faces)
     assert len(island_groups(faces, seams, edges)) == 6
@@ -196,8 +170,7 @@ def elbow(rings=12, sides=12, bend_radius=3.0, tube_radius=1.0):
 
 # the coarse tube's one cut is a side edge, and every other side edge is as long
 @pytest.mark.smoke
-@needs_hardsurface
-def test_painted_restriction_moves_the_cut():
+def test_painted_restriction_moves_the_cut(exe_seams):
     verts, faces = tube(16)
     plain = exe_seams(verts, faces)
     painted = {v: 1.0 for edge in plain for v in edge}
@@ -209,8 +182,7 @@ def test_painted_restriction_moves_the_cut():
 
 # painting everything leaves the tube closed if the cut is dropped
 @pytest.mark.smoke
-@needs_hardsurface
-def test_paint_cannot_block_a_cut_that_has_to_happen():
+def test_paint_cannot_block_a_cut_that_has_to_happen(exe_seams):
     verts, faces = tube(16)
     painted = {v: 1.0 for v in range(len(verts))}
     assert len(exe_seams(verts, faces, weights=painted)) == 1
@@ -222,10 +194,31 @@ def folded_pair(z):
     return verts, faces
 
 
+def test_restriction_weights_take_the_larger_of_paint_and_exposure():
+    exposure = {0: 1.0, 1: 0.5, 2: 0.0}
+    painted = {1: 1.0, 3: 0.2}
+    assert restriction_weights(painted, exposure) == {
+        0: VISIBILITY_SHARE,
+        1: 1.0,
+        3: 0.2,
+    }
+    assert restriction_weights(None, {2: 0.0}) is None
+
+
+def test_weights_sidecar_lists_vertex_weight_pairs(tmp_path):
+    path = tmp_path / "mesh_weights"
+    _write_weights(path, {3: numpy.float32(0.5), 7: 1})
+    assert path.read_text() == "3,0.5,7,1.0\n"
+
+    # no weights leaves the engine without a sidecar
+    _write_weights(path.with_name("none_weights"), None)
+    assert not path.with_name("none_weights").exists()
+
+
 def test_crease_relief_orders_concave_convex_flat():
     def relief_at(z):
         verts, faces = folded_pair(z)
-        weighted, _, edges = build(verts, faces)
+        weighted, edges = weighted_normals(verts, faces), face_edges(faces)
         relief = crease_relief(verts, faces, weighted, edges)
         return relief.get(pair(0, 1), 1.0)
 
@@ -250,11 +243,11 @@ def folded_flap():
 def test_cut_path_rides_the_crease():
     # the fold route is 8 long against 6 direct
     verts, faces = folded_flap()
-    weighted, _, edges = build(verts, faces)
+    weighted, edges = weighted_normals(verts, faces), face_edges(faces)
     relief = crease_relief(verts, faces, weighted, edges)
     adjacent = vertex_adjacency(faces)
 
-    plain = cut_path(verts, adjacent, {0}, {6})
+    plain = cut_path(verts, adjacent, {0}, {6}, relief={})
     assert all(verts[v][0] == 0 for v in plain)
 
     creased = cut_path(verts, adjacent, {0}, {6}, relief=relief)
@@ -380,19 +373,17 @@ def test_clean_compact_island_is_not_split():
     assert split_islands(verts, faces, set(), uvs) == set()
 
 
-def test_folded_long_island_is_split_into_even_pieces():
-    verts, faces, uvs = strip_island(30)
+# packing is blind to rotation and scale, so each placement slices the same
+@pytest.mark.parametrize(
+    "placement",
+    [{}, {"angle": 0.7}, {"scale": 1 / 200}],
+    ids=["plain", "rotated", "scaled"],
+)
+def test_folded_long_island_is_split_into_even_pieces(placement):
+    verts, faces, uvs = strip_island(30, **placement)
     fold_face(uvs, 20)
     extra = split_islands(verts, faces, set(), uvs)
-    assert extra
     # 29.3 long against a cap of 7.7, so 4 slices, each under the cap
-    assert island_count(faces, extra) == 4
-
-
-def test_split_is_rotation_invariant():
-    verts, faces, uvs = strip_island(30, angle=0.7)
-    fold_face(uvs, 20)
-    extra = split_islands(verts, faces, set(), uvs)
     assert island_count(faces, extra) == 4
 
 
@@ -402,10 +393,10 @@ def test_split_accepts_shared_edges_and_relief_cache():
     fold_face(uvs, 20)
     edges = face_edges(faces)
     groups = island_groups(faces, set(), edges)
-    relief_cache = []
-    extra = split_islands(verts, faces, set(), uvs, None, groups, edges, relief_cache)
+    cut_relief = lazy_relief(verts, faces, edges)
+    extra = split_islands(verts, faces, set(), uvs, groups, edges, cut_relief)
     assert extra == split_islands(verts, faces, set(), uvs)
-    assert relief_cache
+    assert cut_relief.cache_info().currsize
 
 
 def test_split_moves_part_the_sliced_strips():
@@ -432,7 +423,7 @@ def test_split_moves_part_the_sliced_strips():
         moved[face_index][corner] = (u, v)
     after = uv_island_groups(faces, moved, edges)
     assert len(after) == 4
-    assert seams == uv_seams(faces, moved, edges)
+    assert seams == uv_tears(faces, moved)
     assert sorted(pieces) == sorted(after)
 
     # one range covering everything scans exactly like the whole-mesh path
@@ -467,32 +458,12 @@ def test_folded_compact_island_is_halved():
     assert island_count(faces, extra) == 2
 
 
-def test_split_is_scale_invariant():
-    # the same folded shape at 1/200 scale, packing is scale blind
-    verts, faces, uvs = strip_island(30, scale=1 / 200)
-    fold_face(uvs, 20)
-    extra = split_islands(verts, faces, set(), uvs)
-    assert island_count(faces, extra) == 4
-
-
 def test_halving_cut_takes_the_shortest_path():
     # 5 quads put the halving line mid-quad, where the raw bin cut takes the diagonal
     verts, faces, uvs = strip_island(5)
     fold_face(uvs, 2)
     extra = split_islands(verts, faces, set(), uvs)
     assert extra in ({pair(4, 5)}, {pair(6, 7)})
-
-
-def test_painted_column_moves_the_halving_cut():
-    # both columns either side of the halving line are equally short
-    verts, faces, uvs = strip_island(5)
-    fold_face(uvs, 2)
-    plain = split_islands(verts, faces, set(), uvs)
-    painted = {v: 1.0 for edge in plain for v in edge}
-
-    extra = split_islands(verts, faces, set(), uvs, painted)
-    assert len(extra) == 1
-    assert not painted.keys() & {v for edge in extra for v in edge}
 
 
 def tube_island(rows, cols, shear):
@@ -615,7 +586,7 @@ def test_boxed_in_fragment_rejoins_one_side():
     cuts = {"d", "e", "x"}
     pieces = split_pieces(list(range(9)), links, cuts)
     assert sorted(len(p) for p in pieces) == [1, 4, 4]
-    pieces = absorb_fragments(pieces, links, cuts, lambda f: 1.0, 2.0)
+    pieces, cuts = absorb_fragments(pieces, links, cuts, lambda f: 1.0, 2.0)
     assert cuts == {"d"}
     assert sorted(sorted(p) for p in pieces) == [[0, 1, 2, 3], [4, 5, 6, 7, 8]]
 
@@ -628,7 +599,7 @@ def test_split_pieces_among_tiny_pieces_keep_their_cut():
         links[f + 1].append((f, name))
     cuts = {"b"}
     pieces = split_pieces(list(range(4)), links, cuts)
-    pieces = absorb_fragments(pieces, links, cuts, lambda f: 1.0, 3.0)
+    pieces, cuts = absorb_fragments(pieces, links, cuts, lambda f: 1.0, 3.0)
     assert cuts == {"b"}
     assert len(pieces) == 2
 
@@ -648,7 +619,7 @@ def test_large_area_fragment_keeps_its_cut():
     def area(f):
         return 10.0 if f == 4 else 1.0
 
-    pieces = absorb_fragments(pieces, links, cuts, area, 2.0)
+    pieces, cuts = absorb_fragments(pieces, links, cuts, area, 2.0)
     assert cuts == {"d", "e"}
     assert sorted(len(p) for p in pieces) == [1, 4, 4]
 
@@ -724,9 +695,9 @@ def test_second_neck_found_on_the_piece():
 def test_split_scan_restricted_to_given_groups():
     verts, faces, uvs = strip_island(30)
     fold_face(uvs, 20)
-    assert split_islands(verts, faces, set(), uvs, None, []) == set()
+    assert split_islands(verts, faces, set(), uvs, []) == set()
     everything = [list(range(len(faces)))]
-    assert split_islands(verts, faces, set(), uvs, None, everything)
+    assert split_islands(verts, faces, set(), uvs, everything)
 
 
 def test_split_respects_existing_seams():
@@ -759,33 +730,33 @@ def vertex_adjacency(faces):
     return adjacent
 
 
-def test_snap_paths_redraws_a_cut_on_the_dense_mesh():
-    # a two segment cut whose three corners land on grid vertices
-    verts, faces, _ = grid_island(4, 4)
-    mapped = [0, 2, 12]
-    paths = snap_paths(verts, vertex_adjacency(faces), mapped, {(0, 1), (1, 2)})
-    assert paths == {(0, 1), (1, 2), (2, 7), (7, 12)}
+# def test_snap_paths_redraws_a_cut_on_the_dense_mesh():
+#     # a two segment cut whose three corners land on grid vertices
+#     verts, faces, _ = grid_island(4, 4)
+#     mapped = [0, 2, 12]
+#     paths = snap_paths(verts, vertex_adjacency(faces), mapped, {(0, 1), (1, 2)})
+#     assert paths == {(0, 1), (1, 2), (2, 7), (7, 12)}
 
 
-def test_snap_paths_drops_a_cut_with_nowhere_to_go():
-    # both ends on one vertex, then an end nothing connects to
-    verts, faces, _ = grid_island(4, 4)
-    adjacent = vertex_adjacency(faces)
-    mapped = [3, 3, len(verts)]
-    assert snap_paths(verts, adjacent, mapped, {(0, 1)}) == set()
-    assert snap_paths(verts, adjacent, mapped, {(0, 2)}) == set()
+# def test_snap_paths_drops_a_cut_with_nowhere_to_go():
+#     # both ends on one vertex, then an end nothing connects to
+#     verts, faces, _ = grid_island(4, 4)
+#     adjacent = vertex_adjacency(faces)
+#     mapped = [3, 3, len(verts)]
+#     assert snap_paths(verts, adjacent, mapped, {(0, 1)}) == set()
+#     assert snap_paths(verts, adjacent, mapped, {(0, 2)}) == set()
 
 
-def test_snap_paths_drops_a_cut_between_loose_parts():
-    # two copies of the grid side by side, a cut with an end on each
-    verts, faces, _ = grid_island(4, 4)
-    offset = len(verts)
-    verts = verts + [(x + 10.0, y, z) for x, y, z in verts]
-    faces = faces + [[v + offset for v in face] for face in faces]
-    mapped = [0, offset + 2, 2]
-    adjacent = vertex_adjacency(faces)
-    assert snap_paths(verts, adjacent, mapped, {(0, 1)}) == set()
-    assert snap_paths(verts, adjacent, mapped, {(0, 2)}) == {(0, 1), (1, 2)}
+# def test_snap_paths_drops_a_cut_between_loose_parts():
+#     # two copies of the grid side by side, a cut with an end on each
+#     verts, faces, _ = grid_island(4, 4)
+#     offset = len(verts)
+#     verts = verts + [(x + 10.0, y, z) for x, y, z in verts]
+#     faces = faces + [[v + offset for v in face] for face in faces]
+#     mapped = [0, offset + 2, 2]
+#     adjacent = vertex_adjacency(faces)
+#     assert snap_paths(verts, adjacent, mapped, {(0, 1)}) == set()
+#     assert snap_paths(verts, adjacent, mapped, {(0, 2)}) == {(0, 1), (1, 2)}
 
 
 def test_uv_fit_scales_into_old_bounds():
@@ -957,8 +928,8 @@ def test_vertex_components_join_on_a_shared_vertex():
     assert len(vertex_components(welded)) == 1
 
 
-def test_beveled_cube_reads_hard():
-    verts, faces = read_obj(FIXTURES / "cube-bevel2.obj")
+def test_beveled_cube_reads_hard(fixture_mesh):
+    verts, faces = fixture_mesh("cube-bevel2")
     assert is_hard_surface(verts, faces)
 
 
@@ -986,6 +957,35 @@ def lumpy_blob(rings=24, sides=48):
 def test_lumpy_blob_reads_organic(rings, sides):
     verts, faces = lumpy_blob(rings, sides)
     assert not is_hard_surface(verts, faces)
+
+
+# an auto part takes the classifier's pick, a part set by hand keeps its mode
+def test_classify_resolves_only_auto_parts(fixture_mesh):
+    cube = fixture_mesh("cube-bevel2")
+    blob = lumpy_blob()
+    parts = [
+        (cube, "AUTO", "HARD"),
+        (blob, "AUTO", "ORGANIC"),
+        (cube, "ORGANIC", "ORGANIC"),
+        (blob, "HARD", "HARD"),
+    ]
+    positions, corners, totals, modes, expected = [], [], [], [], []
+    for index, ((verts, faces), mode, resolved) in enumerate(parts):
+        base = len(positions)
+        positions += [[x + 5.0 * index, y, z] for x, y, z in verts]
+        corners += [base + v for face in faces for v in face]
+        totals += [len(face) for face in faces]
+        modes += [SURFACE_MODE_CODES[mode]] * len(faces)
+        expected += [SURFACE_MODE_CODES[resolved]] * len(faces)
+
+    result = classify_job(
+        numpy.array(positions),
+        numpy.array(corners, dtype=numpy.int64),
+        numpy.array(totals, dtype=numpy.int64),
+        numpy.array(modes),
+    )
+
+    assert result.tolist() == expected
 
 
 def test_tiny_part_reads_hard():
@@ -1019,8 +1019,7 @@ def test_default_cylinder_reads_hard():
 
 
 @pytest.mark.smoke
-@needs_hardsurface
-def test_default_cylinder_cuts_rims_and_one_seam():
+def test_default_cylinder_cuts_rims_and_one_seam(exe_seams):
     # both rims plus a single axial cut, the wall as one island and each cap its own
     verts, faces = ngon_capped_cylinder()
     seams = exe_seams(verts, faces)

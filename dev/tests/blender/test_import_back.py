@@ -1,6 +1,6 @@
 import bpy
 import pytest
-from blender_fixtures import manager, needs_engine
+from blender_fixtures import add_cube, manager, needs_engine
 
 pytestmark = [needs_engine, pytest.mark.smoke]
 
@@ -8,17 +8,10 @@ DIGITS = 3
 UNWRAPPED_COLLECTION = "UVgami Unwrapped"
 
 
-def add_cube(name, **kwargs):
-    bpy.ops.mesh.primitive_cube_add(**kwargs)
-    obj = bpy.context.active_object
-    obj.name = name
-    return obj
-
-
-def world_positions(obj):
+def world_positions(obj, vertices=None):
     return {
         tuple(round(c, DIGITS) for c in obj.matrix_world @ v.co)
-        for v in obj.data.vertices
+        for v in (obj.data.vertices if vertices is None else vertices)
     }
 
 
@@ -92,8 +85,10 @@ def test_far_small_mesh_keeps_its_place(unwrap, outputs):
 
 def test_vertex_group_comes_back(unwrap, outputs):
     cube = add_cube("grip")
+    top = [v for v in cube.data.vertices if v.co.z > 0]
     group = cube.vertex_groups.new(name="top")
-    group.add([v.index for v in cube.data.vertices if v.co.z > 0], 0.75, "REPLACE")
+    group.add([v.index for v in top], 0.75, "REPLACE")
+    expected_positions = world_positions(cube, top)
 
     unwrap()
 
@@ -101,10 +96,12 @@ def test_vertex_group_comes_back(unwrap, outputs):
     output = outputs()["grip_unwrapped"]
     restored = output.vertex_groups.get("top")
     assert restored is not None
-    weights = [
-        g.weight
+    grouped = [
+        v
         for v in output.data.vertices
-        for g in v.groups
-        if g.group == restored.index
+        if any(g.group == restored.index for g in v.groups)
     ]
-    assert weights and all(w == 0.75 for w in weights)
+    # a seam splits a vertex, so the group is compared by position
+    assert world_positions(output, grouped) == expected_positions
+    weights = [g.weight for v in grouped for g in v.groups if g.group == restored.index]
+    assert all(w == 0.75 for w in weights)

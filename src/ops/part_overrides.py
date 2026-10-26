@@ -16,11 +16,10 @@ from ..part_overrides import (
 )
 
 # from ..ui.props import PRIORITY_LABELS
-from ..seams.proxy_transfer import connected_labels
+from ..seams.mesh import connected_labels, following_corners
 from ..utils.mesh import (
     face_vertex_arrays,
     lifted_triangles,
-    loop_starts,
     validate_obj,
     vertex_position_array,
 )
@@ -79,12 +78,12 @@ class MeshParts:
     def __init__(self, obj):
         self.topology = _topology(bmesh.from_edit_mesh(obj.data))
         mesh = _written_back(obj)
-        edges = numpy.empty(len(mesh.edges) * 2, dtype=numpy.int64)
-        mesh.edges.foreach_get("vertices", edges)
-        corners, _ = face_vertex_arrays(mesh)
-        labels = connected_labels(len(mesh.vertices), edges.reshape(-1, 2))
+        corners, totals = face_vertex_arrays(mesh)
+        # each corner joins the next one round its face
+        edges = numpy.stack((corners, corners[following_corners(totals)]), axis=1)
+        labels = connected_labels(len(mesh.vertices), edges)
         vertex_part = numpy.unique(labels, return_inverse=True)[1]
-        self.ids = vertex_part[corners[loop_starts(mesh)]]
+        self.ids = vertex_part[corners[numpy.cumsum(totals) - totals]]
         self.count = int(self.ids.max()) + 1 if len(self.ids) else 0
         self._read_geometry(mesh)
 

@@ -1,89 +1,37 @@
-import importlib
-import importlib.util
 import math
-import sys
-import types
-from pathlib import Path
 
 import numpy
 import pytest
+from addon_src import similar
 
-# loaded from file, the addon package imports bpy
-PKG = Path(__file__).parents[2] / "src" / "seams"
-spec = importlib.util.spec_from_file_location(
-    "seams", PKG / "__init__.py", submodule_search_locations=[str(PKG)]
-)
-sys.modules["seams"] = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(sys.modules["seams"])
-from seams import (  # noqa: E402
+from seams import (
     SURFACE_MODE_CODES,
     EngineError,
     OptcutsRun,
     pair,
     preseed_job,
 )
-from seams.islands import SPLIT_TARGET  # noqa: E402
-from seams.preseed import submesh  # noqa: E402
+from seams.islands import SPLIT_TARGET
+from seams.preseed import submesh
 
-# the addon package imports bpy, a bare package lets similar import seams
-package = types.ModuleType("addon_src")
-package.__path__ = [str(Path(__file__).parents[2] / "src")]
-sys.modules.setdefault("addon_src", package)
-similar = importlib.import_module("addon_src.similar")
-
-FIXTURES = Path(__file__).parent / "fixtures"
-BUNDLED = Path(__file__).parents[2] / "engine-builds" / "windows" / "optcuts.exe"
-HARDSURFACE = BUNDLED.with_name("hardsurface.exe")
 # the addon's balanced bound and default seam weight
 ENGINE_ARGS = ["-u", "4.2", "-s", "100"]
 
-CUBE_VERTS = [
-    (0.0, 0.0, 0.0),
-    (1.0, 0.0, 0.0),
-    (1.0, 1.0, 0.0),
-    (0.0, 1.0, 0.0),
-    (0.0, 0.0, 1.0),
-    (1.0, 0.0, 1.0),
-    (1.0, 1.0, 1.0),
-    (0.0, 1.0, 1.0),
-]
-CUBE_FACES = [
-    (0, 3, 2, 1),
-    (4, 5, 6, 7),
-    (0, 1, 5, 4),
-    (1, 2, 6, 5),
-    (2, 3, 7, 6),
-    (3, 0, 4, 7),
-]
 
-
-def read_obj(path):
-    rows = [line.split() for line in path.read_text().splitlines()]
-    positions = numpy.array(
-        [[float(x) for x in r[1:4]] for r in rows if r and r[0] == "v"]
-    )
-    faces = [
-        [int(t.split("/")[0]) - 1 for t in r[1:]] for r in rows if r and r[0] == "f"
-    ]
-    return positions, faces
-
-
-def test_submesh_compacts_and_remaps_seams():
-    sub_verts, sub_faces, sub_seams = submesh(
-        CUBE_VERTS, CUBE_FACES, [0, 2], {(0, 1), (6, 7)}
-    )
+def test_submesh_compacts_the_subset(unit_cube):
+    verts, faces = unit_cube
+    sub_verts, sub_faces = submesh(verts, faces, [0, 2])
     assert len(sub_faces) == 2
     assert len(sub_verts) == 6
-    # (0, 1) survives remapped, (6, 7) is outside the subset
-    assert len(sub_seams) == 1
-    (a, b) = next(iter(sub_seams))
-    assert sub_verts[a] == CUBE_VERTS[0]
-    assert sub_verts[b] == CUBE_VERTS[1]
+    assert [sub_verts[v] for v in sub_faces[0]] == [verts[v] for v in faces[0]]
 
 
-needs_engines = pytest.mark.skipif(
-    not (BUNDLED.is_file() and HARDSURFACE.is_file()), reason="engine builds missing"
-)
+# the hard surface command and optcuts' run, found like the addon finds them
+@pytest.fixture
+def engines(engine_binary):
+    return [engine_binary("hardsurface")], OptcutsRun(
+        [engine_binary("optcuts")], None, ENGINE_ARGS
+    )
 
 
 def mesh_arrays(faces):
@@ -93,10 +41,9 @@ def mesh_arrays(faces):
 
 
 # the seams, the flattened faces' corner uvs and the flattened faces, or None
-def run_preseed(tmp_path, positions, faces, surface_modes, plane=None):
+def run_preseed(engines, tmp_path, positions, faces, surface_modes, plane=None):
     return preseed_job(
-        [HARDSURFACE],
-        OptcutsRun([BUNDLED], None, ENGINE_ARGS),
+        *engines,
         tmp_path,
         numpy.asarray(positions, dtype=numpy.float64),
         *mesh_arrays(faces),
@@ -142,73 +89,69 @@ def uv_sphere(rings=16, segments=32):
     return verts, faces
 
 
-def test_a_missing_hard_surface_engine_raises(tmp_path):
+def test_a_missing_hard_surface_engine_raises(tmp_path, unit_cube):
+    verts, faces = unit_cube
+    missing = [tmp_path / "missing.exe"]
     with pytest.raises(EngineError):
-        preseed_job(
-            [tmp_path / "missing.exe"],
-            OptcutsRun([BUNDLED], None, ENGINE_ARGS),
+        run_preseed(
+            (missing, OptcutsRun(missing, None, ENGINE_ARGS)),
             tmp_path,
-            numpy.asarray(CUBE_VERTS),
-            *mesh_arrays(CUBE_FACES),
-            None,
-            None,
-            None,
-            numpy.asarray(all_hard(CUBE_FACES)),
-            30,
-            SPLIT_TARGET,
+            verts,
+            faces,
+            all_hard(faces),
         )
 
 
 @pytest.mark.smoke
-@needs_engines
-def test_preseed_flattens_a_cube_inside_the_unit_square(tmp_path):
+def test_preseed_flattens_a_cube_inside_the_unit_square(tmp_path, engines, unit_cube):
+    verts, faces = unit_cube
     seams, uvs, flattened = run_preseed(
-        tmp_path, CUBE_VERTS, CUBE_FACES, all_hard(CUBE_FACES)
+        engines, tmp_path, verts, faces, all_hard(faces)
     )
     assert seams
-    assert flattened.tolist() == list(range(len(CUBE_FACES)))
-    assert uvs.shape == (4 * len(CUBE_FACES), 2)
+    assert flattened.tolist() == list(range(len(faces)))
+    assert uvs.shape == (4 * len(faces), 2)
     assert ((uvs >= 0.0) & (uvs <= 1.0)).all()
 
 
 # two loose quads, a preseed holds whole loose parts, never a slice
 @pytest.mark.smoke
-@needs_engines
-def test_preseed_leaves_faces_that_are_not_hard_alone(tmp_path):
-    verts = CUBE_VERTS[:4] + [(x + 5.0, y, z) for x, y, z in CUBE_VERTS[:4]]
+def test_preseed_leaves_faces_that_are_not_hard_alone(tmp_path, engines, unit_cube):
+    square = unit_cube[0][:4]
+    verts = square + [(x + 5.0, y, z) for x, y, z in square]
     faces = [(0, 1, 2, 3), (4, 5, 6, 7)]
     modes = [SURFACE_MODE_CODES["HARD"], SURFACE_MODE_CODES["ORGANIC"]]
-    _, _, flattened = run_preseed(tmp_path, verts, faces, modes)
+    _, _, flattened = run_preseed(engines, tmp_path, verts, faces, modes)
     assert flattened.tolist() == [0]
 
 
 # a closed part no seam touches folds onto itself in the flatten
 @pytest.mark.smoke
-@needs_engines
-def test_a_closed_part_no_seam_touches_is_not_flattened(tmp_path):
+def test_a_closed_part_no_seam_touches_is_not_flattened(tmp_path, engines, unit_cube):
+    cube_verts, cube_faces = unit_cube
     sphere_verts, sphere_faces = uv_sphere()
-    verts = CUBE_VERTS + [(x + 5.0, y, z) for x, y, z in sphere_verts]
-    faces = list(CUBE_FACES) + [
-        tuple(v + len(CUBE_VERTS) for v in face) for face in sphere_faces
+    verts = cube_verts + [(x + 5.0, y, z) for x, y, z in sphere_verts]
+    faces = cube_faces + [
+        tuple(v + len(cube_verts) for v in face) for face in sphere_faces
     ]
-    _, _, flattened = run_preseed(tmp_path, verts, faces, all_hard(faces))
-    assert flattened.tolist() == list(range(len(CUBE_FACES)))
+    _, _, flattened = run_preseed(engines, tmp_path, verts, faces, all_hard(faces))
+    assert flattened.tolist() == list(range(len(cube_faces)))
 
 
 # the unit cube is symmetric across x = 0.5
 @pytest.mark.smoke
-@needs_engines
-def test_preseed_mirrors_close_the_seam_set(tmp_path):
+def test_preseed_mirrors_close_the_seam_set(tmp_path, engines, unit_cube):
+    verts, faces = unit_cube
     mirror = dict(enumerate([1, 0, 3, 2, 5, 4, 7, 6]))
     seams, _, _ = run_preseed(
-        tmp_path, CUBE_VERTS, CUBE_FACES, all_hard(CUBE_FACES), plane=(0, mirror)
+        engines, tmp_path, verts, faces, all_hard(faces), plane=(0, mirror)
     )
     assert seams
     assert {pair(mirror[a], mirror[b]) for a, b in seams} == seams
 
 
 # returns the seams, the flattened faces and the partner map
-def symmetric_preseed(tmp_path, positions, faces, surface_modes):
+def symmetric_preseed(engines, tmp_path, positions, faces, surface_modes):
     low, high = positions.min(axis=0), positions.max(axis=0)
     center = (low + high) / 2
     diagonal = numpy.linalg.norm(high - low)
@@ -219,7 +162,7 @@ def symmetric_preseed(tmp_path, positions, faces, surface_modes):
     )
     partners = similar.partner_map(partner)
     seams, _, flattened = run_preseed(
-        tmp_path, positions, faces, surface_modes, plane=(0, partners)
+        engines, tmp_path, positions, faces, surface_modes, plane=(0, partners)
     )
     return seams, flattened, partners
 
@@ -234,31 +177,37 @@ def mirrored_share(seams, partners):
 
 
 @pytest.mark.smoke
-@needs_engines
-def test_symmetric_preseed_mirrors_the_engine_cuts(tmp_path):
-    positions, faces = read_obj(FIXTURES / "cylinder.obj")
+def test_symmetric_preseed_mirrors_the_engine_cuts(tmp_path, engines, fixture_mesh):
+    verts, faces = fixture_mesh("cylinder")
     modes = numpy.full(len(faces), SURFACE_MODE_CODES["ORGANIC"])
 
-    seams, flattened, partners = symmetric_preseed(tmp_path, positions, faces, modes)
+    seams, flattened, partners = symmetric_preseed(
+        engines, tmp_path, numpy.array(verts), faces, modes
+    )
 
     assert len(flattened) == len(faces)
     assert mirrored_share(seams, partners) > 0.9
 
 
 @pytest.mark.smoke
-@needs_engines
-def test_symmetric_preseed_mirrors_hard_and_organic_parts_together(tmp_path):
-    cylinder, cylinder_faces = read_obj(FIXTURES / "cylinder.obj")
-    cube, cube_faces = read_obj(FIXTURES / "cube.obj")
+def test_symmetric_preseed_mirrors_hard_and_organic_parts_together(
+    tmp_path, engines, fixture_mesh
+):
+    cylinder, cylinder_faces = fixture_mesh("cylinder")
+    cube, cube_faces = fixture_mesh("cube")
     # both parts straddle the plane at x = 0
-    positions = numpy.concatenate([cylinder, cube + [0.0, 4.0, 0.0]])
+    positions = numpy.concatenate(
+        [numpy.array(cylinder), numpy.array(cube) + [0.0, 4.0, 0.0]]
+    )
     faces = cylinder_faces + [[v + len(cylinder) for v in face] for face in cube_faces]
     modes = numpy.array(
         [SURFACE_MODE_CODES["ORGANIC"]] * len(cylinder_faces)
         + [SURFACE_MODE_CODES["HARD"]] * len(cube_faces)
     )
 
-    seams, flattened, partners = symmetric_preseed(tmp_path, positions, faces, modes)
+    seams, flattened, partners = symmetric_preseed(
+        engines, tmp_path, positions, faces, modes
+    )
 
     assert len(flattened) == len(faces)
     cube_vertices = set(range(len(cylinder), len(positions)))

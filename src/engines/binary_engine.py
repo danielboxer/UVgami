@@ -4,12 +4,12 @@ import zipfile
 import bpy
 
 from ..utils.download import download_file, verify_sha256
-from ..utils.paths import (
+from ..utils.engine_binaries import (
     get_engine_binary_name,
-    get_extension_dir_path,
     get_local_engine_path,
     get_platform_tag,
 )
+from ..utils.paths import get_extension_dir_path
 from . import Engine
 from .install_task import (
     DELETE_DESCRIPTION,
@@ -17,15 +17,16 @@ from .install_task import (
     DOWNLOADED_MESSAGE,
     NOT_DOWNLOADED_ERROR,
     UPDATE_ICON,
+    CachedUpdateNotice,
     InstallTask,
     draw_error,
     draw_online_access,
     draw_progress,
-    draw_update_row,
     offline_error,
     parse_version,
     report_progress,
     task_state,
+    version_below,
 )
 
 RELEASES_URL = "https://github.com/DanielBoxer/UVgami/releases"
@@ -50,16 +51,8 @@ def license_target(install_dir, member):
 
 
 class EngineRelease:
-    # bundled releases download and delete together with this one
     def __init__(
-        self,
-        name,
-        label,
-        version,
-        minimum_version,
-        download_size,
-        archive_sha256s,
-        bundled=(),
+        self, name, label, version, minimum_version, download_size, archive_sha256s
     ):
         self.name = name
         self.label = label
@@ -67,11 +60,7 @@ class EngineRelease:
         self.minimum_version = minimum_version
         self.download_size = download_size
         self.archive_sha256s = archive_sha256s
-        self.bundled = bundled
         self.install_op = f"uvgami.install_{name}"
-
-    def with_bundled(self):
-        return (self, *self.bundled)
 
     def install_dir(self):
         # named by version, installed_version reads it back
@@ -104,8 +93,7 @@ class EngineRelease:
         )
 
     def installed_below(self, bound):
-        version = self.installed_version()
-        return version is not None and parse_version(version) < parse_version(bound)
+        return version_below(self.installed_version(), bound)
 
     def install_too_old(self):
         return self.installed_below(self.minimum_version)
@@ -114,11 +102,8 @@ class EngineRelease:
         return self.installed_below(self.version)
 
     def install(self):
-        for release in self.with_bundled():
-            if release.installed_version() != release.version:
-                release.install_alone()
-
-    def install_alone(self):
+        if self.installed_version() == self.version:
+            return
         install_dir = self.install_dir()
         install_dir.mkdir(parents=True, exist_ok=True)
         try:
@@ -176,24 +161,23 @@ class UVGAMI_OT_delete_engine(InstallTask, bpy.types.Operator):
 
     engine_id: bpy.props.StringProperty(options={"HIDDEN"})
 
+    # the preferences match the progress and errors to the release name
     @property
     def owner(self):
-        return self.engine_id
+        # imported late, the engines package imports this module while loading
+        from . import get_engine
+
+        return get_engine(self.engine_id).release.name
 
     def invoke(self, context, event):
         return context.window_manager.invoke_confirm(self, event)
 
     def build_task(self):
-        # imported late, the engines package imports this module while loading
-        from . import get_engine
-
-        releases = get_engine(self.engine_id).release.with_bundled()
-        roots = [engine_install_root(release.name) for release in releases]
+        root = engine_install_root(self.owner)
 
         def delete():
             task_state["phase"] = "Deleting engine"
-            for root in roots:
-                shutil.rmtree(root, ignore_errors=True)
+            shutil.rmtree(root, ignore_errors=True)
 
         return delete
 
@@ -226,38 +210,31 @@ class InstallEngineTask(InstallTask):
         return self.release.install
 
 
-def release_path(release):
-    path = get_local_engine_path(release.name) or release.installed_path()
-    if path is not None:
-        return path, None
-    if release.install_too_old():
-        return (
-            None,
-            "This update needs a newer engine. Download it in the add-on preferences",
-        )
-    return None, NOT_DOWNLOADED_ERROR
-
-
-class BinaryEngine(Engine):
+class BinaryEngine(CachedUpdateNotice, Engine):
     release = None
     has_install_controls = True
     missing_label = "Engine"
+    install_phase = DOWNLOAD_PHASE
 
-    # the unwrap also runs the bundled binaries
+    @property
+    def install_owner(self):
+        return self.release.name
+
     def validate(self, prefs):
-        path, error = release_path(self.release)
-        for bundled in self.release.bundled:
-            if error is None:
-                _, error = release_path(bundled)
-        if error is not None:
-            return None, error
-        return path, None
+        release = self.release
+        path = get_local_engine_path(release.name) or release.installed_path()
+        if path is not None:
+            return path, None
+        if release.install_too_old():
+            return (
+                None,
+                "This update needs a newer engine."
+                " Download it in the add-on preferences",
+            )
+        return None, NOT_DOWNLOADED_ERROR
 
     def install_too_old(self):
-        return any(release.install_too_old() for release in self.release.with_bundled())
-
-    def is_downloaded(self):
-        return any(release.is_downloaded() for release in self.release.with_bundled())
+        return self.release.install_too_old()
 
     def describe(self):
         if get_local_engine_path(self.release.name) is not None:
@@ -266,9 +243,9 @@ class BinaryEngine(Engine):
         return f"{self.label} v{version}"
 
     def update_pending(self):
-        return any(
+        release = self.release
+        return (
             get_local_engine_path(release.name) is None and release.update_available()
-            for release in self.release.with_bundled()
         )
 
     def draw_not_installed(self, layout, waiting_for=None):
@@ -295,12 +272,6 @@ class BinaryEngine(Engine):
             icon=UPDATE_ICON if outdated else "IMPORT",
         )
 
-    def draw_update_notice(self, layout):
-        required = self.install_too_old()
-        state = "required" if required else "available"
-        text = f"{self.label} update {state}" if self.update_pending() else None
-        draw_update_row(layout, self.release.name, DOWNLOAD_PHASE, text, required)
-
     def draw_prefs(self, layout, prefs):
         release = self.release
         if task_state["running"] and task_state["owner"] == release.name:
@@ -318,8 +289,6 @@ class BinaryEngine(Engine):
             status = (f"Engine update available: {change}", "FILE_REFRESH")
         elif needs_download:
             status = ("Not downloaded", "X")
-        elif error is not None:
-            status = (error, "ERROR")
         elif get_local_engine_path(release.name) is not None:
             status = ("Local build", "CHECKMARK")
         else:
@@ -328,7 +297,7 @@ class BinaryEngine(Engine):
         layout.row().label(text=status[0], icon=status[1])
 
         wants_download = needs_download or update_pending
-        if wants_download or self.is_downloaded():
+        if wants_download or release.is_downloaded():
             row = layout.row()
             row.scale_y = 1.5
             if wants_download and not draw_online_access(row):
@@ -337,7 +306,7 @@ class BinaryEngine(Engine):
                     text="Update Engine" if update_pending else "Download Engine",
                     icon=UPDATE_ICON if update_pending else "IMPORT",
                 )
-            if self.is_downloaded():
+            if release.is_downloaded():
                 delete = row.operator(
                     "uvgami.delete_engine", text="Delete Engine", icon="TRASH"
                 )

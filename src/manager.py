@@ -31,7 +31,6 @@ from .utils.paths import clear_io_dir, get_io_dir_paths, get_preferences
 from .utils.ui import popup, set_status, switch_solid_color, tag_redraw
 
 STATUS_SECONDS = 5
-SETTLE_TICK_SECONDS = 0.05
 DISPATCH_SECONDS = 0.1
 # a finished piece waits for the tick
 QUEUED_DISPATCH_SECONDS = 0.02
@@ -75,6 +74,8 @@ class UnwrapManager:
         self._queue = deque()
         self._running = []
         self._shared_processes = []
+        # argv batches, one engine process for a whole queue
+        self._batch_processes = []
         self._pack_output_objects = []
         self._pack_topology = {}
         self.engine = None
@@ -85,8 +86,6 @@ class UnwrapManager:
         self.pieces_still_arriving = 0
         # _reset_session must not clear this, the builders add and remove entries
         self.preparing = []
-        # session progress as (done, running, remaining) fractions
-        self.progress = numpy.zeros(3)
         self.summary = []
         self.summary_failed = False
         self._reset_session()
@@ -116,6 +115,8 @@ class UnwrapManager:
         self._drawn_panel_state = None
         self._panel_drawn_at = 0.0
         self.session_started_at = time.monotonic()
+        # (done, running, remaining) fractions, where the bar starts
+        self.progress = numpy.array((0.0, 0.0, 1.0))
 
     @property
     def active(self):
@@ -130,8 +131,24 @@ class UnwrapManager:
         elif unwrap in self._queue:
             self._queue.remove(unwrap)
 
-    def start(self, uv_editor=False):
+    # the queue ui lists every piece before any input file exists
+    def claimed_paths(self):
+        claimed = {unwrap.path for unwrap in self.active}
+        claimed.update(unwrap.path for unwrap, _ in self.results)
+        return claimed
+
+    # a session that adds to a running one keeps the running one's files
+    def prepare_input_dir(self):
+        input_path, output_path = get_io_dir_paths()
+        if not self.is_active:
+            clear_io_dir(input_path)
+            clear_io_dir(output_path)
+        return input_path
+
+    def start(self, engine, engine_ctx, uv_editor=False):
         self._reset_session()
+        self.engine = engine
+        self.engine_ctx = engine_ctx
         self.props = Settings(bpy.context.scene.uvgami)
         self._fill_slots()
         if get_preferences().show_progress_bar:
@@ -204,10 +221,16 @@ class UnwrapManager:
         process.send(unwrap.path, unwrap)
         unwrap.join_batch(process)
 
-    def _close_shared_processes(self):
+    # a closed stdin ends a shared process, a batch process runs its argv to the end
+    def _close_processes(self):
         for process in self._shared_processes:
             process.close()
         self._shared_processes.clear()
+        for process in self._batch_processes:
+            if process.process.poll() is None:
+                self.engine.stop(process.process, self.engine_ctx)
+            process.close()
+        self._batch_processes.clear()
 
     def _start_batch_process(self, engine, props):
         unwraps = [u for u in self._queue if u.copy_of is None]
@@ -222,6 +245,7 @@ class UnwrapManager:
             engine.build_env(self.engine_ctx),
             {unwrap.path.stem: unwrap for unwrap in unwraps},
         )
+        self._batch_processes.append(batch_process)
         for unwrap in unwraps:
             unwrap.join_batch(batch_process)
             self._running.append(unwrap)
@@ -248,11 +272,13 @@ class UnwrapManager:
                         unwrap.stop_requested_at = time.monotonic()
                     elif time.monotonic() - unwrap.stop_requested_at > STOP_SECONDS:
                         unwrap.stop_process()
-                        failed.append((unwrap, -3))
+                        failed.append(
+                            (unwrap, self._fail, "Stop timed out (force killed)")
+                        )
                         # the poll below must not fail it a second time
                         continue
 
-                timeout_minutes = bpy.context.scene.uvgami.unwrap_timeout
+                timeout_minutes = self.props.unwrap_timeout
                 if (
                     timeout_minutes > 0
                     and not unwrap.is_stopped
@@ -268,7 +294,14 @@ class UnwrapManager:
                         )
                     else:
                         unwrap.stop_process()
-                        failed.append((unwrap, -2))
+                        elapsed = (time.monotonic() - unwrap.started_at) / 60
+                        failed.append(
+                            (
+                                unwrap,
+                                self._fail,
+                                f"Timed out after {elapsed:.1f} minutes",
+                            )
+                        )
                         # the poll below must not fail it a second time
                         continue
 
@@ -277,7 +310,7 @@ class UnwrapManager:
                     if ret_code == 0 and unwrap.output_path.is_file():
                         completed.append(unwrap)
                     elif ret_code == 0:
-                        failed.append((unwrap, -4))
+                        failed.append((unwrap, self._fail, "Engine produced no output"))
                     else:
                         # a batched mesh that never started goes back to the queue
                         stem = unwrap.path.stem
@@ -288,7 +321,7 @@ class UnwrapManager:
                         ):
                             requeued.append(unwrap)
                         else:
-                            failed.append((unwrap, ret_code))
+                            failed.append((unwrap, self._handle_failure, ret_code))
 
             if self._running or self._queue:
                 logger.mark_unwrapping()
@@ -298,10 +331,8 @@ class UnwrapManager:
             for unwrap in completed:
                 self._settle_step(unwrap, "finishing", self._process_completion)
 
-            for unwrap, ret_code in failed:
-                self._settle_step(
-                    unwrap, "handling the failure of", self._handle_failure, ret_code
-                )
+            for unwrap, step, detail in failed:
+                self._settle_step(unwrap, "handling the failure of", step, detail)
 
             self._drain_imports()
             self._finish_transfers()
@@ -335,12 +366,6 @@ class UnwrapManager:
             return LOOKUP_DISPATCH_SECONDS
         return QUEUED_DISPATCH_SECONDS if self._queue else DISPATCH_SECONDS
 
-    def run_until_settled(self, unwraps):
-        while self.is_active and any(u.result is None for u in unwraps):
-            if self._dispatch() is None:
-                return
-            time.sleep(SETTLE_TICK_SECONDS)
-
     # a piece with a uv transfer splits its bar between the engine and the transfer
     def _update_progress_bar(self):
         active = self.active
@@ -362,10 +387,14 @@ class UnwrapManager:
         progress = engine * (1 - share)[:, None]
         progress[:, 0] += share * transferred
         progress[:, 2] += share * (1 - transferred)
-        self.progress = progress.mean(axis=0)
-        if get_preferences().show_progress_bar:
-            progress_bar.update(self.progress)
+        progress = progress.mean(axis=0)
+        # the bar's gpu batches are rebuilt on every update
+        if get_preferences().show_progress_bar and not numpy.array_equal(
+            progress, self.progress
+        ):
+            progress_bar.update(progress)
             tag_redraw(("WINDOW",))
+        self.progress = progress
         now = time.monotonic()
         if now - self._panel_drawn_at < PANEL_REDRAW_SECONDS:
             return
@@ -616,7 +645,7 @@ class UnwrapManager:
         move_to_collection(output, collection)
 
     def _finish_transfers(self):
-        timeout_minutes = bpy.context.scene.uvgami.unwrap_timeout
+        timeout_minutes = self.props.unwrap_timeout
         for entry in list(self.pending_transfers):
             job, output, pack_index = entry.job, entry.output, entry.pack_index
             if (
@@ -675,76 +704,65 @@ class UnwrapManager:
         if all(len(v) == len(output.data.polygons) for v in overrides.values()):
             write_overrides(output.data, overrides)
 
+    # one add per distinct weight, a call per vertex is slow on a dense mesh
     def _restore_vertex_groups(self, unwrap, output):
-        if unwrap.join_job is not None and len(unwrap.join_job.finished) > 1:
-            combined_groups = {}
-            v_offset = 0
-            for u in unwrap.join_job.finished:
-                for group_name, weights in u.vertex_groups.items():
-                    if group_name not in combined_groups:
-                        combined_groups[group_name] = {}
-                    for v_idx, weight in weights.items():
-                        combined_groups[group_name][v_idx + v_offset] = weight
-                v_offset += u.vertex_count
-            groups_data = combined_groups
-        else:
-            groups_data = unwrap.vertex_groups
+        pieces = unwrap.join_job.finished if unwrap.join_job is not None else [unwrap]
+        combined = {}
+        offset = 0
+        for piece in pieces:
+            for name, (indices, weights) in piece.vertex_groups.items():
+                combined.setdefault(name, []).append((indices + offset, weights))
+            offset += piece.vertex_count
 
-        for group_name, weights in groups_data.items():
-            new_group = output.vertex_groups.new(name=group_name)
-            for v_idx, weight in weights.items():
-                if v_idx < len(output.data.vertices):
-                    new_group.add([v_idx], weight, "REPLACE")
+        vertex_count = len(output.data.vertices)
+        for name, parts in combined.items():
+            indices = numpy.concatenate([indices for indices, _ in parts])
+            weights = numpy.concatenate([weights for _, weights in parts])
+            inside = indices < vertex_count
+            indices, weights = indices[inside], weights[inside]
+            order = numpy.argsort(weights, kind="stable")
+            values, starts = numpy.unique(weights[order], return_index=True)
+            group = output.vertex_groups.new(name=name)
+            for weight, run in zip(values, numpy.split(indices[order], starts[1:])):
+                group.add(run.tolist(), float(weight), "REPLACE")
+
+    # returns the log line
+    def _move_to_invalid(self, unwrap, msg):
+        self.moved_to_invalid = True
+        return mark_not_unwrapped(import_obj(unwrap.path), msg)
+
+    # a timeout, force kill or missing output, with no engine exit code to describe
+    def _fail(self, unwrap, msg):
+        logger.add_data("errors", self._move_to_invalid(unwrap, msg))
+        self.record_result(unwrap, Result.INVALID)
 
     def _handle_failure(self, unwrap, ret_code):
-        msg = ""
-
         # windows reports exit codes unsigned
         if ret_code >= 2**31:
             ret_code -= 2**32
 
-        move_to_invalid = False
-        # None when the message already explains the code
-        engine_code = None
-        # manager-synthetic codes for timeout, force kill and missing output
-        if ret_code == -2:
-            elapsed = (time.monotonic() - unwrap.started_at) / 60
-            msg = f"Timed out after {elapsed:.1f} minutes"
-            move_to_invalid = True
-        elif ret_code == -3:
-            msg = "Stop timed out (force killed)"
-            move_to_invalid = True
-        elif ret_code == -4:
-            msg = "Engine produced no output"
-            move_to_invalid = True
+        described = self.engine.describe_failure(ret_code)
+        if described is None:
+            self.error_code = ret_code
+            tail = unwrap.get_stderr_tail()
+            last = last_meaningful_line(tail)
+            if last:
+                self.error_stderr = last
+            if tail:
+                print(f"UVgami engine stderr (exit {ret_code}):")
+                for line in tail:
+                    print(line)
+            msg = f"Unknown Engine Error ({ret_code})"
+            logger.add_data("errors", self._move_to_invalid(unwrap, msg))
         else:
-            described = self.engine.describe_failure(ret_code)
-            if described is not None:
-                msg, move_to_invalid = described
-                engine_code = ret_code
-                if not move_to_invalid:
-                    # one code can cover several causes, the cause is in stderr
-                    last = last_meaningful_line(unwrap.get_stderr_tail())
-                    self.error_messages.append(f"{msg} ({last})" if last else msg)
+            msg, move_to_invalid = described
+            if move_to_invalid:
+                logged = self._move_to_invalid(unwrap, msg)
+                logger.add_data("errors", f"{logged} (exit {ret_code})")
             else:
-                msg = f"Unknown Engine Error ({ret_code})"
-                move_to_invalid = True
-                self.error_code = ret_code
-                tail = unwrap.get_stderr_tail()
-                last = last_meaningful_line(tail)
-                if last:
-                    self.error_stderr = last
-                if tail:
-                    print(f"UVgami engine stderr (exit {ret_code}):")
-                    for line in tail:
-                        print(line)
-
-        if move_to_invalid:
-            self.moved_to_invalid = True
-            logged = mark_not_unwrapped(import_obj(unwrap.path), msg)
-            if engine_code is not None:
-                logged += f" (exit {engine_code})"
-            logger.add_data("errors", logged)
+                # one code can cover several causes, the cause is in stderr
+                last = last_meaningful_line(unwrap.get_stderr_tail())
+                self.error_messages.append(f"{msg} ({last})" if last else msg)
 
         self.record_result(unwrap, Result.INVALID)
 
@@ -789,10 +807,10 @@ class UnwrapManager:
             valid_objects = [o for o in self._pack_output_objects if check_exists(o)]
             if valid_objects:
                 if props.combine_uvs:
-                    pack_objects(valid_objects, self._pack_topology)
+                    pack_objects(valid_objects, props, self._pack_topology)
                 else:
                     for obj in valid_objects:
-                        pack_objects([obj], self._pack_topology)
+                        pack_objects([obj], props, self._pack_topology)
 
         counts = self._result_counts()
         # one undo step for the whole session
@@ -916,7 +934,9 @@ class UnwrapManager:
         self.preparing.clear()
         self.pieces_still_arriving = 0
         for unwrap in list(self._running):
+            # release_engine leaves a batch or shared process running
             unwrap.stop_process()
+            unwrap.release_engine()
             unwrap.cleanup()
         for unwrap in list(self._queue):
             unwrap.cleanup()
@@ -925,7 +945,7 @@ class UnwrapManager:
         self.pending_transfers.clear()
         self._running.clear()
         self._queue.clear()
-        self._close_shared_processes()
+        self._close_processes()
         self._unregister_dispatch()
         progress_bar.remove()
         # the viewer modal dies with a file load

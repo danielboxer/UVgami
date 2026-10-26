@@ -7,10 +7,9 @@ from blender_fixtures import (
     manager,
     needs_engine,
     seam_count,
+    two_loose_cubes,
 )
-from test_settings import EXPECTED, two_loose_cubes
-
-pytestmark = needs_engine
+from test_settings import EXPECTED
 
 part_overrides = addon.src.part_overrides
 SURFACE_MODE_CODES = part_overrides.SURFACE_MODE_CODES
@@ -59,6 +58,7 @@ def side_uvs(obj, second):
 #     return total / 2
 
 
+@needs_engine
 def test_kept_part_skips_the_engine_and_keeps_its_uvs(unwrap, outputs):
     joined = two_loose_cubes()
     bpy.context.scene.uvgami.pack_after_unwrap = False
@@ -74,6 +74,7 @@ def test_kept_part_skips_the_engine_and_keeps_its_uvs(unwrap, outputs):
     assert side_uvs(output, second=False) != side_uvs(joined, second=False)
 
 
+@needs_engine
 def test_kept_part_without_uvs_is_not_unwrapped(unwrap, invalid_objects):
     joined = two_loose_cubes()
     joined.data.uv_layers.remove(joined.data.uv_layers[0])
@@ -84,6 +85,7 @@ def test_kept_part_without_uvs_is_not_unwrapped(unwrap, invalid_objects):
     assert len(invalid_objects()) == 1
 
 
+@needs_engine
 @pytest.mark.parametrize(
     "panel_mode, part_mode", [("ORGANIC", "HARD"), ("HARD", "ORGANIC")]
 )

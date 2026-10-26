@@ -1,23 +1,12 @@
-import importlib.util
 import threading
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
 import pytest
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _load(relpath, name):
-    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / relpath)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
+from uvgami_cli.common import load_addon_module
 
 # install.py imports bpy, download.py does not
-download = _load("src/utils/download.py", "uvgami_download")
+download = load_addon_module("src/utils/download.py")
 
 CONTENT = bytes(range(256)) * 40  # 10240 bytes
 API = "http://127.0.0.1:1/releases"

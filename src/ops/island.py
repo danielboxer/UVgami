@@ -21,7 +21,7 @@ from ..seams import (
     signed_area,
     split_moves,
     uv_island_groups,
-    uv_seams,
+    uv_tears,
 )
 from ..ui.panels import describe_settings, fix_settings
 from ..unwrap import Unwrap
@@ -37,12 +37,7 @@ from ..utils.mesh import (
     triangulate_mesh,
     vertex_positions,
 )
-from ..utils.paths import (
-    clear_io_dir,
-    get_io_dir_paths,
-    get_preferences,
-    unused_input_path,
-)
+from ..utils.paths import get_preferences, unused_input_path
 
 # blender's default of 10 leaves folds
 REPAIR_ITERATIONS = 50
@@ -80,7 +75,7 @@ def selected_faces(mesh):
 
 
 # a fix carries none of the material or vertex group state a full unwrap does
-def queue_fix(obj, job, name, path, vertex_count, props):
+def queue_fix(obj, job, name, path, vertex_count):
     unwrap = Unwrap(
         name=name,
         input_name=name,
@@ -133,7 +128,7 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
     proxied = props.use_proxy and make_proxy(temp, props.proxy_faces)
 
     name = f"{obj.name}_island_{k}"
-    path = unused_input_path(input_path, name)
+    path = unused_input_path(input_path, name, manager.claimed_paths())
     export_obj(temp, path, False)
     vertex_count = len(temp.data.vertices)
     # make_proxy replaces temp.data with a new mesh
@@ -146,7 +141,7 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
         if proxied
         else IslandUVs(obj, list(group), bbox, area)
     )
-    queue_fix(obj, job, name, path, vertex_count, props)
+    queue_fix(obj, job, name, path, vertex_count)
 
 
 def edge_splits_uv(edge, uvl):
@@ -208,7 +203,7 @@ def read_mesh(mesh):
     faces = face_vertices(mesh)
     uvs = face_uvs(mesh)
     edges = face_edges(faces)
-    seams = uv_seams(faces, uvs, edges)
+    seams = uv_tears(faces, uvs)
     groups = island_groups(faces, seams, edges)
     return MeshReads(vertex_positions(mesh), faces, edges, uvs, seams, groups)
 
@@ -361,7 +356,7 @@ def remove_temp(temp):
 
 
 # nocut leaves the cuts as they are and only reduces stretch
-def queue_nocut(obj, temp, group, bbox, area, k, input_path, props):
+def queue_nocut(obj, temp, group, bbox, area, k, input_path):
     layer = temp.data.uv_layers.active
     total = 0.0
     for poly in temp.data.polygons:
@@ -380,7 +375,7 @@ def queue_nocut(obj, temp, group, bbox, area, k, input_path, props):
     repair_flipped_island(obj, temp)
 
     name = f"{obj.name}_island_{k}"
-    path = unused_input_path(input_path, name)
+    path = unused_input_path(input_path, name, manager.claimed_paths())
     export_obj(temp, path, True)
     # empty pin line, nothing is held
     with (path.parent / f"{path.stem}_fixed").open("w") as f:
@@ -389,17 +384,12 @@ def queue_nocut(obj, temp, group, bbox, area, k, input_path, props):
     remove_temp(temp)
 
     queue_fix(
-        obj,
-        IslandUVs(obj, list(group), bbox, area, mirrored),
-        name,
-        path,
-        vertex_count,
-        props,
+        obj, IslandUVs(obj, list(group), bbox, area, mirrored), name, path, vertex_count
     )
 
 
 def queue_relax(obj, group, bbox, area, k, input_path, props):
-    queue_nocut(obj, island_copy(obj, group), group, bbox, area, k, input_path, props)
+    queue_nocut(obj, island_copy(obj, group), group, bbox, area, k, input_path)
 
 
 # one for a disk, one less per extra hole or handle
@@ -644,7 +634,7 @@ def repair_flipped(obj, area_mesh, used, uv_of, border):
 
 
 # inside one island every vertex has one uv, so vt indices match v indices
-def queue_area(obj, patch, border, k, input_path, props, nocut):
+def queue_area(obj, patch, border, k, input_path, nocut):
     mesh = obj.data
     layer = mesh.uv_layers.active
     used = sorted({v for fi in patch for v in mesh.polygons[fi].vertices})
@@ -684,7 +674,7 @@ def queue_area(obj, patch, border, k, input_path, props, nocut):
     triangulate_mesh(area_mesh)
 
     name = f"{obj.name}_area_{k}"
-    path = unused_input_path(input_path, name)
+    path = unused_input_path(input_path, name, manager.claimed_paths())
 
     matrix = obj.matrix_world
     with path.open("w") as f:
@@ -705,7 +695,7 @@ def queue_area(obj, patch, border, k, input_path, props, nocut):
     vertex_count = len(area_mesh.vertices)
     bpy.data.meshes.remove(area_mesh)
 
-    queue_fix(obj, AreaUVs(obj, patch, pins, mirrored), name, path, vertex_count, props)
+    queue_fix(obj, AreaUVs(obj, patch, pins, mirrored), name, path, vertex_count)
 
 
 # optcuts is the only engine that can pin a border or stitch islands
@@ -725,10 +715,7 @@ def validate_engine(op):
 
 
 def queue_targets(engine, engine_ctx, obj, count, queue_one):
-    input_path, output_path = get_io_dir_paths()
-    if not manager.is_active:
-        clear_io_dir(input_path)
-        clear_io_dir(output_path)
+    input_path = manager.prepare_input_dir()
 
     queued = len(manager._queue)
     try:
@@ -746,10 +733,8 @@ def queue_targets(engine, engine_ctx, obj, count, queue_one):
         info.engine = engine.describe()
         info.objects = [(obj.name, triangle_count(obj))]
         info.settings = describe_settings(props, fix_settings(props))
-        manager.engine = engine
-        manager.engine_ctx = engine_ctx
         # these operators run from the uv editor
-        manager.start(uv_editor=True)
+        manager.start(engine, engine_ctx, uv_editor=True)
 
 
 # registering a subclass of a registered operator unregisters the parent
@@ -869,7 +854,7 @@ class UVGAMI_OT_combine_islands(FixOperator, bpy.types.Operator):
         else:
 
             def queue_one(k, input_path):
-                queue_nocut(obj, temp, group, bbox, area, k + 1, input_path, props)
+                queue_nocut(obj, temp, group, bbox, area, k + 1, input_path)
 
             message = f"Combining {len(targets)} islands"
             level = "INFO"
@@ -907,7 +892,7 @@ class AreaOperator(FixOperator):
 
         def queue_one(k, input_path):
             patch, border = targets[k]
-            queue_area(obj, patch, border, k + 1, input_path, props, self.nocut)
+            queue_area(obj, patch, border, k + 1, input_path, self.nocut)
 
         queue_targets(engine, engine_ctx, obj, len(targets), queue_one)
 

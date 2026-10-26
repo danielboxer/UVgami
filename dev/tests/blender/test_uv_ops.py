@@ -1,7 +1,7 @@
 import bpy
 import mathutils
 import pytest
-from blender_fixtures import manager, needs_engine
+from blender_fixtures import island_count, manager, needs_engine
 
 pytestmark = [needs_engine, pytest.mark.smoke]
 
@@ -45,6 +45,24 @@ def vertex_uvs(obj, vertex):
     return uvs
 
 
+# the uv's distance from its ring's mean, where an undistorted grid vertex sits
+def ring_offset(obj, vertex):
+    bpy.ops.object.mode_set(mode="OBJECT")
+    layer = obj.data.uv_layers.active.data
+    uv_of = {
+        loop.vertex_index: mathutils.Vector(layer[loop.index].uv)
+        for loop in obj.data.loops
+    }
+    bpy.ops.object.mode_set(mode="EDIT")
+    faces = faces_around(obj, vertex)
+    ring = {v for f in faces for v in obj.data.polygons[f].vertices} - {vertex}
+    ring_uvs = [uv_of[v] for v in ring]
+    center = sum(ring_uvs, mathutils.Vector((0, 0))) / len(ring_uvs)
+    # in units of the ring's width, so a rescaled island compares
+    width = max((a - b).length for a in ring_uvs for b in ring_uvs)
+    return (uv_of[vertex] - center).length / width
+
+
 def distort(obj, vertex):
     layer = obj.data.uv_layers.active.data
     for loop in obj.data.loops:
@@ -80,14 +98,14 @@ def test_operator_moves_the_distorted_vertex_and_restores_edit_mode(
     center = center_vertex(grid)
     distort(grid, center)
     select_faces(grid, faces_around(grid, center))
-    before = vertex_uvs(grid, center)
+    before = ring_offset(grid, center)
 
     session(getattr(bpy.ops.uvgami, operator))
 
     assert manager.summary[0] == "UV unwrap complete", manager.summary
     assert manager.error_messages == []
     assert grid.mode == "EDIT"
-    assert vertex_uvs(grid, center) != before
+    assert ring_offset(grid, center) < before
 
 
 def test_combine_islands_joins_two_islands_into_one(session, make_mesh, face_uvs):
@@ -118,11 +136,14 @@ def test_expand_rings_free_the_border_of_the_selection(session, rings, moves):
     distort(grid, border)
     select_faces(grid, block)
     before = vertex_uvs(grid, border)
+    offset_before = ring_offset(grid, border)
 
     session(bpy.ops.uvgami.relax_area)
 
     assert manager.summary[0] == "UV unwrap complete", manager.summary
     assert (vertex_uvs(grid, border) != before) is moves
+    if moves:
+        assert ring_offset(grid, border) < offset_before
 
 
 @pytest.mark.parametrize(
@@ -189,23 +210,7 @@ def grid_islands(make_mesh, island_of, lifted=0.0):
     return make_mesh("grid", verts, faces, uvs)
 
 
-def uv_island_count(obj, uvs):
-    parent = list(range(len(uvs)))
-
-    def find(i):
-        while parent[i] != i:
-            i = parent[i]
-        return i
-
-    owner = {}
-    for fi, face in enumerate(obj.data.polygons):
-        for vertex, uv in zip(face.vertices, uvs[fi]):
-            other = owner.setdefault((vertex, uv), fi)
-            parent[find(fi)] = find(other)
-    return len({find(i) for i in range(len(uvs))})
-
-
-def test_combine_keeps_a_cube_corner_as_one_island(session, make_mesh, face_uvs):
+def test_combine_keeps_a_cube_corner_as_one_island(session, make_mesh):
     obj = make_mesh(
         "corner",
         [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (0, 1, 1)],
@@ -222,7 +227,7 @@ def test_combine_keeps_a_cube_corner_as_one_island(session, make_mesh, face_uvs)
 
     assert manager.summary[0] == "UV unwrap complete", manager.summary
     bpy.ops.object.mode_set(mode="OBJECT")
-    assert uv_island_count(obj, face_uvs(obj)) == 1
+    assert island_count(obj) == 1
 
 
 def test_combine_keeps_the_islands_other_seams(session, make_mesh, face_uvs):
@@ -239,7 +244,7 @@ def test_combine_keeps_the_islands_other_seams(session, make_mesh, face_uvs):
     assert manager.summary[0] == "UV unwrap complete", manager.summary
     bpy.ops.object.mode_set(mode="OBJECT")
     uvs = face_uvs(obj)
-    assert uv_island_count(obj, uvs) == 1
+    assert island_count(obj) == 1
     assert uvs[0][1] != uvs[1][0]
 
 

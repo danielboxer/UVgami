@@ -17,9 +17,9 @@ from ..install_task import (
     DOWNLOADED_MESSAGE,
     InstallTask,
     offline_error,
-    parse_version,
     report_progress,
     task_state,
+    version_below,
 )
 from .paths import (
     get_partuv_checkpoint_path,
@@ -30,7 +30,7 @@ from .paths import (
 from .venv_commands import VENV_PYTHON, build_install_commands
 
 # must match partuv's pyproject.toml
-PARTUV_VERSION = "0.1.5"
+PARTUV_VERSION = "0.1.6"
 PARTUV_MINIMUM_VERSION = "0.1.0"
 PARTUV_RELEASE_API = f"https://api.github.com/repos/DanielBoxer/UVgami/releases/tags/partuv-v{PARTUV_VERSION}"
 # the hugging face original moves with its main branch
@@ -62,13 +62,11 @@ def get_installed_partuv_version():
 
 
 def partuv_update_pending():
-    version = get_installed_partuv_version()
-    return version is not None and version != PARTUV_VERSION
+    return version_below(get_installed_partuv_version(), PARTUV_VERSION)
 
 
 def partuv_too_old():
-    version = parse_version(get_installed_partuv_version() or "")
-    return version is not None and version < parse_version(PARTUV_MINIMUM_VERSION)
+    return version_below(get_installed_partuv_version(), PARTUV_MINIMUM_VERSION)
 
 
 def find_wheel_url():

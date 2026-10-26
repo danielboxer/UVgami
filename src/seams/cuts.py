@@ -3,8 +3,6 @@ import math
 
 from .mesh import LOW_ANGLE, norm, pair, turn_angle
 
-# bounded, an infinite cost drops a cut instead of moving it
-RESTRICT_COST = 9.0
 # a crease edge counts shorter, concave gets the deeper discount
 CONCAVE_RELIEF = 0.5
 CONVEX_RELIEF = 0.3
@@ -52,15 +50,11 @@ def restriction_weights(painted, exposure):
     return weights or None
 
 
-# longer where a painted restriction repels cuts, shorter along a crease
-def edge_cost(verts, weights, a, b, relief=None):
-    length = norm([verts[a][i] - verts[b][i] for i in range(3)])
-    if relief:
-        length *= relief.get(pair(a, b), 1.0)
-    if not weights:
-        return length
-    paint = (weights.get(a, 0.0) + weights.get(b, 0.0)) / 2
-    return length * (1 + RESTRICT_COST * paint)
+# shorter along a crease
+def edge_cost(verts, a, b, relief):
+    return norm([verts[a][i] - verts[b][i] for i in range(3)]) * relief.get(
+        pair(a, b), 1.0
+    )
 
 
 # zero along a crease or a straight continuation, up to TURN_COST on a reversal
@@ -80,47 +74,47 @@ def turn_cost(verts, u, v, w, relief):
 
 
 # turn penalties included, so a comparison matches what cut_path searches for
-def path_cost(verts, seq, weights=None, relief=None):
+def path_cost(verts, seq, relief):
     total = 0.0
     for i in range(1, len(seq)):
-        step = edge_cost(verts, weights, seq[i - 1], seq[i], relief)
-        if relief is not None and i >= 2:
+        step = edge_cost(verts, seq[i - 1], seq[i], relief)
+        if i >= 2:
             step *= 1.0 + turn_cost(verts, seq[i - 2], seq[i - 1], seq[i], relief)
         total += step
     return total
 
 
-# with relief the state carries the incoming direction
-def cut_path(verts, adjacent, sources, targets, weights=None, relief=None):
-    if relief is None:
-        # without relief an edge costs at least its length
-        goal = verts[next(iter(targets))] if len(targets) == 1 else None
+# the state carries the incoming direction, so a turn is priced
+def cut_path(verts, adjacent, sources, targets, relief):
+    # if relief is None:
+    #     # without relief an edge costs at least its length
+    #     goal = verts[next(iter(targets))] if len(targets) == 1 else None
 
-        def remaining(v):
-            if goal is None:
-                return 0.0
-            return norm([verts[v][i] - goal[i] for i in range(3)])
+    #     def remaining(v):
+    #         if goal is None:
+    #             return 0.0
+    #         return norm([verts[v][i] - goal[i] for i in range(3)])
 
-        dist = dict.fromkeys(sources, 0.0)
-        prev = {}
-        heap = [(remaining(v), 0.0, v) for v in sources]
-        heapq.heapify(heap)
-        while heap:
-            _, d, v = heapq.heappop(heap)
-            if d != dist[v]:
-                continue
-            if v in targets:
-                path = [v]
-                while path[-1] in prev:
-                    path.append(prev[path[-1]])
-                return path
-            for w in adjacent[v]:
-                step = d + edge_cost(verts, weights, v, w, relief)
-                if step < dist.get(w, math.inf):
-                    dist[w] = step
-                    prev[w] = v
-                    heapq.heappush(heap, (step + remaining(w), step, w))
-        return []
+    #     dist = dict.fromkeys(sources, 0.0)
+    #     prev = {}
+    #     heap = [(remaining(v), 0.0, v) for v in sources]
+    #     heapq.heapify(heap)
+    #     while heap:
+    #         _, d, v = heapq.heappop(heap)
+    #         if d != dist[v]:
+    #             continue
+    #         if v in targets:
+    #             path = [v]
+    #             while path[-1] in prev:
+    #                 path.append(prev[path[-1]])
+    #             return path
+    #         for w in adjacent[v]:
+    #             step = d + norm([verts[v][i] - verts[w][i] for i in range(3)])
+    #             if step < dist.get(w, math.inf):
+    #                 dist[w] = step
+    #                 prev[w] = v
+    #                 heapq.heappush(heap, (step + remaining(w), step, w))
+    #     return []
 
     # state is (vertex, arrived-from), -1 for a start with no direction yet
     dist = {(v, -1): 0.0 for v in sources}
@@ -139,7 +133,7 @@ def cut_path(verts, adjacent, sources, targets, weights=None, relief=None):
                 path.append(node[0])
             return path
         for w in adjacent[v]:
-            step = edge_cost(verts, weights, v, w, relief)
+            step = edge_cost(verts, v, w, relief)
             if u >= 0:
                 step *= 1.0 + turn_cost(verts, u, v, w, relief)
             step += d
@@ -150,43 +144,43 @@ def cut_path(verts, adjacent, sources, targets, weights=None, relief=None):
     return []
 
 
-def part_labels(adjacent):
-    label = {}
-    for start in adjacent:
-        if start in label:
-            continue
-        label[start] = start
-        stack = [start]
-        while stack:
-            v = stack.pop()
-            for w in adjacent[v]:
-                if w not in label:
-                    label[w] = start
-                    stack.append(w)
-    return label
+# def part_labels(adjacent):
+#     label = {}
+#     for start in adjacent:
+#         if start in label:
+#             continue
+#         label[start] = start
+#         stack = [start]
+#         while stack:
+#             v = stack.pop()
+#             for w in adjacent[v]:
+#                 if w not in label:
+#                     label[w] = start
+#                     stack.append(w)
+#     return label
 
 
-# every vertex maps to one vertex here, so segments that met still meet
-def snap_paths(verts, adjacent, mapped, cuts):
-    part = part_labels(adjacent)
-    paths = set()
-    for a, b in cuts:
-        va, vb = mapped[a], mapped[b]
-        if va == vb or part.get(va) != part.get(vb):
-            continue
-        path = cut_path(verts, adjacent, {va}, {vb})
-        for x, y in zip(path, path[1:]):
-            paths.add(pair(x, y))
-    return paths
+# # every vertex maps to one vertex here, so segments that met still meet
+# def snap_paths(verts, adjacent, mapped, cuts):
+#     part = part_labels(adjacent)
+#     paths = set()
+#     for a, b in cuts:
+#         va, vb = mapped[a], mapped[b]
+#         if va == vb or part.get(va) != part.get(vb):
+#             continue
+#         path = cut_path(verts, adjacent, {va}, {vb})
+#         for x, y in zip(path, path[1:]):
+#             paths.add(pair(x, y))
+#     return paths
 
 
 # one path per extra loop, each the shortest available at the time
-def connect_loops(verts, adjacent, comps, weights=None, relief=None):
+def connect_loops(verts, adjacent, comps, relief):
     cuts = set()
     sources = set(comps[0])
     targets = {v: i for i, comp in enumerate(comps[1:], 1) for v in comp}
     while targets:
-        path = cut_path(verts, adjacent, sources, targets, weights, relief)
+        path = cut_path(verts, adjacent, sources, targets, relief)
         if not path:
             break  # disconnected, leave the rest to the engine
         for a, b in zip(path, path[1:]):

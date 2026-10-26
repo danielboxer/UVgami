@@ -5,6 +5,7 @@ import bpy
 import pytest
 from blender_fixtures import (
     addon,
+    has_uvs,
     island_count,
     manager,
     needs_engine,
@@ -27,9 +28,7 @@ def test_unwrap_runs_to_completion(load_obj, unwrap, outputs):
     assert manager.error_messages == []
     assert manager.summary_failed is False, manager.summary
     assert list(outputs()) == ["cylinder_unwrapped"]
-    layer = outputs()["cylinder_unwrapped"].data.uv_layers.active
-    assert layer is not None
-    assert any(any(datum.uv) for datum in layer.data)
+    assert has_uvs(outputs()["cylinder_unwrapped"])
 
     # a many-part model runs out of file descriptors partway through
     assert manager.results
@@ -62,9 +61,7 @@ def test_flipped_face_is_rewound_instead_of_refused(load_obj, unwrap, outputs):
     assert manager.error_messages == []
     assert manager.summary_failed is False, manager.summary
     assert len(outputs()) == 1
-    layer = next(iter(outputs().values())).data.uv_layers.active
-    assert layer is not None
-    assert any(any(datum.uv) for datum in layer.data)
+    assert has_uvs(next(iter(outputs().values())))
 
 
 # shade_auto_smooth cancels on headless 4.3
@@ -110,9 +107,7 @@ def test_other_engines_unwrap_the_cylinder(load_obj, unwrap, outputs, engine):
 
     assert manager.summary == ["UV unwrap complete"]
     assert manager.error_messages == []
-    layer = outputs()["cylinder_unwrapped"].data.uv_layers.active
-    assert layer is not None
-    assert any(any(datum.uv) for datum in layer.data)
+    assert has_uvs(outputs()["cylinder_unwrapped"])
 
 
 def capped_quad_cylinder(around=24, along=6):

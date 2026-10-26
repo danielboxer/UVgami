@@ -11,11 +11,11 @@ from .common import (
     UnwrapError,
     deliver,
     find_engine,
+    load_addon_module,
     log,
 )
 
-QUALITY_UPPER_BOUND = {"less-stretch": "4.05", "balanced": "4.2", "fewer-seams": "5.0"}
-SEAM_WEIGHT_LEVELS = {1: "25", 2: "50", 3: "100", 4: "150", 5: "200"}
+flags = load_addon_module("src/engines/optcuts/flags.py")
 
 
 def build_args(engine_path, input_path, output_dir, quality, seam_weight, import_uvs):
@@ -26,10 +26,8 @@ def build_args(engine_path, input_path, output_dir, quality, seam_weight, import
         # optcuts appends the mesh name directly
         "-o",
         str(output_dir) + os.sep,
-        "-u",
-        QUALITY_UPPER_BOUND[quality],
-        "-s",
-        SEAM_WEIGHT_LEVELS[seam_weight],
+        # the addon's priority names are the quality names in upper snake case
+        *flags.bound_and_weight_args(quality.upper().replace("-", "_"), seam_weight),
     ]
     if not import_uvs:
         args.append("-g")

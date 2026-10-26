@@ -1,36 +1,35 @@
 import bpy
 import pytest
-from bl_ext.user_default.UVgami.src import manager as manager_module
-from bl_ext.user_default.UVgami.src import unwrap as unwrap_module
-from bl_ext.user_default.UVgami.src.engines import optcuts
-from bl_ext.user_default.UVgami.src.job import Result
-from blender_fixtures import UNWRAP_SECONDS, manager, needs_engine
+from blender_fixtures import (
+    UNWRAP_SECONDS,
+    add_cube,
+    add_primitive,
+    addon,
+    join,
+    manager,
+    needs_engine,
+    select,
+)
 
 pytestmark = [needs_engine, pytest.mark.smoke]
+
+manager_module = addon.src.manager
+unwrap_module = addon.src.unwrap
+optcuts = addon.src.engines.optcuts
+Result = addon.src.job.Result
 
 # enough ticks of the viewer to tell a live map from a stale one
 SNAPSHOTS_WATCHED = 5
 
 
-def add_cube(name, location=(0, 0, 0)):
-    bpy.ops.mesh.primitive_cube_add(location=location)
-    obj = bpy.context.active_object
-    obj.name = name
-    return obj
-
-
 def add_sphere(name, location=(0, 0, 0)):
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=64, ring_count=32, location=location)
-    obj = bpy.context.active_object
-    obj.name = name
-    return obj
-
-
-def select(objects):
-    bpy.ops.object.select_all(action="DESELECT")
-    for obj in objects:
-        obj.select_set(True)
-    bpy.context.view_layer.objects.active = objects[0]
+    return add_primitive(
+        name,
+        bpy.ops.mesh.primitive_uv_sphere_add,
+        segments=64,
+        ring_count=32,
+        location=location,
+    )
 
 
 def solving():
@@ -59,9 +58,7 @@ def test_two_objects_each_get_an_output(unwrap, outputs):
 
 def test_loose_parts_unwrap_as_pieces_and_join_back(unwrap, outputs):
     a, b = add_cube("a"), add_cube("b", location=(5, 0, 0))
-    select([a, b])
-    bpy.ops.object.join()
-    joined = bpy.context.active_object
+    joined = join([a, b])
     # the scene mirrors onto itself, and the mirror cut changes the pieces
     bpy.context.scene.uvgami.symmetry = False
 
@@ -190,8 +187,7 @@ def test_group_stop_merges_the_queued_pieces_into_one_object(unwrap, invalid_obj
         add_sphere("b", location=(5, 0, 0)),
         add_sphere("c", location=(10, 0, 0)),
     ]
-    select(spheres)
-    bpy.ops.object.join()
+    join(spheres)
     bpy.context.scene.uvgami.max_cores = 1
     # the scene mirrors onto itself, and the mirror cut changes the pieces
     bpy.context.scene.uvgami.symmetry = False
@@ -215,9 +211,7 @@ def test_group_cancel_discards_the_piece_that_already_finished(unwrap, outputs):
         add_cube("b", location=(5, 0, 0)),
         add_cube("c", location=(10, 0, 0)),
     ]
-    select(cubes)
-    bpy.ops.object.join()
-    joined = bpy.context.active_object
+    joined = join(cubes)
     bpy.context.scene.uvgami.max_cores = 1
 
     pump = unwrap(until=lambda: manager.results)

@@ -1,4 +1,4 @@
-from ...utils.paths import get_extension_dir_path
+from ...utils.paths import engine_output_path
 from .install import XatlasInstall
 
 # above 4.0 the output is identical
@@ -12,20 +12,18 @@ class XatlasEngine(XatlasInstall):
     description = "Fast CPU engine for baking lightmaps and texture painting"
     icon = "MESH_GRID"
     supports_symmetry = True
-    supports_regions = True
 
     # xatlas has no hard surface route
     def unset_surface_mode(self, props):
         return "ORGANIC"
 
     def build_args(self, ctx, input_path, props):
-        output_path = get_extension_dir_path() / "output" / f"{input_path.stem}.obj"
         return [
             *self.command(ctx),
             "-i",
             str(input_path),
             "-o",
-            str(output_path),
+            str(engine_output_path(input_path)),
             "--max-cost",
             PRIORITY_VALUES[props.priority],
         ]

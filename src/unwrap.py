@@ -8,7 +8,7 @@ from .batch import EngineOutput, EngineProcess
 from .logger import logger
 from .manager import manager
 from .ops.viewer import set_snapshot
-from .utils.paths import get_extension_dir_path
+from .utils.paths import engine_output_path
 from .utils.ui import tag_redraw
 
 # a healthy run's progress changes every few seconds
@@ -34,7 +34,7 @@ class Unwrap:
         self.preseeded = preseeded
 
         self.path = path
-        self.output_path = get_extension_dir_path() / "output" / f"{self.path.stem}.obj"
+        self.output_path = engine_output_path(self.path)
 
         # the export sets this when Keep Quads triangulates the mesh
         self.preserve_job = None
@@ -258,7 +258,8 @@ class Unwrap:
                 self.path.unlink()
             if self.guide_path is not None and self.guide_path.is_file():
                 self.guide_path.unlink()
-            for suffix in ("_plane", "_locked"):
+            # a later piece can reuse the stem and would read these
+            for suffix in ("_plane", "_locked", "_fixed"):
                 sidecar = self.path.parent / f"{self.path.stem}{suffix}"
                 if sidecar.is_file():
                     sidecar.unlink()

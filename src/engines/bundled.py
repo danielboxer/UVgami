@@ -1,15 +1,15 @@
 import os
 
-from ..utils.paths import (
-    get_dir_path,
+from ..utils.engine_binaries import (
     get_engine_binary_name,
     get_local_engine_path,
     get_platform_tag,
 )
+from ..utils.paths import get_dir_path
 
 # each must match that engine's VERSION
-SEGMENT_VERSION = "0.2.0"
-HARDSURFACE_VERSION = "0.1.0"
+SEGMENT_VERSION = "0.2.1"
+HARDSURFACE_VERSION = "0.1.1"
 
 
 # label names the engine in the error a missing build raises

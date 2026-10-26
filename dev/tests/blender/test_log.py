@@ -1,15 +1,14 @@
 import bpy
 import pytest
-from bl_ext.user_default.UVgami.src import logger as log_module
-from bl_ext.user_default.UVgami.src.logger import (
-    LOG_LINE_LIMIT,
-    UNSAVED_FILE_NAME,
-    block_header,
-    split_blocks,
-    trim_blocks,
-)
-from bl_ext.user_default.UVgami.src.ops.info import LOG_TEXT_NAME
-from blender_fixtures import logger, needs_engine
+from blender_fixtures import addon, logger, needs_engine
+
+log_module = addon.src.logger
+LOG_LINE_LIMIT = log_module.LOG_LINE_LIMIT
+UNSAVED_FILE_NAME = log_module.UNSAVED_FILE_NAME
+block_header = log_module.block_header
+split_blocks = log_module.split_blocks
+trim_blocks = log_module.trim_blocks
+LOG_TEXT_NAME = addon.src.ops.info.LOG_TEXT_NAME
 
 OLD_BLOCK = (
     "UVgami 0.1 | Blender 1 | Linux | 2020-01-01 00:00:00 | old.blend"

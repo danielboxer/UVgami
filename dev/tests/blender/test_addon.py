@@ -1,9 +1,19 @@
+import pathlib
+
 import bpy
 import pytest
-from bl_ext.user_default.UVgami.src.ops.uv import pack_objects, show_seams
-from bl_ext.user_default.UVgami.src.utils.mesh import edit_restore
+from background_blender import ADDON_MODULE
+from blender_fixtures import addon
 
-ADDON_MODULE = "bl_ext.user_default.UVgami"
+pack_objects = addon.src.ops.uv.pack_objects
+show_seams = addon.src.ops.uv.show_seams
+edit_restore = addon.src.utils.mesh.edit_restore
+islands_overlap = addon.src.seams.islands_overlap
+fix_inconsistent_winding = addon.src.ops.start.fix_inconsistent_winding
+has_inconsistent_winding = addon.src.ops.start.has_inconsistent_winding
+Unwrap = addon.src.unwrap.Unwrap
+PROGRESS_STALL_SECONDS = addon.src.unwrap.PROGRESS_STALL_SECONDS
+
 SQUARE = [(0, 0), (1, 0), (1, 1), (0, 1)]
 MARGIN = 0.02
 
@@ -50,7 +60,7 @@ def test_addon_survives_a_disable_enable_round_trip():
 
 def test_pack_moves_islands_into_the_unit_square(make_mesh, face_uvs):
     obj = two_quads(make_mesh, [(2, 2), (3, 2), (3, 3), (2, 3)])
-    pack_objects([obj])
+    pack_objects([obj], bpy.context.scene.uvgami)
     corners = [uv for face in face_uvs(obj) for uv in face]
     assert min(u for u, _ in corners) >= 0
     assert max(u for u, _ in corners) <= 1
@@ -59,7 +69,7 @@ def test_pack_moves_islands_into_the_unit_square(make_mesh, face_uvs):
 
 def test_pack_keeps_stacked_duplicates_exactly_together(make_mesh, face_uvs):
     obj = two_quads(make_mesh, SQUARE)
-    pack_objects([obj])
+    pack_objects([obj], bpy.context.scene.uvgami)
     kept, duplicate = face_uvs(obj)
     assert kept == duplicate
     assert kept != SQUARE
@@ -67,16 +77,17 @@ def test_pack_keeps_stacked_duplicates_exactly_together(make_mesh, face_uvs):
 
 def test_pack_separates_islands_that_are_not_duplicates(make_mesh, face_uvs):
     obj = two_quads(make_mesh, [(0, 0), (2, 0), (2, 1), (0, 1)])
-    pack_objects([obj])
-    first, second = face_uvs(obj)
-    assert first != second
+    pack_objects([obj], bpy.context.scene.uvgami)
+    # axis aligned packing keeps each quad its own bounding box
+    boxes = [
+        (min(u for u, _ in face), min(v for _, v in face))
+        + (max(u for u, _ in face), max(v for _, v in face))
+        for face in face_uvs(obj)
+    ]
+    assert not islands_overlap(boxes)
 
 
 def test_stalled_marker_flags_frozen_progress():
-    import pathlib
-
-    from bl_ext.user_default.UVgami.src.unwrap import PROGRESS_STALL_SECONDS, Unwrap
-
     unwrap = Unwrap("p", "p", pathlib.Path("p.obj"))
     unwrap.is_active = True
     assert not unwrap.is_stalled
@@ -97,11 +108,6 @@ def test_stalled_marker_flags_frozen_progress():
 
 
 def test_fix_inconsistent_winding_rewinds_the_flipped_face(make_mesh):
-    from bl_ext.user_default.UVgami.src.ops.start import (
-        fix_inconsistent_winding,
-        has_inconsistent_winding,
-    )
-
     corner_uvs = [(0, 0), (1, 0), (0, 1)]
     # both faces walk the shared edge 1-2 in the same direction
     obj = make_mesh(
@@ -126,11 +132,6 @@ def test_fix_inconsistent_winding_rewinds_the_flipped_face(make_mesh):
 
 
 def test_fix_inconsistent_winding_leaves_a_consistent_mesh_alone(make_mesh):
-    from bl_ext.user_default.UVgami.src.ops.start import (
-        fix_inconsistent_winding,
-        has_inconsistent_winding,
-    )
-
     corner_uvs = [(0, 0), (1, 0), (0, 1)]
     obj = make_mesh(
         "consistent",

@@ -16,8 +16,8 @@ from .worker import remove_folder
 ENGINE_INPUT_STEM = "mesh"
 
 
-# compact copy of just these faces, with the seams reindexed
-def submesh(verts, faces, subset, seams):
+# compact copy of just these faces
+def submesh(verts, faces, subset):
     vmap = {}
     sub_verts = []
     sub_faces = []
@@ -30,12 +30,7 @@ def submesh(verts, faces, subset, seams):
                 sub_verts.append(verts[v])
             face.append(idx)
         sub_faces.append(tuple(face))
-    sub_seams = set()
-    for a, b in seams:
-        ma, mb = vmap.get(a), vmap.get(b)
-        if ma is not None and mb is not None:
-            sub_seams.add((ma, mb) if ma < mb else (mb, ma))
-    return sub_verts, sub_faces, sub_seams
+    return sub_verts, sub_faces
 
 
 SURFACE_MODE_CODES = {"ORGANIC": 1, "HARD": 2, "AUTO": 3}

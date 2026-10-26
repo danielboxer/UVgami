@@ -1,10 +1,16 @@
-import shutil
-import subprocess
+import itertools
 import time
 from pathlib import Path
 
 from .cancel import Cancelled
-from .worker import remove_folder, stderr_tail
+from .worker import (
+    STDERR_NAME,
+    STDOUT_NAME,
+    remove_folder,
+    start_logged,
+    stderr_tail,
+    stop_process,
+)
 
 
 class EngineError(RuntimeError):
@@ -35,21 +41,19 @@ class EngineRun:
                 raise EngineError(f"engine exited {code}: {detail}")
             return self.read(self.out_path, self.face_count)
         finally:
-            shutil.rmtree(self.workdir, ignore_errors=True)
+            remove_folder(self.workdir)
 
     def stop(self):
-        if self.process.poll() is None:
-            self.process.kill()
-            self.process.wait()
-        remove_folder(self.workdir)
+        stop_process(self.process, self.workdir)
 
 
 def write_obj(path, verts, faces):
     with Path(path).open("w") as f:
-        for x, y, z in verts:
-            f.write(f"v {x} {y} {z}\n")
-        for face in faces:
-            f.write("f " + " ".join(str(v + 1) for v in face) + "\n")
+        # one %-format over every vertex runs in C, an f-string each is far slower
+        f.write(
+            ("v %s %s %s\n" * len(verts)) % tuple(itertools.chain.from_iterable(verts))
+        )
+        f.writelines("f " + " ".join(str(v + 1) for v in face) + "\n" for face in faces)
 
 
 # run needs poll, stop and result
@@ -63,28 +67,15 @@ def poll_run(run, cancelled):
 
 
 def stdout_path(workdir):
-    return workdir / "stdout"
+    return workdir / STDOUT_NAME
 
 
 def stderr_path(workdir):
-    return workdir / "stderr"
+    return workdir / STDERR_NAME
 
 
 def launch(workdir, args, env):
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        # the engine stalls when nothing reads its stdout, a file never fills
-        with (
-            stdout_path(workdir).open("wb") as stdout,
-            stderr_path(workdir).open("wb") as stderr,
-        ):
-            return subprocess.Popen(
-                args,
-                stdout=stdout,
-                stderr=stderr,
-                env=env,
-                creationflags=creationflags,
-            )
+        return start_logged(args, workdir, env)
     except OSError as error:
-        shutil.rmtree(workdir, ignore_errors=True)
         raise EngineError(f"engine failed to start: {error}") from error

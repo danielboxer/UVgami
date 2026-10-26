@@ -1,5 +1,6 @@
 import bisect
 import collections
+import functools
 import itertools
 import math
 
@@ -7,13 +8,17 @@ import numpy
 
 from .cuts import connect_loops, crease_relief, cut_path, edge_cost, path_cost
 from .mesh import (
+    connected_labels,
+    edge_keys,
+    edge_twins,
     face_edges,
     find,
+    following_corners,
     island_groups,
     pair,
     polygon_area,
     signed_area,
-    uv_seams,
+    uv_tears,
     weighted_normals,
 )
 from .rectify import flatten_distortion
@@ -98,23 +103,6 @@ def uv_topology(group, faces, edges, seams):
     return ec, list(loops.values())
 
 
-# each corner's lowest corner index reachable through the glue pairs
-def _corner_classes(count, left, right):
-    a = numpy.concatenate([left, right])
-    b = numpy.concatenate([right, left])
-    order = numpy.argsort(a, kind="stable")
-    a, b = a[order], b[order]
-    glued, first = numpy.unique(a, return_index=True)
-    # int64, the keys built from these overflow a windows int32
-    label = numpy.arange(count, dtype=numpy.int64)
-    while True:
-        lowest = numpy.minimum(label[glued], numpy.minimum.reduceat(label[b], first))
-        if numpy.array_equal(lowest, label[glued]):
-            return label
-        label[glued] = lowest
-        label = label[label]
-
-
 # needs faces that are contiguous loop runs with no repeated vertex
 def island_eulers(groups, faces, seams):
     if not groups:
@@ -123,39 +111,34 @@ def island_eulers(groups, faces, seams):
     count = int(lengths.sum())
     if count == 0:
         return [len(g) for g in groups]
-    starts = numpy.cumsum(lengths) - lengths
     corner_vertex = numpy.fromiter(
         itertools.chain.from_iterable(faces), numpy.int64, count
     )
     corner_face = numpy.repeat(numpy.arange(len(faces), dtype=numpy.int64), lengths)
-    next_corner = numpy.arange(1, count + 1, dtype=numpy.int64)
-    next_corner[starts + lengths - 1] = starts
+    next_corner = following_corners(lengths)
 
-    vertex_count = int(corner_vertex.max()) + 1
-    other = corner_vertex[next_corner]
-    edge_key = numpy.minimum(corner_vertex, other) * vertex_count + numpy.maximum(
-        corner_vertex, other
-    )
-    order = numpy.argsort(edge_key, kind="stable")
-    _, first, counts = numpy.unique(
-        edge_key[order], return_index=True, return_counts=True
-    )
-    first = first[counts == 2]
-    a, b = order[first], order[first + 1]
+    twin = edge_twins(corner_vertex, next_corner)
+    a = numpy.flatnonzero(twin > numpy.arange(count))
+    b = twin[a]
     seam_keys = numpy.fromiter(
-        (min(u, v) * vertex_count + max(u, v) for u, v in seams),
-        numpy.int64,
-        len(seams),
+        ((min(u, v) << 32) | max(u, v) for u, v in seams), numpy.int64, len(seams)
     )
-    keep = (corner_face[a] != corner_face[b]) & ~numpy.isin(edge_key[a], seam_keys)
+    edge_key = edge_keys(corner_vertex[a], corner_vertex[next_corner[a]])
+    keep = (corner_face[a] != corner_face[b]) & ~numpy.isin(edge_key, seam_keys)
     a, b = a[keep], b[keep]
     same_start = corner_vertex[b] == corner_vertex[a]
     b_at_start = numpy.where(same_start, b, next_corner[b])
     b_at_end = numpy.where(same_start, next_corner[b], b)
-    label = _corner_classes(
+    # each corner's lowest corner index reachable through the glue pairs
+    label = connected_labels(
         count,
-        numpy.concatenate([a, next_corner[a]]),
-        numpy.concatenate([b_at_start, b_at_end]),
+        numpy.stack(
+            [
+                numpy.concatenate([a, next_corner[a]]),
+                numpy.concatenate([b_at_start, b_at_end]),
+            ],
+            axis=1,
+        ),
     )
 
     island_of_face = numpy.empty(len(faces), numpy.int64)
@@ -166,14 +149,8 @@ def island_eulers(groups, faces, seams):
     vertices = numpy.bincount(
         island_of_corner[numpy.unique(label)], minlength=len(groups)
     )
-    end_label = label[next_corner]
-    corner_edge = numpy.minimum(label, end_label) * count + numpy.maximum(
-        label, end_label
-    )
-    unique_edges = numpy.unique(corner_edge)
-    edges = numpy.bincount(
-        island_of_corner[unique_edges // count], minlength=len(groups)
-    )
+    unique_edges = numpy.unique(edge_keys(label, label[next_corner]))
+    edges = numpy.bincount(island_of_corner[unique_edges >> 32], minlength=len(groups))
     faces_per = numpy.fromiter((len(g) for g in groups), numpy.int64, len(groups))
     return (vertices - edges + faces_per).tolist()
 
@@ -225,11 +202,18 @@ def island_ruined(group, faces, uvs, edges, seams, uv_areas=None, euler=None):
                 segs.append((uvs[f][i], uvs[f][(i + 1) % n]))
     if not segs:
         return True  # an island with no boundary cannot be flat
-    cell = sum(math.dist(a, b) for a, b in segs) / len(segs)
-    if cell == 0:
+    if all(a == b for a, b in segs):
         return True
+    return next(crossing_pairs(segs), None) is not None
+
+
+# segment index pairs, binned on a grid whose cell is the mean segment length
+def crossing_pairs(segments):
+    cell = sum(math.dist(a, b) for a, b in segments) / len(segments)
+    if cell == 0:
+        return
     grid = collections.defaultdict(list)
-    for idx, (a, b) in enumerate(segs):
+    for idx, (a, b) in enumerate(segments):
         xs = sorted((a[0], b[0]))
         ys = sorted((a[1], b[1]))
         for cx in range(int(xs[0] // cell), int(xs[1] // cell) + 1):
@@ -243,14 +227,13 @@ def island_ruined(group, faces, uvs, edges, seams, uv_areas=None, euler=None):
                 if key in seen:
                     continue
                 seen.add(key)
-                a, b = segs[ei]
-                c, d = segs[ej]
+                a, b = segments[ei]
+                c, d = segments[ej]
                 # touching means a shared uv corner, not a mesh vertex
                 if {a, b} & {c, d}:
                     continue
                 if crosses(a, b, c, d):
-                    return True
-    return False
+                    yield ei, ej
 
 
 # only interior edges link, the same relation island_groups uses
@@ -272,16 +255,14 @@ def face_adjacency(group, faces, edges, seams):
 
 
 # without the separation check a path runs lengthwise along a tube
-def straighten_cut(
-    verts, group, faces, edges, adjacent, bin_of, weights=None, relief=None
-):
+def straighten_cut(verts, group, faces, edges, adjacent, bin_of, relief):
     lengths = {}
     interior = collections.defaultdict(set)
     neighbors = collections.defaultdict(list)
     for f in group:
         for other, key in adjacent[f]:
             if key not in lengths:
-                lengths[key] = edge_cost(verts, weights, key[0], key[1], relief)
+                lengths[key] = edge_cost(verts, key[0], key[1], relief)
                 interior[key[0]].add(key[1])
                 interior[key[1]].add(key[0])
             neighbors[f].append((other, lengths[key]))
@@ -353,9 +334,7 @@ def straighten_cut(
             if len(ends) != 2:
                 extra.update(run)
                 continue
-            path = cut_path(
-                verts, interior, set(ends[:1]), set(ends[1:]), weights, relief
-            )
+            path = cut_path(verts, interior, set(ends[:1]), set(ends[1:]), relief)
             straight = [pair(a, b) for a, b in zip(path, path[1:])]
             if all(d <= 2 for d in degree.values()):
                 # a simple chain walks in order, so both sides price their turns
@@ -368,9 +347,9 @@ def straighten_cut(
                     )
                     walked.add(key)
                     seq.append(key[1] if key[0] == seq[-1] else key[0])
-                better = straight and path_cost(
-                    verts, path, weights, relief
-                ) < path_cost(verts, seq, weights, relief)
+                better = straight and path_cost(verts, path, relief) < path_cost(
+                    verts, seq, relief
+                )
             else:
                 better = straight and sum(lengths[k] for k in straight) < sum(
                     lengths[k] for k in run
@@ -454,6 +433,9 @@ def split_pieces(group, links, cuts):
 
 # a tiny piece among only tiny pieces keeps its cut, that split was on purpose
 def absorb_fragments(pieces, links, cuts, area, floor):
+    pieces = [list(piece) for piece in pieces]
+    cuts = set(cuts)
+
     def piece_area(p):
         return sum(area(f) for f in p)
 
@@ -478,7 +460,7 @@ def absorb_fragments(pieces, links, cuts, area, floor):
             del pieces[i]
             changed = True
             break
-    return pieces
+    return pieces, cuts
 
 
 # only the strongest neck is returned, the caller re-scans each piece
@@ -564,37 +546,35 @@ def face_measures(verts, faces, uvs):
     return areas3d, uv_areas, centroids
 
 
+# computed on first use, a caller scanning many pieces of one mesh shares it
+def lazy_relief(verts, faces, edges):
+    return functools.cache(
+        lambda: crease_relief(verts, faces, weighted_normals(verts, faces), edges)
+    )
+
+
 # measures the unwrap itself, the 3d shape does not predict it
 def split_islands(
     verts,
     faces,
     seams,
     uvs,
-    weights=None,
     groups=None,
     edges=None,
-    relief_cache=None,
+    cut_relief=None,
     fragment_floor=None,
     groups_clean=False,
     measures=None,
-    split_target=SPLIT_TARGET,
 ):
     if edges is None:
         edges = face_edges(faces)
     if groups is None:
         groups = island_groups(faces, seams, edges)
-    if relief_cache is None:
-        relief_cache = []
+    if cut_relief is None:
+        cut_relief = lazy_relief(verts, faces, edges)
     if measures is None:
         measures = face_measures(verts, faces, uvs)
     areas3d, uv_areas, uv_centroids = measures
-
-    def cut_relief():
-        # a caller scanning many pieces of one mesh shares the cache
-        if not relief_cache:
-            weighted = weighted_normals(verts, faces)
-            relief_cache.append(crease_relief(verts, faces, weighted, edges))
-        return relief_cache[0]
 
     extra = set()
 
@@ -631,7 +611,7 @@ def split_islands(
     total = sum(areas3d[f] for g in groups for f in g)
     if total <= 0:
         return extra
-    cap = math.sqrt(total / split_target)
+    cap = math.sqrt(total / SPLIT_TARGET)
     if fragment_floor is None:
         fragment_floor = whole_mesh_fragment_floor(areas3d)
 
@@ -648,8 +628,9 @@ def split_islands(
         ts, lo, length, size, areas, density = m
         # the cap in this island's own uv units
         local_cap = cap / density
+        topology = None if known_clean else uv_topology(group, faces, edges, seams)
         ruined = not known_clean and island_ruined(
-            group, faces, uvs, edges, seams, uv_areas
+            group, faces, uvs, edges, seams, uv_areas, topology[0]
         )
         # a ruined island's uv bins still place a good cut, a crushed one's do not
         crushed = (
@@ -658,13 +639,15 @@ def split_islands(
             > SPLIT_DISTORTION
         )
         clean = not ruined and not crushed
+        if not clean and topology is None:
+            topology = uv_topology(group, faces, edges, seams)
         if clean:
             if length <= 0 or length <= local_cap * SPLIT_NECK:
                 continue
             cuts_at = strip_cuts(group, ts, lo, length, local_cap, areas)
             if not cuts_at:
                 continue
-        elif len(loops := uv_topology(group, faces, edges, seams)[1]) > 1:
+        elif len(loops := topology[1]) > 1:
             # open a non-disk with a path joining two boundary loops
             adjacent = collections.defaultdict(set)
             for f in group:
@@ -675,7 +658,7 @@ def split_islands(
                     if len(edges[key]) == 2 and key not in seams:
                         adjacent[key[0]].add(key[1])
                         adjacent[key[1]].add(key[0])
-            extra |= connect_loops(verts, adjacent, loops, weights, cut_relief())
+            extra |= connect_loops(verts, adjacent, loops, cut_relief())
             continue
         elif crushed:
             spatial = _spatial_parameter(verts, faces, group)
@@ -695,13 +678,11 @@ def split_islands(
             cuts_at = [lo + length * k / bins for k in range(1, bins)]
         links = face_adjacency(group, faces, edges, seams)
         bin_of = {f: bisect.bisect(cuts_at, ts[f]) for f in group}
-        new = straighten_cut(
-            verts, group, faces, edges, links, bin_of, weights, cut_relief()
-        )
+        new = straighten_cut(verts, group, faces, edges, links, bin_of, cut_relief())
         if not new:
             continue
         pieces = split_pieces(group, links, new)
-        pieces = absorb_fragments(
+        pieces, new = absorb_fragments(
             pieces, links, new, lambda f: areas3d[f], fragment_floor
         )
         if not new:
@@ -720,7 +701,7 @@ def split_moves(
     if edges is None:
         edges = face_edges(faces)
     if seams is None:
-        seams = uv_seams(faces, uvs, edges)
+        seams = uv_tears(faces, uvs)
     if groups is None:
         groups = island_groups(faces, seams, edges)
     measures = face_measures(verts, faces, uvs)
@@ -739,7 +720,6 @@ def split_moves(
             faces,
             seams,
             uvs,
-            None,
             groups,
             edges,
             groups_clean=True,
@@ -749,7 +729,7 @@ def split_moves(
         # each piece's engine output has its own uv scale
         scanned = []
         extra = set()
-        relief_cache = []
+        cut_relief = lazy_relief(verts, faces, edges)
         fragment_floor = whole_mesh_fragment_floor(areas3d)
         for start, stop in ranges:
             scoped = [g for g in groups if start <= g[0] < stop]
@@ -759,10 +739,9 @@ def split_moves(
                 faces,
                 seams,
                 uvs,
-                None,
                 scoped,
                 edges,
-                relief_cache,
+                cut_relief,
                 fragment_floor,
                 groups_clean=True,
                 measures=measures,

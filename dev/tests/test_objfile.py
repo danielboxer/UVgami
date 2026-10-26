@@ -1,12 +1,6 @@
-import importlib.util
-from pathlib import Path
+from uvgami_cli.common import load_addon_module
 
-# loaded from file, the addon package imports bpy
-spec = importlib.util.spec_from_file_location(
-    "addon_objfile", Path(__file__).parents[2] / "src" / "objfile.py"
-)
-objfile = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(objfile)
+objfile = load_addon_module("src/objfile.py")
 
 
 def write_obj(tmp_path, name, body):

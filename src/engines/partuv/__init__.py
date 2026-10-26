@@ -3,21 +3,22 @@ import os
 import pathlib
 import platform
 import shutil
+import signal
 import subprocess
 from dataclasses import dataclass
 
 import bpy
 
-from ...utils.paths import get_dir_path, get_extension_dir_path
+from ...utils.paths import get_dir_path, get_io_dir_paths
 from ...utils.ui import only_active
 from .. import Engine
 from ..install_task import (
     NOT_DOWNLOADED_ERROR,
     UPDATE_ICON,
+    CachedUpdateNotice,
     draw_error,
     draw_online_access,
     draw_progress,
-    draw_update_row,
     task_state,
 )
 from .install import (
@@ -123,7 +124,7 @@ class PartuvRun:
     path: pathlib.Path
 
 
-class PartuvEngine(Engine):
+class PartuvEngine(CachedUpdateNotice, Engine):
     id = "PARTUV"
     enum_value = 1
     label = "PartUV"
@@ -132,6 +133,8 @@ class PartuvEngine(Engine):
     supports_symmetry = True
     property_group = UVGAMI_PG_partuv
     has_install_controls = True
+    install_owner = "partuv"
+    install_phase = "Installing PartUV"
     classes = (UVGAMI_PG_partuv, UVGAMI_OT_install_partuv, UVGAMI_OT_uninstall_partuv)
 
     def is_available(self):
@@ -156,6 +159,7 @@ class PartuvEngine(Engine):
         return None, NOT_DOWNLOADED_ERROR
 
     def invalidate_caches(self):
+        super().invalidate_caches()
         get_installed_partuv_version.cache_clear()
 
     def draw_settings(self, layout, props):
@@ -186,11 +190,8 @@ class PartuvEngine(Engine):
     def update_pending(self):
         return find_partuv_dev_repo() is None and partuv_update_pending()
 
-    def draw_update_notice(self, layout):
-        required = partuv_too_old()
-        state = "required" if required else "available"
-        text = f"{self.label} update {state}" if self.update_pending() else None
-        draw_update_row(layout, "partuv", "Installing PartUV", text, required)
+    def install_too_old(self):
+        return partuv_too_old()
 
     def draw_prefs(self, layout, prefs):
         if not self.is_available():
@@ -271,10 +272,9 @@ class PartuvEngine(Engine):
             ]
         else:
             base = [str(get_partuv_venv_python()), "-m", "partuv"]
+        input_dir, output_dir = get_io_dir_paths()
         # windows caps a command line near 32k characters
-        input_list = (
-            get_extension_dir_path() / "input" / f"{input_paths[0].stem}_inputs.txt"
-        )
+        input_list = input_dir / f"{input_paths[0].stem}_inputs.txt"
         input_list.write_text(
             "\n".join(str(path) for path in input_paths) + "\n", encoding="utf-8"
         )
@@ -282,7 +282,7 @@ class PartuvEngine(Engine):
             "--input-list",
             str(input_list),
             "--output-dir",
-            str(get_extension_dir_path() / "output"),
+            str(output_dir),
             "--overwrite",
             "--segmentation",
             props.partuv.segmentation.lower(),
@@ -311,15 +311,21 @@ class PartuvEngine(Engine):
             5: ("PartUV produced invalid output", True),
         }.get(code) or super().describe_failure(code)
 
+    # uv starts the engine as a child process, which outlives a kill of uv alone
     def stop(self, process, ctx):
         if platform.system() == "Windows":
-            # uv starts the engine as a child process
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(process.pid)],
                 capture_output=True,
             )
-        else:
-            process.kill()
+            return
+        children = pathlib.Path(f"/proc/{process.pid}/task/{process.pid}/children")
+        for child in children.read_text().split():
+            try:
+                os.kill(int(child), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        process.kill()
 
 
 ENGINE = PartuvEngine()

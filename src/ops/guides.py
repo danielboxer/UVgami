@@ -237,7 +237,8 @@ class UVGAMI_OT_exit_draw(bpy.types.Operator):
         if is_draw_active():
             if _old_active_group is not None:
                 active_obj.vertex_groups.active_index = _old_active_group
-            bpy.ops.object.mode_set(mode=_old_mode)
+            # an addon reload clears the saved mode
+            bpy.ops.object.mode_set(mode=_old_mode or "OBJECT")
         return {"FINISHED"}
 
 

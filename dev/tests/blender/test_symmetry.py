@@ -7,8 +7,6 @@ import numpy
 import pytest
 from blender_fixtures import addon, manager, needs_engine, needs_xatlas
 
-pytestmark = [needs_engine]
-
 
 def uvs_by_vertex(mesh, faces=None):
     layer = mesh.uv_layers.active
@@ -77,6 +75,7 @@ def test_auto_skips_a_mesh_with_part_overrides(load_obj):
     assert auto_plan(mesh) is None
 
 
+@needs_engine
 def test_symmetry_welds_the_uv_map_across_the_plane(load_obj, unwrap, outputs):
     load_obj("cylinder")
     props = bpy.context.scene.uvgami
@@ -89,6 +88,7 @@ def test_symmetry_welds_the_uv_map_across_the_plane(load_obj, unwrap, outputs):
     assert_welded_across_x(outputs()["cylinder_unwrapped"].data)
 
 
+@needs_engine
 @needs_xatlas
 def test_xatlas_gives_the_negative_side_the_mirrored_uvs(load_obj, unwrap, outputs):
     load_obj("cylinder")
@@ -148,6 +148,7 @@ def move_to_source_positions(mesh, source, matrix):
         vertex.co = position
 
 
+@needs_engine
 @pytest.mark.parametrize("scale", [(1, 1, 1), (1.5, 1, 0.7)])
 def test_a_turned_mesh_mirrors_across_its_own_plane(load_obj, unwrap, outputs, scale):
     cylinder = turned_lopsided_cylinder(load_obj, scale)
@@ -166,6 +167,7 @@ def test_a_turned_mesh_mirrors_across_its_own_plane(load_obj, unwrap, outputs, s
     assert_negative_side_mirrored(mesh)
 
 
+@needs_engine
 @needs_xatlas
 def test_xatlas_mirrors_a_turned_and_stretched_mesh(load_obj, unwrap, outputs):
     cylinder = turned_lopsided_cylinder(load_obj, (1.5, 1, 0.7))
@@ -297,6 +299,7 @@ def plane_loop_and_seams(mesh):
     return plane_loop, torn
 
 
+@needs_engine
 def test_hard_surface_mirrors_the_placed_seams_on_a_whole_mesh(
     load_obj, unwrap, outputs
 ):
@@ -314,6 +317,7 @@ def test_hard_surface_mirrors_the_placed_seams_on_a_whole_mesh(
     assert mirrored_seam_share(mesh) > 0.9
 
 
+@needs_engine
 def test_organic_mirrors_the_half_run_cuts_on_a_whole_mesh(load_obj, unwrap, outputs):
     (cylinder,) = load_obj("cylinder")
     source = cylinder.data
@@ -335,6 +339,7 @@ def test_organic_mirrors_the_half_run_cuts_on_a_whole_mesh(load_obj, unwrap, out
     assert plane_loop <= torn
 
 
+@needs_engine
 def test_a_proxied_mesh_mirrors_the_half_run_cuts(load_obj, unwrap, outputs):
     (cylinder,) = load_obj("cylinder")
     bpy.context.view_layer.objects.active = cylinder

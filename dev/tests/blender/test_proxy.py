@@ -1,7 +1,7 @@
 import bpy
 import mathutils
 import numpy
-from blender_fixtures import addon
+from blender_fixtures import add_cube, addon, join
 
 make_proxy = addon.src.proxy.make_proxy
 mirror_proxy = addon.src.proxy.mirror_proxy
@@ -18,19 +18,9 @@ def add_dense_sphere(location=(0, 0, 0)):
     return bpy.context.active_object
 
 
-def join(objects):
-    bpy.ops.object.select_all(action="DESELECT")
-    for obj in objects:
-        obj.select_set(True)
-    bpy.context.view_layer.objects.active = objects[0]
-    bpy.ops.object.join()
-    return bpy.context.active_object
-
-
 def test_only_the_part_over_the_budget_is_decimated():
     sphere = add_dense_sphere()
-    bpy.ops.mesh.primitive_cube_add(location=(5, 0, 0))
-    obj = join([sphere, bpy.context.active_object])
+    obj = join([sphere, add_cube("cube", location=(5, 0, 0))])
 
     assert needs_proxy(obj, PROXY_FACES)
     assert make_proxy(obj, PROXY_FACES)
@@ -40,11 +30,7 @@ def test_only_the_part_over_the_budget_is_decimated():
 
 
 def test_parts_all_under_the_budget_are_left_alone():
-    cubes = []
-    for i in range(3):
-        bpy.ops.mesh.primitive_cube_add(location=(3 * i, 0, 0))
-        cubes.append(bpy.context.active_object)
-    obj = join(cubes)
+    obj = join([add_cube(f"cube{i}", location=(3 * i, 0, 0)) for i in range(3)])
 
     assert triangle_count(obj) > 20
     assert not needs_proxy(obj, 20)

@@ -1,22 +1,18 @@
 import bpy
 import pytest
-from blender_fixtures import manager, needs_engine
+from blender_fixtures import (
+    add_cube,
+    add_primitive,
+    has_uvs,
+    join,
+    manager,
+    needs_engine,
+)
 
 pytestmark = [needs_engine, pytest.mark.smoke]
 
 # the prop minimum, well under the sphere's face count
 PROXY_FACES = 100
-
-
-def add_primitive(name, add, **kwargs):
-    add(**kwargs)
-    obj = bpy.context.active_object
-    obj.name = name
-    return obj
-
-
-def add_cube(name="cube"):
-    return add_primitive(name, bpy.ops.mesh.primitive_cube_add)
 
 
 def add_sphere(name="sphere"):
@@ -25,13 +21,8 @@ def add_sphere(name="sphere"):
     )
 
 
-def has_uvs(obj):
-    layer = obj.data.uv_layers.active
-    return layer is not None and any(any(datum.uv) for datum in layer.data)
-
-
 def test_transfer_writes_uvs_onto_the_input_and_keeps_its_quads(unwrap, outputs):
-    cube = add_cube()
+    cube = add_cube("cube")
     cube.data.uv_layers.remove(cube.data.uv_layers[0])
     bpy.context.scene.uvgami.transfer_uvs = True
 
@@ -78,7 +69,7 @@ def test_transfer_that_cannot_apply_keeps_the_output(unwrap, outputs):
 
 @pytest.mark.parametrize("with_map", [True, False])
 def test_import_uvs_runs_with_and_without_a_map(unwrap, outputs, with_map):
-    cube = add_cube()
+    cube = add_cube("cube")
     if not with_map:
         cube.data.uv_layers.remove(cube.data.uv_layers[0])
     bpy.context.scene.uvgami.import_uvs = True
@@ -110,11 +101,7 @@ def test_proxy_on_a_multi_part_mesh_decimates_only_the_part_over_the_budget(
     unwrap, outputs
 ):
     sphere = add_sphere()
-    bpy.ops.mesh.primitive_cube_add(location=(5, 0, 0))
-    sphere.select_set(True)
-    bpy.context.view_layer.objects.active = sphere
-    bpy.ops.object.join()
-    joined = bpy.context.active_object
+    joined = join([sphere, add_cube("cube", location=(5, 0, 0))])
     props = bpy.context.scene.uvgami
     props.use_proxy = True
     props.proxy_faces = PROXY_FACES
@@ -132,9 +119,8 @@ def test_proxy_on_a_multi_part_mesh_decimates_only_the_part_over_the_budget(
         if all(joined.data.vertices[v].co.x > 2.5 for v in face.vertices)
     ]
     assert len(cube_faces) == 6
-    layer = joined.data.uv_layers.active
     for face in cube_faces:
-        assert any(any(layer.data[i].uv) for i in face.loop_indices)
+        assert has_uvs(joined, [face])
 
 
 def test_proxy_without_transfer_replaces_the_output_with_a_full_copy(unwrap, outputs):

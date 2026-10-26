@@ -118,20 +118,20 @@ def _restack(obj, stacks):
 
 
 # topology maps an object to its (faces, edges) for a caller that read them already
-def pack_objects(objects, topology=None):
+def pack_objects(objects, props, topology=None):
     if not objects:
         return
     topology = topology or {}
 
     def read_and_pack():
         stacks_of = {obj: island_stacks(obj, *topology.get(obj, ())) for obj in objects}
-        edit_restore(objects, pack, stacks_of)
+        edit_restore(objects, pack, stacks_of, props)
 
     in_object_mode(objects[0], read_and_pack)
 
 
 # blender's merge_overlap can't keep stacks together
-def pack(stacks_of):
+def pack(stacks_of, props):
     tool_settings = bpy.context.scene.tool_settings
     old_sync = tool_settings.use_uv_select_sync
     # with sync on, uv operators follow the mesh selection differently per version
@@ -142,13 +142,11 @@ def pack(stacks_of):
         for obj, stacks in stacks_of.items():
             _deselect_stacked_duplicates(obj, stacks)
         # without the average first, a repeat pack scales a part again
-        if bpy.context.scene.uvgami.fix_scale:
+        if props.fix_scale:
             bpy.ops.uv.average_islands_scale()
             # for obj in stacks_of:
             #     _scale_parts(obj)
-        bpy.ops.uv.pack_islands(
-            margin=bpy.context.scene.uvgami.margin, rotate_method="AXIS_ALIGNED"
-        )
+        bpy.ops.uv.pack_islands(margin=props.margin, rotate_method="AXIS_ALIGNED")
         for obj, stacks in stacks_of.items():
             _restack(obj, stacks)
         bpy.ops.mesh.select_all(action="SELECT")
@@ -206,18 +204,18 @@ class UVGAMI_OT_pack(bpy.types.Operator):
     bl_options = {"UNDO"}
 
     def execute(self, context):
-        combine_uvs = context.scene.uvgami.combine_uvs
+        props = context.scene.uvgami
         valid_objs = []
 
         for obj in context.selected_objects:
             if not validate_obj(self, obj, check_uvs=True):
                 continue
-            if combine_uvs:
+            if props.combine_uvs:
                 valid_objs.append(obj)
             else:
-                pack_objects([obj])
+                pack_objects([obj], props)
 
-        if combine_uvs:
-            pack_objects(valid_objs)
+        if props.combine_uvs:
+            pack_objects(valid_objs, props)
 
         return {"FINISHED"}

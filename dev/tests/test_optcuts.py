@@ -7,9 +7,8 @@ from pathlib import Path
 
 import pytest
 from uvgami_cli import optcuts
-from uvgami_cli.common import REPO_ROOT, UnwrapError, find_engine
+from uvgami_cli.common import UnwrapError, engine_binaries, find_engine
 
-BUNDLED = REPO_ROOT / "engine-builds" / "windows" / "optcuts.exe"
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -32,25 +31,6 @@ class FakeProcess:
             out_dir = Path(self.argv[self.argv.index("-o") + 1])
             (out_dir / f"{input_path.stem}.obj").write_text(self.output_text)
         return self.returncode
-
-
-@pytest.fixture
-def fake_engine(tmp_path):
-    path = tmp_path / "optcuts.exe"
-    path.write_text("fake")
-    return path
-
-
-def popen_recorder(monkeypatch, **process_kwargs):
-    calls = []
-
-    def fake_popen(argv, **kwargs):
-        process = FakeProcess(argv, **process_kwargs)
-        calls.append(process)
-        return process
-
-    monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    return calls
 
 
 def test_build_args_quality_and_weight_mapping(fake_engine):
@@ -77,16 +57,16 @@ def test_output_dir_arg_has_trailing_separator(fake_engine):
     assert out_arg.endswith(("/", "\\"))
 
 
-def test_run_success(triangle, tmp_path, fake_engine, monkeypatch):
-    popen_recorder(monkeypatch)
+def test_run_success(triangle, tmp_path, fake_engine, popen_recorder):
+    popen_recorder(FakeProcess)
     output = tmp_path / "result.obj"
     optcuts.run(triangle, output, "balanced", False, None, 3, fake_engine)
     assert output.is_file()
     assert "vt 0 0" in output.read_text()
 
 
-def test_run_copies_weights_sidecar(triangle, tmp_path, fake_engine, monkeypatch):
-    calls = popen_recorder(monkeypatch)
+def test_run_copies_weights_sidecar(triangle, tmp_path, fake_engine, popen_recorder):
+    calls = popen_recorder(FakeProcess)
     weights = tmp_path / "weights.txt"
     weights.write_text("0,1.0")
     optcuts.run(
@@ -114,8 +94,8 @@ def test_run_copies_sidecars_next_to_the_input(
     assert "triangle_fixed" in seen[0]
 
 
-def test_run_engine_failure(triangle, tmp_path, fake_engine, monkeypatch):
-    popen_recorder(monkeypatch, returncode=7)
+def test_run_engine_failure(triangle, tmp_path, fake_engine, popen_recorder):
+    popen_recorder(FakeProcess, returncode=7)
     with pytest.raises(UnwrapError) as error:
         optcuts.run(
             triangle, tmp_path / "out.obj", "balanced", False, None, 3, fake_engine
@@ -156,8 +136,8 @@ def test_run_timeout_kills_the_engine(triangle, tmp_path, fake_engine, monkeypat
     assert "timed out" in str(error.value)
 
 
-def test_run_output_missing_uvs(triangle, tmp_path, fake_engine, monkeypatch):
-    popen_recorder(monkeypatch, output_text="v 0 0 0\nf 1 1 1\n")
+def test_run_output_missing_uvs(triangle, tmp_path, fake_engine, popen_recorder):
+    popen_recorder(FakeProcess, output_text="v 0 0 0\nf 1 1 1\n")
     with pytest.raises(UnwrapError) as error:
         optcuts.run(
             triangle, tmp_path / "out.obj", "balanced", False, None, 3, fake_engine
@@ -171,9 +151,71 @@ def test_find_engine_explicit_path_missing(tmp_path):
     assert error.value.exit_code == 3
 
 
+def test_find_engine_reads_the_engine_dir_override(tmp_path, monkeypatch):
+    binary = tmp_path / engine_binaries.get_engine_binary_name("optcuts")
+    binary.write_text("fake")
+    monkeypatch.setenv(engine_binaries.ENGINE_DIR_ENV_VAR, str(tmp_path))
+    assert find_engine("optcuts", "OptCuts", None) == binary
+
+
+def run_engine(binary, obj, out_dir):
+    return subprocess.run(
+        [str(binary), "-i", str(obj), "-o", str(out_dir) + os.sep],
+        timeout=300,
+        capture_output=True,
+    )
+
+
+def make_dirs(tmp_path):
+    input_dir = tmp_path / "input"
+    out_dir = tmp_path / "output"
+    input_dir.mkdir()
+    out_dir.mkdir()
+    return input_dir, out_dir
+
+
+# the output's uvs, and each input vt's output vt through the face order the engine keeps
+def read_output(path, faces):
+    uvs = []
+    faces_out = []
+    for line in path.read_text().splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] == "vt":
+            uvs.append((float(parts[1]), float(parts[2])))
+        elif parts[0] == "f":
+            faces_out.append(tuple(int(c.split("/")[1]) - 1 for c in parts[1:]))
+    assert len(faces_out) == len(faces)
+    vt_map = {}
+    for face_in, face_out in zip(faces, faces_out):
+        for ti, to in zip(face_in, face_out):
+            vt_map[ti] = to
+    return uvs, vt_map
+
+
+# the output is uniformly scaled into the unit box, two pins undo it
+def unscale_by_pins(verts, uvs, vt_map, border):
+    pin_pairs = [((verts[t][0], verts[t][1]), uvs[vt_map[t]]) for t in border]
+    lo = min(pin_pairs, key=lambda p: p[0][0])
+    hi = max(pin_pairs, key=lambda p: p[0][0])
+    scale = (hi[0][0] - lo[0][0]) / (hi[1][0] - lo[1][0])
+    du = lo[0][0] - scale * lo[1][0]
+    dv = lo[0][1] - scale * lo[1][1]
+    return lambda t: (scale * uvs[vt_map[t]][0] + du, scale * uvs[vt_map[t]][1] + dv)
+
+
+# the input uv of a vertex is its grid position
+def largest_offset(placed, verts, vertices):
+    return max(
+        max(abs(placed(t)[0] - verts[t][0]), abs(placed(t)[1] - verts[t][1]))
+        for t in vertices
+    )
+
+
 @pytest.mark.smoke
-@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
-def test_optcuts_smoke(cube, tmp_path):
+def test_optcuts_smoke(cube, tmp_path, engine_binary):
+    engine_binary("optcuts")
     output = tmp_path / "cube_uv.obj"
     optcuts.run(cube, output, "fewer-seams", False, None, 3, None)
     text = output.read_text()
@@ -182,8 +224,8 @@ def test_optcuts_smoke(cube, tmp_path):
 
 
 @pytest.mark.smoke
-@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
-def test_optcuts_shared_process_matches_solo(tmp_path):
+def test_optcuts_shared_process_matches_solo(tmp_path, engine_binary):
+    binary = engine_binary("optcuts")
     input_dir = tmp_path / "input"
     solo_dir = tmp_path / "solo"
     shared_dir = tmp_path / "shared"
@@ -195,14 +237,9 @@ def test_optcuts_shared_process_matches_solo(tmp_path):
     _write_bump_patch(patch)
     # the pinned patch first, its pins must not leak into the cube
     for obj in (patch, cube):
-        subprocess.run(
-            [str(BUNDLED), "-i", str(obj), "-o", str(solo_dir) + os.sep],
-            check=True,
-            timeout=300,
-            capture_output=True,
-        )
+        assert run_engine(binary, obj, solo_dir).returncode == 0
     result = subprocess.run(
-        [str(BUNDLED), "-o", str(shared_dir) + os.sep],
+        [str(binary), "-o", str(shared_dir) + os.sep],
         input=f"unwrap {patch}\nunwrap {cube}\nunwrap {input_dir / 'none.obj'}\n",
         text=True,
         timeout=300,
@@ -256,171 +293,58 @@ def _write_bump_patch(path, n=12, height=0.3, width=0.05):
 
 
 @pytest.mark.smoke
-@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
-def test_optcuts_pinned_border(tmp_path):
-    input_dir = tmp_path / "input"
-    out_dir = tmp_path / "output"
-    input_dir.mkdir()
-    out_dir.mkdir()
+def test_optcuts_pinned_border(tmp_path, engine_binary):
+    input_dir, out_dir = make_dirs(tmp_path)
     obj = input_dir / "patch.obj"
     verts, faces, border = _write_bump_patch(obj)
 
-    subprocess.run(
-        [str(BUNDLED), "-i", str(obj), "-o", str(out_dir) + os.sep],
-        check=True,
-        timeout=300,
-        capture_output=True,
-    )
+    assert run_engine(engine_binary("optcuts"), obj, out_dir).returncode == 0
 
-    uvs_out = []
-    faces_out = []
-    for line in (out_dir / "patch.obj").read_text().splitlines():
-        parts = line.split()
-        if not parts:
-            continue
-        if parts[0] == "vt":
-            uvs_out.append((float(parts[1]), float(parts[2])))
-        elif parts[0] == "f":
-            faces_out.append(tuple(int(c.split("/")[1]) - 1 for c in parts[1:]))
-    assert len(faces_out) == len(faces)
-
-    # face order survives the engine, map input vts to output vts through it
-    vt_map = {}
-    for face_in, face_out in zip(faces, faces_out):
-        for ti, to in zip(face_in, face_out):
-            vt_map[ti] = to
-
-    # the output is uniformly scaled into the unit box, undo it via two pins
-    pin_pairs = [((verts[t][0], verts[t][1]), uvs_out[vt_map[t]]) for t in border]
-    lo = min(pin_pairs, key=lambda p: p[0][0])
-    hi = max(pin_pairs, key=lambda p: p[0][0])
-    scale = (hi[0][0] - lo[0][0]) / (hi[1][0] - lo[1][0])
-    du = lo[0][0] - scale * lo[1][0]
-    dv = lo[0][1] - scale * lo[1][1]
-    residual = max(
-        max(abs(scale * out[0] + du - old[0]), abs(scale * out[1] + dv - old[1]))
-        for old, out in pin_pairs
-    )
-    assert residual < 1e-6
+    uvs, vt_map = read_output(out_dir / "patch.obj", faces)
+    placed = unscale_by_pins(verts, uvs, vt_map, border)
+    assert largest_offset(placed, verts, border) < 1e-6
 
 
 @pytest.mark.smoke
-@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
-def test_optcuts_nocut_relaxes_without_cutting(tmp_path):
-    input_dir = tmp_path / "input"
-    out_dir = tmp_path / "output"
-    input_dir.mkdir()
-    out_dir.mkdir()
+def test_optcuts_nocut_relaxes_without_cutting(tmp_path, engine_binary):
+    input_dir, out_dir = make_dirs(tmp_path)
     obj = input_dir / "patch.obj"
     verts, faces, border = _write_bump_patch(obj, n=20, height=1.5, width=0.01)
     sidecar = input_dir / "patch_fixed"
     sidecar.write_text(sidecar.read_text() + "\nnocut")
 
-    subprocess.run(
-        [str(BUNDLED), "-i", str(obj), "-o", str(out_dir) + os.sep],
-        check=True,
-        timeout=300,
-        capture_output=True,
-    )
+    assert run_engine(engine_binary("optcuts"), obj, out_dir).returncode == 0
 
-    uvs_out = []
-    faces_out = []
-    for line in (out_dir / "patch.obj").read_text().splitlines():
-        parts = line.split()
-        if not parts:
-            continue
-        if parts[0] == "vt":
-            uvs_out.append((float(parts[1]), float(parts[2])))
-        elif parts[0] == "f":
-            faces_out.append(tuple(int(c.split("/")[1]) - 1 for c in parts[1:]))
-    assert len(faces_out) == len(faces)
+    uvs, vt_map = read_output(out_dir / "patch.obj", faces)
     # a cut duplicates the uv verts along it
-    assert len(uvs_out) == len(verts)
-
-    vt_map = {}
-    for face_in, face_out in zip(faces, faces_out):
-        for ti, to in zip(face_in, face_out):
-            vt_map[ti] = to
-
-    pin_pairs = [((verts[t][0], verts[t][1]), uvs_out[vt_map[t]]) for t in border]
-    lo = min(pin_pairs, key=lambda p: p[0][0])
-    hi = max(pin_pairs, key=lambda p: p[0][0])
-    scale = (hi[0][0] - lo[0][0]) / (hi[1][0] - lo[1][0])
-    du = lo[0][0] - scale * lo[1][0]
-    dv = lo[0][1] - scale * lo[1][1]
-    residual = max(
-        max(abs(scale * out[0] + du - old[0]), abs(scale * out[1] + dv - old[1]))
-        for old, out in pin_pairs
-    )
-    assert residual < 1e-6
-
+    assert len(uvs) == len(verts)
+    placed = unscale_by_pins(verts, uvs, vt_map, border)
+    assert largest_offset(placed, verts, border) < 1e-6
     # the flat grid map is distorted over the bump, relaxing must move it
     interior = set(range(len(verts))) - set(border)
-    moved = max(
-        max(
-            abs(scale * uvs_out[vt_map[t]][0] + du - verts[t][0]),
-            abs(scale * uvs_out[vt_map[t]][1] + dv - verts[t][1]),
-        )
-        for t in interior
-    )
-    assert moved > 1e-3
+    assert largest_offset(placed, verts, interior) > 1e-3
 
 
 @pytest.mark.smoke
-@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
-def test_optcuts_nocut_without_pins(tmp_path):
-    input_dir = tmp_path / "input"
-    out_dir = tmp_path / "output"
-    input_dir.mkdir()
-    out_dir.mkdir()
+def test_optcuts_nocut_without_pins(tmp_path, engine_binary):
+    input_dir, out_dir = make_dirs(tmp_path)
     obj = input_dir / "patch.obj"
     verts, faces, _ = _write_bump_patch(obj, n=20, height=1.5, width=0.01)
     (input_dir / "patch_fixed").write_text("\nnocut")
 
-    subprocess.run(
-        [str(BUNDLED), "-i", str(obj), "-o", str(out_dir) + os.sep],
-        check=True,
-        timeout=300,
-        capture_output=True,
-    )
+    assert run_engine(engine_binary("optcuts"), obj, out_dir).returncode == 0
 
-    uvs_out = []
-    faces_out = []
-    for line in (out_dir / "patch.obj").read_text().splitlines():
-        parts = line.split()
-        if not parts:
-            continue
-        if parts[0] == "vt":
-            uvs_out.append((float(parts[1]), float(parts[2])))
-        elif parts[0] == "f":
-            faces_out.append(tuple(int(c.split("/")[1]) - 1 for c in parts[1:]))
-    assert len(faces_out) == len(faces)
+    uvs, vt_map = read_output(out_dir / "patch.obj", faces)
     # a cut duplicates the uv verts along it
-    assert len(uvs_out) == len(verts)
-
+    assert len(uvs) == len(verts)
     # input is the unit grid and the output is normalized into the unit box
-    vt_map = {}
-    for face_in, face_out in zip(faces, faces_out):
-        for ti, to in zip(face_in, face_out):
-            vt_map[ti] = to
-    moved = max(
-        max(
-            abs(uvs_out[vt_map[t]][0] - verts[t][0]),
-            abs(uvs_out[vt_map[t]][1] - verts[t][1]),
-        )
-        for t in range(len(verts))
-    )
-    assert moved > 1e-3
+    assert largest_offset(lambda t: uvs[vt_map[t]], verts, range(len(verts))) > 1e-3
 
 
 @pytest.mark.smoke
-@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
-def test_optcuts_nocut_keeps_hole_chart(tmp_path):
+def test_optcuts_nocut_keeps_hole_chart(tmp_path, engine_binary):
     n = 8
-    input_dir = tmp_path / "input"
-    out_dir = tmp_path / "output"
-    input_dir.mkdir()
-    out_dir.mkdir()
+    input_dir, out_dir = make_dirs(tmp_path)
     obj = input_dir / "ring.obj"
 
     verts = []
@@ -452,62 +376,36 @@ def test_optcuts_nocut_keeps_hole_chart(tmp_path):
             f.write("f " + " ".join(f"{c + 1}/{c + 1}" for c in face) + "\n")
     (input_dir / "ring_fixed").write_text("\nnocut")
 
-    subprocess.run(
-        [str(BUNDLED), "-i", str(obj), "-o", str(out_dir) + os.sep],
-        check=True,
-        timeout=300,
-        capture_output=True,
-    )
+    assert run_engine(engine_binary("optcuts"), obj, out_dir).returncode == 0
 
-    out_text = (out_dir / "ring.obj").read_text()
-    faces_out = [ln for ln in out_text.splitlines() if ln.startswith("f ")]
-    vts_out = [ln for ln in out_text.splitlines() if ln.startswith("vt ")]
-    assert len(faces_out) == len(faces)
+    uvs, _ = read_output(out_dir / "ring.obj", faces)
     # cutting the hole open to a disk would duplicate uv verts
-    assert len(vts_out) == len(verts)
+    assert len(uvs) == len(verts)
+
+
+# drag one interior uv far away, inverting its faces
+def drag_center_uv(obj, verts):
+    lines = obj.read_text().splitlines()
+    lines[len(verts) + len(verts) // 2] = "vt -5 -5"
+    obj.write_text("\n".join(lines) + "\n")
 
 
 @pytest.mark.smoke
-@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
-def test_optcuts_nocut_rejects_broken_map(tmp_path):
-    input_dir = tmp_path / "input"
-    (tmp_path / "output").mkdir()
-    input_dir.mkdir()
+def test_optcuts_nocut_rejects_broken_map(tmp_path, engine_binary):
+    input_dir, out_dir = make_dirs(tmp_path)
     obj = input_dir / "patch.obj"
     verts, _, _ = _write_bump_patch(obj)
     (input_dir / "patch_fixed").write_text("\nnocut")
+    drag_center_uv(obj, verts)
 
-    lines = obj.read_text().splitlines()
-    center = len(verts) // 2
-    lines[len(verts) + center] = "vt -5 -5"
-    obj.write_text("\n".join(lines) + "\n")
-
-    ran = subprocess.run(
-        [str(BUNDLED), "-i", str(obj), "-o", str(tmp_path / "output") + os.sep],
-        timeout=300,
-        capture_output=True,
-    )
-    assert ran.returncode == 114
+    assert run_engine(engine_binary("optcuts"), obj, out_dir).returncode == 114
 
 
 @pytest.mark.smoke
-@pytest.mark.skipif(not BUNDLED.is_file(), reason="bundled OptCuts binary not present")
-def test_optcuts_pinned_rejects_broken_map(tmp_path):
-    input_dir = tmp_path / "input"
-    (tmp_path / "output").mkdir()
-    input_dir.mkdir()
+def test_optcuts_pinned_rejects_broken_map(tmp_path, engine_binary):
+    input_dir, out_dir = make_dirs(tmp_path)
     obj = input_dir / "patch.obj"
     verts, _, _ = _write_bump_patch(obj)
+    drag_center_uv(obj, verts)
 
-    # drag one interior uv far away, inverting its faces
-    lines = obj.read_text().splitlines()
-    center = len(verts) // 2
-    lines[len(verts) + center] = "vt -5 -5"
-    obj.write_text("\n".join(lines) + "\n")
-
-    ran = subprocess.run(
-        [str(BUNDLED), "-i", str(obj), "-o", str(tmp_path / "output") + os.sep],
-        timeout=300,
-        capture_output=True,
-    )
-    assert ran.returncode == 110
+    assert run_engine(engine_binary("optcuts"), obj, out_dir).returncode == 110

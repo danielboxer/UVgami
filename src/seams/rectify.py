@@ -436,11 +436,14 @@ def _relax_flips(group, uvs, targets, inner):
                 sum(position.get(o, o)[1] for o in around) / len(around),
             )
         candidates = {fi for uv in free for fi in faces_at[uv]}
+    relaxed_targets = dict(targets)
+    relaxed_inner = dict(inner)
     for uv, p in position.items():
         if uv in inner:
-            inner[uv] = p
+            relaxed_inner[uv] = p
         else:
-            targets[uv] = p
+            relaxed_targets[uv] = p
+    return relaxed_targets, relaxed_inner
 
 
 # without four turning corners the interior is None, for the pinned unwrap
@@ -458,6 +461,6 @@ def rectify_targets(uvs, groups):
         if result is not None:
             targets, inner = result
             if inner is not None:
-                _relax_flips(group, uvs, targets, inner)
+                targets, inner = _relax_flips(group, uvs, targets, inner)
             plans.append((group, targets, inner))
     return plans

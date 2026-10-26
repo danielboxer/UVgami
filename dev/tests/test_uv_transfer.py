@@ -1,19 +1,9 @@
-import importlib.util
 import math
-import sys
-from pathlib import Path
 
 import numpy
 import pytest
 
-# loaded from file, the addon package imports bpy
-PKG = Path(__file__).parents[2] / "src" / "seams"
-spec = importlib.util.spec_from_file_location(
-    "seams", PKG / "__init__.py", submodule_search_locations=[str(PKG)]
-)
-sys.modules["seams"] = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(sys.modules["seams"])
-from seams.uv_transfer import transfer_exact, transfer_exact_job  # noqa: E402
+from seams.uv_transfer import transfer_exact, transfer_exact_job
 
 # unit square as two triangles sharing edge v0-v2
 SQUARE_POS = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]

@@ -1,15 +1,18 @@
+import multiprocessing
+
 import bpy
 import pytest
 from blender_fixtures import (
+    add_cube,
     addon,
     island_count,
     logger,
     manager,
     needs_engine,
     seam_count,
+    select,
+    two_loose_cubes,
 )
-
-pytestmark = [needs_engine, pytest.mark.smoke]
 
 GRID_MATERIAL = "UVgami_grid"
 # (islands, seams) on the balanced unwrap, recorded 2026-08-22 at optcuts 1.20,
@@ -21,27 +24,6 @@ EXPECTED = {
     ("cube-bevel2", "HARD"): (6, 37),
 }
 QUALITY_LEVELS = ["LESS_STRETCH", "BALANCED", "FEWER_SEAMS"]
-
-
-def add_cube(name, location=(0, 0, 0)):
-    bpy.ops.mesh.primitive_cube_add(location=location)
-    obj = bpy.context.active_object
-    obj.name = name
-    return obj
-
-
-def select(objects):
-    bpy.ops.object.select_all(action="DESELECT")
-    for obj in objects:
-        obj.select_set(True)
-    bpy.context.view_layer.objects.active = objects[0]
-
-
-def two_loose_cubes():
-    a, b = add_cube("a"), add_cube("b", location=(5, 0, 0))
-    select([a, b])
-    bpy.ops.object.join()
-    return bpy.context.active_object
 
 
 def uv_area(obj):
@@ -67,6 +49,8 @@ def uv_inside_unit_square(obj):
     )
 
 
+@needs_engine
+@pytest.mark.smoke
 @pytest.mark.parametrize("model, surface_mode", EXPECTED)
 def test_chart_and_seam_counts_are_pinned(
     load_obj, unwrap, outputs, model, surface_mode
@@ -84,6 +68,8 @@ def test_chart_and_seam_counts_are_pinned(
     assert (island_count(output), seam_count(output)) == EXPECTED[model, surface_mode]
 
 
+@needs_engine
+@pytest.mark.smoke
 def test_auto_unwraps_a_beveled_cube_as_hard_surface(load_obj, unwrap, outputs):
     load_obj("cube-bevel2")
     # the pinned counts are without the mirror cut
@@ -96,6 +82,8 @@ def test_auto_unwraps_a_beveled_cube_as_hard_surface(load_obj, unwrap, outputs):
     assert (island_count(output), seam_count(output)) == expected
 
 
+@needs_engine
+@pytest.mark.smoke
 def test_quality_levels_trade_seams_for_stretch(load_obj, unwrap, outputs):
     seams = []
     for quality in QUALITY_LEVELS:
@@ -113,6 +101,8 @@ def test_quality_levels_trade_seams_for_stretch(load_obj, unwrap, outputs):
     assert len(set(seams)) == len(seams)
 
 
+@needs_engine
+@pytest.mark.smoke
 def test_one_core_gives_the_same_unwrap_as_many(unwrap, outputs):
     counts = []
     for cores in (1, 2):
@@ -125,6 +115,8 @@ def test_one_core_gives_the_same_unwrap_as_many(unwrap, outputs):
     assert counts[0] == counts[1]
 
 
+@needs_engine
+@pytest.mark.smoke
 def test_stack_similar_copies_the_twin_instead_of_unwrapping_it(unwrap, outputs):
     joined = two_loose_cubes()
     bpy.context.scene.uvgami.stack_similar = True
@@ -148,6 +140,8 @@ def test_stack_similar_copies_the_twin_instead_of_unwrapping_it(unwrap, outputs)
     assert by_side[False] == by_side[True]
 
 
+@needs_engine
+@pytest.mark.smoke
 def test_combine_uvs_packs_both_outputs_into_one_square(unwrap, outputs):
     areas = {}
     for combine in (False, True):
@@ -165,6 +159,8 @@ def test_combine_uvs_packs_both_outputs_into_one_square(unwrap, outputs):
         assert areas[name, True] < areas[name, False]
 
 
+@needs_engine
+@pytest.mark.smoke
 def test_grid_is_added_and_removed_without_losing_the_slots(unwrap, outputs):
     cube = add_cube("cube")
     cube.data.materials.append(bpy.data.materials.new("A"))
@@ -186,6 +182,8 @@ def test_grid_is_added_and_removed_without_losing_the_slots(unwrap, outputs):
     assert [face.material_index for face in output.data.polygons] == indices_before
 
 
+@needs_engine
+@pytest.mark.smoke
 def test_auto_grid_lands_on_the_input_when_uvs_transfer(unwrap, outputs):
     cube = add_cube("cube")
     props = bpy.context.scene.uvgami
@@ -228,10 +226,12 @@ def test_reset_settings_restores_the_defaults():
 
     assert props.margin == pytest.approx(0.001)
     assert not props.use_proxy
-    assert props.max_cores > 1
+    assert props.max_cores == multiprocessing.cpu_count()
     assert props.priority == "BALANCED"
 
 
+@needs_engine
+@pytest.mark.smoke
 def test_summary_can_be_cleared(unwrap):
     add_cube("cube")
     unwrap()

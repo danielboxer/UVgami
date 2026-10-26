@@ -3,8 +3,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .mesh import faces_from_arrays
-from .proxy_transfer import uv_tears
+from .mesh import faces_from_arrays, find, signed_area, uv_tears
 
 
 # loops are numbered consecutively in polygon order, matching poly.loop_start
@@ -73,16 +72,6 @@ def _order_part(local, assign, uvs):
     return [assign[c] for c in order], [uvs[c] for c in order]
 
 
-def _uv_area(uvs):
-    area = 0.0
-    n = len(uvs)
-    for i in range(n):
-        x1, y1 = uvs[i]
-        x2, y2 = uvs[(i + 1) % n]
-        area += x1 * y2 - x2 * y1
-    return area / 2
-
-
 # counterclockwise, None when the part has no area
 def _flatten_part(assign, positions):
     rel = positions[assign] - positions[assign[0]]
@@ -114,7 +103,7 @@ def _uv_map_of(flat, uvs):
 
 # the pieces unfold about their shared edges into the largest piece's plane
 def _weld_parts(parts, positions):
-    anchor = max(range(len(parts)), key=lambda i: abs(_uv_area(parts[i][1])))
+    anchor = max(range(len(parts)), key=lambda i: abs(signed_area(parts[i][1])))
     anchor_assign, anchor_uvs = parts[anchor]
     anchor_flat = _flatten_part(anchor_assign, positions)
     if anchor_flat is None:
@@ -123,7 +112,7 @@ def _weld_parts(parts, positions):
     if uv_map is None:
         return None
     # the unfold works in 3d units, so the slack scales with the face
-    anchor_area = abs(_uv_area([(z.real, z.imag) for z in anchor_flat]))
+    anchor_area = abs(signed_area([(z.real, z.imag) for z in anchor_flat]))
     if anchor_area == 0:
         return None
     tol = 0.01 * math.sqrt(anchor_area)
@@ -195,7 +184,7 @@ class _OutputLayout:
             for v, p in zip(verts, corners):
                 other = corner_face.setdefault((v, p), fo)
                 if other != fo:
-                    self.parent[self.find(fo)] = self.find(other)
+                    self.parent[find(self.parent, fo)] = find(self.parent, other)
             n = len(corners)
             for i in range(n):
                 p, q = corners[i], corners[(i + 1) % n]
@@ -208,12 +197,6 @@ class _OutputLayout:
         for p in self.edges:
             key = (math.floor(p[0] / self.cell), math.floor(p[1] / self.cell))
             self.grid.setdefault(key, []).append(p)
-
-    def find(self, fo):
-        while self.parent[fo] != fo:
-            self.parent[fo] = self.parent[self.parent[fo]]
-            fo = self.parent[fo]
-        return fo
 
     def points_near(self, low_u, low_v, high_u, high_v):
         found = []
@@ -230,7 +213,7 @@ class _OutputLayout:
 # the pack pulls the other islands clear anyway
 def _weld_overlaps(parts, part_out_faces, anchor, welded_uvs, layout, repack):
     own = set(part_out_faces)
-    island = layout.find(part_out_faces[anchor])
+    island = find(layout.parent, part_out_faces[anchor])
 
     moved = []
     for i, (assign, _) in enumerate(parts):
@@ -250,7 +233,7 @@ def _weld_overlaps(parts, part_out_faces, anchor, welded_uvs, layout, repack):
         max(vs) + layout.cell,
     ):
         for fo, q in layout.edges[p]:
-            if fo in own or (repack and layout.find(fo) != island):
+            if fo in own or (repack and find(layout.parent, fo) != island):
                 continue
             for m1, m2 in moved:
                 if _do_overlap(p, q, m1, m2):
@@ -269,15 +252,13 @@ def transfer_exact(
     output_positions,
     output_polygons,
     output_uvs,
-    tol=None,
     repack=True,
     partial=False,
 ):
     in_pos = np.asarray(input_positions, dtype=float)
     out_pos = np.asarray(output_positions, dtype=float)
 
-    if tol is None:
-        tol = _default_tol(in_pos)
+    tol = _default_tol(in_pos)
     tol2 = tol * tol
     inv = 1.0 / tol
 

@@ -1,3 +1,4 @@
+import importlib.util
 import os
 import platform
 import shutil
@@ -11,6 +12,18 @@ EXIT_ENGINE_FAILURE = 4
 EXIT_BAD_OUTPUT = 5
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+# the addon package imports bpy, so its bpy-free modules load by path
+def load_addon_module(relative_path):
+    path = REPO_ROOT / relative_path
+    spec = importlib.util.spec_from_file_location(f"uvgami_addon_{path.stem}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+engine_binaries = load_addon_module("src/utils/engine_binaries.py")
 
 
 class UnwrapError(Exception):
@@ -81,23 +94,26 @@ def unwrap_all(pairs, unwrap_one):
             if not input_path.is_file():
                 raise UnwrapError(EXIT_INVALID_INPUT, f"input not found: {input_path}")
             unwrap_one(input_path, output_path)
-        except Exception as error:
+        except UnwrapError as error:
             if not batch:
                 raise
-            if isinstance(error, UnwrapError):
-                code = error.exit_code
-            else:
-                code = EXIT_ENGINE_FAILURE
-                log(traceback.format_exc())
-            log(f"error: {input_path.name}: {error}", style="error")
-            emit(f"failed: {input_path.stem} {code}")
-            failed += 1
-            if first_code == 0:
-                first_code = code
+            code, message = error.exit_code, str(error)
+        except Exception as error:
+            log(traceback.format_exc())
+            # an engine crash still exits with its own code, not python's 1
+            if not batch:
+                raise UnwrapError(EXIT_ENGINE_FAILURE, str(error)) from error
+            code, message = EXIT_ENGINE_FAILURE, str(error)
         else:
             if batch:
                 emit(f"done: {input_path.stem}")
             ok += 1
+            continue
+        log(f"error: {input_path.name}: {message}", style="error")
+        emit(f"failed: {input_path.stem} {code}")
+        failed += 1
+        if first_code == 0:
+            first_code = code
     return BatchResult(first_code, ok, failed)
 
 
@@ -108,23 +124,16 @@ def find_engine(name, label, explicit_path):
             raise UnwrapError(EXIT_MISSING_RUNTIME, f"{label} binary not found: {path}")
         return path
 
-    system = platform.system()
-    if system == "Windows":
-        subdir, binary = "windows", f"{name}.exe"
-    elif system == "Linux":
-        subdir, binary = "linux", name
-    elif system == "Darwin":
-        machine = platform.machine().lower()
-        subdir = "macos-arm64" if machine == "arm64" else "macos-x64"
-        binary = name
-    else:
-        raise UnwrapError(EXIT_MISSING_RUNTIME, f"unsupported platform: {system}")
-
-    path = REPO_ROOT / "engine-builds" / subdir / binary
-    if not path.is_file():
+    path = engine_binaries.get_local_engine_path(name)
+    if path is None:
+        binary = engine_binaries.get_engine_binary_name(name)
+        searched = ", ".join(
+            str(directory) for directory in engine_binaries.local_engine_dirs()
+        )
         raise UnwrapError(
             EXIT_MISSING_RUNTIME,
-            f"local {label} binary not found: {path} (pass --{name}-path)",
+            f"local {label} binary {binary} not found in: {searched}"
+            f" (pass --{name}-path or set {engine_binaries.ENGINE_DIR_ENV_VAR})",
         )
     return path
 

@@ -45,10 +45,7 @@ def last_progress(stdout_path):
     whole_lines = Path(stdout_path).read_text().rpartition("\n")[0]
     for line in reversed(whole_lines.splitlines()):
         if line.startswith(PROGRESS_PREFIX):
-            try:
-                return float(line.split()[1])
-            except (IndexError, ValueError):
-                pass
+            return float(line.split()[1])
     return 0.0
 
 
@@ -79,6 +76,33 @@ class _InputUnpickler(pickle.Unpickler):
         return super().find_class(module, name)
 
 
+# the process stalls when nothing reads its stdout, a file never fills
+def start_logged(args, folder, env, stdin=None):
+    try:
+        with (
+            (folder / STDOUT_NAME).open("wb") as stdout,
+            (folder / STDERR_NAME).open("wb") as stderr,
+        ):
+            return subprocess.Popen(
+                args,
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                env=env,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+    except OSError:
+        remove_folder(folder)
+        raise
+
+
+def stop_process(process, folder):
+    if process.poll() is None:
+        process.kill()
+        process.wait()
+    remove_folder(folder)
+
+
 def python_process(import_folders):
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(map(str, import_folders))}
     # blender's -I minus -E, which ignores PYTHONPATH
@@ -99,22 +123,9 @@ class WorkerProcess:
         python_command, env = python_process([SOURCE_FOLDER])
         run_worker = "import sys; from seams.worker import run_in_worker; run_in_worker(sys.argv[1])"
         command = [*python_command, "-c", run_worker, str(self._folder)]
-        try:
-            with (
-                (self._folder / STDOUT_NAME).open("wb") as stdout,
-                (self._folder / STDERR_NAME).open("wb") as stderr,
-            ):
-                self.process = subprocess.Popen(
-                    command,
-                    stdin=subprocess.DEVNULL,
-                    stdout=stdout,
-                    stderr=stderr,
-                    env=env,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-        except OSError:
-            remove_folder(self._folder)
-            raise
+        self.process = start_logged(
+            command, self._folder, env, stdin=subprocess.DEVNULL
+        )
 
     def done(self):
         return self.process.poll() is not None
@@ -147,10 +158,7 @@ class WorkerProcess:
             (self._folder / CANCEL_NAME).touch()
 
     def close(self):
-        if self.process.poll() is None:
-            self.process.kill()
-            self.process.wait()
-        remove_folder(self._folder)
+        stop_process(self.process, self._folder)
 
 
 def _cancel_requested(folder):

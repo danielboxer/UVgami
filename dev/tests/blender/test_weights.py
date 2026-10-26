@@ -1,13 +1,14 @@
 import bpy
 import pytest
-from bl_ext.user_default.UVgami.src.ops.guides import SEAM_RESTRICTIONS_GROUP
+from blender_fixtures import add_primitive, addon, needs_engine, select
 
 # from bl_ext.user_default.UVgami.src.seams.rectify import flatten_distortion
 # from bl_ext.user_default.UVgami.src.utils.mesh import face_uvs, face_vertices
-from bl_ext.user_default.UVgami.src.utils.mesh import vertex_positions
-from blender_fixtures import needs_engine
 
 pytestmark = [needs_engine, pytest.mark.smoke]
+
+SEAM_RESTRICTIONS_GROUP = addon.src.ops.guides.SEAM_RESTRICTIONS_GROUP
+vertex_positions = addon.src.utils.mesh.vertex_positions
 
 # a sphere cannot flatten without stretch
 SEGMENTS = 32
@@ -16,12 +17,10 @@ OUTPUT_NAME = "sphere_unwrapped"
 
 
 def add_sphere(name="sphere"):
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=SEGMENTS, ring_count=RINGS)
-    obj = bpy.context.active_object
-    obj.name = name
-    bpy.ops.object.select_all(action="DESELECT")
-    obj.select_set(True)
-    bpy.context.view_layer.objects.active = obj
+    obj = add_primitive(
+        name, bpy.ops.mesh.primitive_uv_sphere_add, segments=SEGMENTS, ring_count=RINGS
+    )
+    select([obj])
     return obj
 
 
@@ -33,9 +32,7 @@ def paint_top_half(obj):
 def unwrap_again(sphere, unwrap, outputs):
     bpy.data.objects.remove(outputs()[OUTPUT_NAME])
     sphere.hide_set(False)
-    bpy.ops.object.select_all(action="DESELECT")
-    sphere.select_set(True)
-    bpy.context.view_layer.objects.active = sphere
+    select([sphere])
     unwrap()
     return outputs()[OUTPUT_NAME]
 

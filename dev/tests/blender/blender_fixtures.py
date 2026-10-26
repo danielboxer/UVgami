@@ -18,15 +18,15 @@ OUTPUT_SUFFIX = "_unwrapped"
 INVALID_COLLECTION = "UVgami Not Unwrapped"
 
 needs_engine = pytest.mark.skipif(
-    addon.src.utils.paths.get_local_engine_path("optcuts") is None,
+    addon.src.utils.engine_binaries.get_local_engine_path("optcuts") is None,
     reason="no local optcuts binary, and downloading one would need the network",
 )
 needs_segment = pytest.mark.skipif(
-    addon.src.utils.paths.get_local_engine_path("segment") is None,
+    addon.src.utils.engine_binaries.get_local_engine_path("segment") is None,
     reason="no local segment binary, and no release exists to download",
 )
 needs_xatlas = pytest.mark.skipif(
-    addon.src.utils.paths.get_local_engine_path("xatlas") is None,
+    addon.src.utils.engine_binaries.get_local_engine_path("xatlas") is None,
     reason="no local xatlas binary, and downloading one would need the network",
 )
 
@@ -60,6 +60,45 @@ def seam_count(obj):
     return sum(1 for edge in obj.data.edges if edge.use_seam)
 
 
+# a map crushed to points has corners off zero but no area
+def has_uvs(obj, faces=None):
+    mesh = obj.data
+    if mesh.uv_layers.active is None:
+        return False
+    uvs = addon.src.utils.mesh.face_uvs(mesh)
+    if faces is not None:
+        uvs = [uvs[face.index] for face in faces]
+    return not addon.src.seams.uvs_collapsed(uvs)
+
+
+def add_primitive(name, add, **kwargs):
+    add(**kwargs)
+    obj = bpy.context.active_object
+    obj.name = name
+    return obj
+
+
+def add_cube(name, **kwargs):
+    return add_primitive(name, bpy.ops.mesh.primitive_cube_add, **kwargs)
+
+
+def select(objects):
+    bpy.ops.object.select_all(action="DESELECT")
+    for obj in objects:
+        obj.select_set(True)
+    bpy.context.view_layer.objects.active = objects[0]
+
+
+def join(objects):
+    select(objects)
+    bpy.ops.object.join()
+    return bpy.context.active_object
+
+
+def two_loose_cubes():
+    return join([add_cube("a"), add_cube("b", location=(5, 0, 0))])
+
+
 @pytest.fixture(autouse=True)
 def empty_scene():
     bpy.ops.wm.read_homefile(use_empty=True)
@@ -81,22 +120,33 @@ def load_obj():
     return load
 
 
+# the progress bar needs a gpu context, a popup crashes a background blender
+SESSION_PREFERENCES = {
+    "autosave": False,
+    "show_progress_bar": False,
+    "show_popup": False,
+}
+
+
 @pytest.fixture
 def session():
     prefs = get_preferences()
-    prefs.autosave = False
-    # the progress bar needs a gpu context, a popup crashes a background blender
-    prefs.show_progress_bar = False
-    prefs.show_popup = False
-    with timer_pump.pump_timers() as pump:
+    saved = {name: getattr(prefs, name) for name in SESSION_PREFERENCES}
+    for name, value in SESSION_PREFERENCES.items():
+        setattr(prefs, name, value)
+    try:
+        with timer_pump.pump_timers() as pump:
 
-        def run(operator, until=None, **kwargs):
-            operator(**kwargs)
-            done = until if until is not None else lambda: not manager.is_active
-            pump.run_until(done, UNWRAP_SECONDS)
-            return pump
+            def run(operator, until=None, **kwargs):
+                operator(**kwargs)
+                done = until if until is not None else lambda: not manager.is_active
+                pump.run_until(done, UNWRAP_SECONDS)
+                return pump
 
-        yield run
+            yield run
+    finally:
+        for name, value in saved.items():
+            setattr(prefs, name, value)
 
 
 @pytest.fixture

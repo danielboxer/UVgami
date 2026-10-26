@@ -1,24 +1,13 @@
-import importlib.util
-import sys
-from pathlib import Path
-
 import pytest
 
-# loaded from file, the addon package imports bpy
-PKG = Path(__file__).parents[2] / "src" / "seams"
-spec = importlib.util.spec_from_file_location(
-    "seams", PKG / "__init__.py", submodule_search_locations=[str(PKG)]
-)
-sys.modules["seams"] = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(sys.modules["seams"])
-from seams import (  # noqa: E402
+from seams import (
     Cancelled,
     EngineError,
     check_cancelled,
     face_edges,
 )
-from seams.preseed import _read_hardsurface  # noqa: E402
-from seams.worker import WorkerProcess, last_progress  # noqa: E402
+from seams.preseed import _read_hardsurface
+from seams.worker import WorkerProcess, last_progress
 
 TWO_TRIANGLES = [(0, 1, 2), (1, 3, 2)]
 

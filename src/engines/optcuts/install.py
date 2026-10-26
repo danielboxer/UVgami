@@ -33,6 +33,11 @@ class UVGAMI_OT_install_optcuts(InstallEngineTask, bpy.types.Operator):
     release = OPTCUTS
 
 
+# the flags here need this binary or the bundled segment and hardsurface binaries
 class OptcutsInstall(BinaryEngine):
     release = OPTCUTS
+    supports_keep_quads = True
+    supports_hard_surface = True
+    supports_plane_glue = True
+    supports_regions = True
     classes = (UVGAMI_OT_install_optcuts, UVGAMI_OT_delete_engine)

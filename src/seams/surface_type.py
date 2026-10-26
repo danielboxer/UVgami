@@ -2,6 +2,8 @@ import math
 
 import numpy
 
+from .mesh import edge_keys
+
 TINY_AREA_SHARE = 0.01
 TINY_FACES = 50
 # normals around a face within about 0.01 degrees of each other only happen on cad meshes
@@ -36,8 +38,8 @@ def _triangles(faces):
 
 def _neighbours(triangles, normals):
     count = len(triangles)
-    edges = numpy.sort(triangles[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2), axis=1)
-    keys = edges[:, 0] * (int(triangles.max()) + 1) + edges[:, 1]
+    edges = triangles[:, [[0, 1], [1, 2], [2, 0]]].reshape(-1, 2)
+    keys = edge_keys(edges[:, 0], edges[:, 1])
     owners = numpy.repeat(numpy.arange(count, dtype=numpy.int64), 3)
     order = numpy.argsort(keys, kind="stable")
     keys, owners = keys[order], owners[order]

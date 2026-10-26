@@ -1,17 +1,12 @@
-import importlib.util
 import sys
 import time
 from collections import deque
 from pathlib import Path
 
 import pytest
+from uvgami_cli.common import load_addon_module
 
-# loaded from file, the addon package imports bpy
-spec = importlib.util.spec_from_file_location(
-    "addon_batch", Path(__file__).parents[2] / "src" / "batch.py"
-)
-addon_batch = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(addon_batch)
+addon_batch = load_addon_module("src/batch.py")
 
 
 started_processes = []
@@ -132,11 +127,11 @@ def test_stderr_lines_do_not_wait_on_a_live_process():
         while not batch_process.stderr_lines():
             assert time.monotonic() < deadline, "stderr line never arrived"
             time.sleep(0.05)
-        began = time.monotonic()
         assert addon_batch.last_meaningful_line(batch_process.stderr_lines()) == (
             "bad mesh"
         )
-        assert time.monotonic() - began < 0.5
+        # a read that waited for the exit would find the sleeping process gone
+        assert batch_process.process.poll() is None
     finally:
         batch_process.process.kill()
 
@@ -210,10 +205,11 @@ def test_should_not_retry_while_running():
         batch_process.process.kill()
 
 
+# b reported a result without a start marker, so only the result keeps it from a retry
 def test_should_not_retry_when_result_exists():
-    batch_process = start("print('start: a');print('done: a')")
+    batch_process = start("print('start: a');print('failed: b 101')")
     wait_dead(batch_process)
-    assert not batch_process.should_retry("a")
+    assert not batch_process.should_retry("b")
 
 
 def test_parser_uvgami_snapshot():
@@ -262,14 +258,16 @@ def test_stderr_does_not_pollute_stdout_protocol():
     sinks = {"a": Sink()}
     batch_process = start(
         "import sys;"
-        "print('start: a');"
-        "print('progress: 0.5 0 0.5');"
-        "print('noise on stderr', file=sys.stderr);"
-        "print('done: a')",
+        "print('start: a', flush=True);"
+        "print('progress: 0.5 0 0.5', flush=True);"
+        "print('progress: 0.9 0 0.1', file=sys.stderr, flush=True);"
+        "print('done: a', flush=True);"
+        "print('failed: a 101', file=sys.stderr, flush=True)",
         sinks,
     )
-    assert wait_result(batch_process, "a") == 0
-    assert sinks["a"].progress_data.popleft() == "0.5 0 0.5\n"
+    wait_dead(batch_process)
+    assert batch_process.poll_result("a") == 0
+    assert list(sinks["a"].progress_data) == ["0.5 0 0.5\n"]
 
 
 def test_last_meaningful_line_skips_blank():

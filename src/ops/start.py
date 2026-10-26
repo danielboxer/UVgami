@@ -22,6 +22,7 @@ from ..job import (
     Result,
     Symmetrise,
     TransferUVs,
+    mirror_segmentation,
     paints_seams,
     unwrap_plan,
 )
@@ -36,6 +37,7 @@ from ..proxy import (
     make_proxy,
     mirror_proxy,
     needs_proxy,
+    part_triangles,
     triangle_count,
 )
 from ..seams import (
@@ -45,14 +47,12 @@ from ..seams import (
     islands_overlap,
     uv_island_groups,
 )
-from ..seams.segmentation import border_edges, edge_face_pairs
 from ..seams.worker import WorkerError
 from ..segmentation import (
     SegmentWeld,
     make_segmented_proxy,
     segment_work,
     split_on_borders,
-    symmetric_regions,
 )
 from ..similar import find_twins, mirror_partners, write_twin_output
 from ..ui.panels import describe_settings, unwrap_settings
@@ -72,12 +72,7 @@ from ..utils.mesh import (
     vertex_position_array,
     world_positions,
 )
-from ..utils.paths import (
-    clear_io_dir,
-    get_io_dir_paths,
-    get_preferences,
-    unused_input_path,
-)
+from ..utils.paths import get_preferences, unused_input_path
 from ..utils.ui import tag_redraw
 from .guides import seam_restriction_weights
 
@@ -389,15 +384,17 @@ class InputExporter:
         face_smooth = numpy.empty(len(obj.data.polygons), dtype=bool)
         obj.data.polygons.foreach_get("use_smooth", face_smooth)
 
-        vertex_groups = {}
-        for group in obj.vertex_groups:
-            weights = {}
-            for v in obj.data.vertices:
-                for g in v.groups:
-                    if g.group == group.index:
-                        weights[v.index] = g.weight
-                        break
-            vertex_groups[group.name] = weights
+        # one pass over the vertices for every group
+        members = [([], []) for _ in obj.vertex_groups]
+        for vertex in obj.data.vertices:
+            for element in vertex.groups:
+                indices, weights = members[element.group]
+                indices.append(vertex.index)
+                weights.append(element.weight)
+        vertex_groups = {
+            group.name: (numpy.array(indices, dtype=numpy.int64), numpy.array(weights))
+            for group, (indices, weights) in zip(obj.vertex_groups, members)
+        }
 
         return {
             "materials": materials,
@@ -430,7 +427,8 @@ def input_job(props, proxied, input_mesh):
 
 
 # copy is the unlinked duplicate that gets unwrapped, original is the selected object
-MeshInput = namedtuple("MeshInput", ["copy", "original", "name", "proxied"])
+# parts is part_triangles of the copy, set when it is proxied
+MeshInput = namedtuple("MeshInput", ["copy", "original", "name", "proxied", "parts"])
 
 
 # the engine's own job for each symmetry plan, None for a whole mesh the preseed mirrors
@@ -581,22 +579,14 @@ class SessionBuilder:
             return self._start_preseed(obj, symmetry)
         border_positions = None
         parts = None
-        edges = segmentation.border_edges
-        mirrored = symmetry is not None and symmetry.kind in ("BISECT", "WHOLE")
-        if mirrored and edges:
-            # the segmentation isn't mirrored
-            positions = vertex_position_array(obj.data)
-            corners, totals = face_vertex_arrays(obj.data)
-            kept_side, labels = symmetric_regions(
-                positions, corners, totals, segmentation, symmetry
-            )
-            symmetry = symmetry._replace(kept_side=kept_side)
-            # the bisect drops the other half
-            if symmetry.kind == "WHOLE":
-                face_pairs = edge_face_pairs(positions, corners, totals)
-                edges = border_edges(face_pairs, labels)
-        if edges:
-            border_positions, parts = split_on_borders(obj, edges)
+        symmetry, segmentation = mirror_segmentation(
+            vertex_position_array(obj.data),
+            *face_vertex_arrays(obj.data),
+            segmentation,
+            symmetry,
+        )
+        if segmentation.border_edges:
+            border_positions, parts = split_on_borders(obj, segmentation.border_edges)
         # the preseed's classifier calls a small segment hard surface
         return self._start_preseed(
             obj,
@@ -618,6 +608,9 @@ class SessionBuilder:
         props = manager.props
         proxied = self.inputs[obj].proxied
         if proxied:
+            # the copy's own parts hold until the segment split
+            if parts is None:
+                parts = self.inputs[obj].parts
             surface_modes = self._make_proxy(obj, props, parts, surface_modes, symmetry)
         plane = None
         if symmetry is not None and symmetry.kind == "WHOLE":
@@ -690,12 +683,9 @@ class SessionBuilder:
         hide_job = HideInput(entry.original) if transfer_uvs_job is None else None
         return hide_job, transfer_uvs_job
 
-    def _add_piece(self, obj, input_name, piece_name, has_uvs, props, preseeded, jobs):
-        # the queue ui lists every piece before any input file exists
-        claimed = {u.path for u in manager.active}
-        claimed.update(u.path for u, _ in manager.results)
-        path = unused_input_path(self.input_path, piece_name, claimed)
-
+    def _add_piece(
+        self, obj, input_name, piece_name, path, has_uvs, props, preseeded, jobs
+    ):
         uses_uvs = (
             self.engine.piece_uses_uvs(obj, props, has_uvs)
             and obj.data.uv_layers.active is not None
@@ -755,12 +745,15 @@ class SessionBuilder:
             "transfer_uvs_job": transfer_uvs_job,
             "segment_weld_job": weld_job,
         }
+        claimed = manager.claimed_paths()
         for index, piece in enumerate(valid):
             piece_name = unwrap_name
             if jobs["join_job"] is not None:
                 piece_name = f"{unwrap_name}_{index + 1}"
+            path = unused_input_path(self.input_path, piece_name, claimed)
+            claimed.add(path)
             self._add_piece(
-                piece, unwrap_name, piece_name, has_uvs, props, preseeded, jobs
+                piece, unwrap_name, piece_name, path, has_uvs, props, preseeded, jobs
             )
         if props.stack_similar and len(valid) > 1:
             self._stack_twins(valid)
@@ -863,10 +856,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
                 logger.discard_info()
                 return {"CANCELLED"}
 
-            input_path, output_path = get_io_dir_paths()
-            if not manager.is_active:
-                clear_io_dir(input_path)
-                clear_io_dir(output_path)
+            input_path = manager.prepare_input_dir()
             deselect_all()
 
             # an unlinked collection doesn't flash in the viewport between ticks
@@ -888,10 +878,8 @@ class UVGAMI_OT_start(bpy.types.Operator):
             builder_registered = True
 
             # before the first piece exists, the bar is up while the builder works
-            manager.engine = engine
-            manager.engine_ctx = engine_ctx
             manager.pieces_still_arriving += 1
-            manager.start()
+            manager.start(engine, engine_ctx)
             tag_redraw()
 
             for level, text in reports:
@@ -956,8 +944,9 @@ def prepare_meshes(context, engine):
         triangles = triangle_count(evaluated)
         input_sizes.append((obj.name, triangles))
         # the budget reads the mesh make_proxy will decimate
-        proxied = engine.uses_proxy(props) and needs_proxy(
-            copy_object, props.proxy_faces
+        parts = part_triangles(copy_object.data) if engine.uses_proxy(props) else None
+        proxied = parts is not None and needs_proxy(
+            copy_object, props.proxy_faces, parts
         )
         # the engine input must be the input mesh itself, not a modifier bake of it
         if proxied or props.transfer_uvs:
@@ -965,7 +954,9 @@ def prepare_meshes(context, engine):
         elif _apply_modifiers(context, copy_object):
             applied_modifiers = True
 
-        inputs.append(MeshInput(copy_object, obj, obj.name, proxied))
+        inputs.append(
+            MeshInput(copy_object, obj, obj.name, proxied, parts if proxied else None)
+        )
 
     logger.get_latest().objects = input_sizes
 
@@ -981,12 +972,11 @@ def prepare_meshes(context, engine):
 def _apply_modifiers(context, obj):
     context.view_layer.objects.active = obj
     applied = False
-    for modifier in obj.modifiers:
-        if is_shading_modifier(modifier):
-            continue
-
+    # applying one frees its entry in obj.modifiers
+    names = [m.name for m in obj.modifiers if not is_shading_modifier(m)]
+    for name in names:
         # a disabled modifier can't be applied
         with contextlib.suppress(RuntimeError):
-            bpy.ops.object.modifier_apply(modifier=modifier.name)
+            bpy.ops.object.modifier_apply(modifier=name)
             applied = True
     return applied

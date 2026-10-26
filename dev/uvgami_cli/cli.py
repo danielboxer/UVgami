@@ -176,7 +176,12 @@ def run_partuv(args, pairs):
                     checkpoint = repo_checkpoint
             checkpoint = partuv.cli.resolve_checkpoint(checkpoint)
         return partuv.cli.run(
-            pairs, checkpoint, args.config, args.threshold, args.segmentation
+            pairs,
+            checkpoint,
+            args.config,
+            args.threshold,
+            args.segmentation,
+            batch=len(pairs) > 1,
         )
     except partuv.common.UnwrapError as error:
         raise UnwrapError(error.exit_code, str(error)) from error

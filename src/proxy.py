@@ -5,11 +5,19 @@ import bpy
 import numpy
 from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
-from mathutils.kdtree import KDTree
 
+# from mathutils.kdtree import KDTree
 from .seams import proxy_transfer
+from .seams.mesh import connected_labels
 from .utils.geometry import cut_on_axis
-from .utils.mesh import corner_uvs, face_vertices, loop_totals, new_bmesh, set_bmesh
+from .utils.mesh import (
+    corner_uvs,
+    face_vertex_arrays,
+    face_vertices,
+    new_bmesh,
+    set_bmesh,
+    vertex_position_array,
+)
 
 
 # every face fans into loop_total - 2 triangles
@@ -18,12 +26,9 @@ def triangle_count(obj):
 
 
 def part_triangles(data):
-    labels = proxy_transfer.connected_labels(len(data.vertices), _edge_array(data))
-    totals = numpy.empty(len(data.polygons), dtype=numpy.int64)
-    data.polygons.foreach_get("loop_total", totals)
+    labels = connected_labels(len(data.vertices), _edge_array(data))
+    corners, totals = face_vertex_arrays(data)
     starts = numpy.concatenate(([0], numpy.cumsum(totals)[:-1]))
-    corners = numpy.empty(len(data.loops), dtype=numpy.int64)
-    data.loops.foreach_get("vertex_index", corners)
     part_labels, face_part = numpy.unique(labels[corners[starts]], return_inverse=True)
     counts = numpy.bincount(face_part, weights=totals - 2).astype(numpy.int64)
     return labels, part_labels, counts
@@ -167,17 +172,17 @@ def _inverted(face):
     return face.normal.dot(around) < 0
 
 
-# two copies of a model line up at any placement or size
-def bounds_frame(obj):
-    corners = [Vector(corner) for corner in obj.bound_box]
-    low = Vector([min(corner[axis] for corner in corners) for axis in range(3)])
-    high = Vector([max(corner[axis] for corner in corners) for axis in range(3)])
-    return Matrix.Scale(1 / max(high - low), 4) @ Matrix.Translation(-(low + high) / 2)
+# # two copies of a model line up at any placement or size
+# def bounds_frame(obj):
+#     corners = [Vector(corner) for corner in obj.bound_box]
+#     low = Vector([min(corner[axis] for corner in corners) for axis in range(3)])
+#     high = Vector([max(corner[axis] for corner in corners) for axis in range(3)])
+#     return Matrix.Scale(1 / max(high - low), 4) @ Matrix.Translation(-(low + high) / 2)
 
 
-def _vertex_array(data, attribute):
+def _vertex_normals(data):
     flat = numpy.empty(len(data.vertices) * 3)
-    data.vertices.foreach_get(attribute, flat)
+    data.vertices.foreach_get("normal", flat)
     return flat.reshape(-1, 3)
 
 
@@ -187,82 +192,82 @@ def _edge_array(data):
     return pairs.reshape(-1, 2)
 
 
-# candidates to pick a facing match from when snapping a cut vertex
-NEAREST_VERTS = 8
+# # candidates to pick a facing match from when snapping a cut vertex
+# NEAREST_VERTS = 8
 
 
-def _rotation_array(matrix):
-    return numpy.array(Matrix(matrix.tolist()).to_3x3().inverted_safe().transposed())
+# def _rotation_array(matrix):
+#     return numpy.array(Matrix(matrix.tolist()).to_3x3().inverted_safe().transposed())
 
 
-# on a thin wall the far side of the wall is the nearest
-def facing_matcher(
-    input_positions,
-    input_normals,
-    input_matrix,
-    output_positions,
-    output_normals,
-    output_matrix,
-):
-    matrix = numpy.asarray(input_matrix, dtype=numpy.float64)
-    positions = numpy.asarray(input_positions).reshape(-1, 3)
-    positions = positions @ matrix[:3, :3].T + matrix[:3, 3]
+# # on a thin wall the far side of the wall is the nearest
+# def facing_matcher(
+#     input_positions,
+#     input_normals,
+#     input_matrix,
+#     output_positions,
+#     output_normals,
+#     output_matrix,
+# ):
+#     matrix = numpy.asarray(input_matrix, dtype=numpy.float64)
+#     positions = numpy.asarray(input_positions).reshape(-1, 3)
+#     positions = positions @ matrix[:3, :3].T + matrix[:3, 3]
 
-    normals = numpy.asarray(input_normals).reshape(-1, 3) @ _rotation_array(matrix).T
-    lengths = numpy.linalg.norm(normals, axis=1)
-    lengths[lengths == 0] = 1.0
-    normals /= lengths[:, None]
+#     normals = numpy.asarray(input_normals).reshape(-1, 3) @ _rotation_array(matrix).T
+#     lengths = numpy.linalg.norm(normals, axis=1)
+#     lengths[lengths == 0] = 1.0
+#     normals /= lengths[:, None]
 
-    out_matrix = numpy.asarray(output_matrix, dtype=numpy.float64)
-    queries = numpy.asarray(output_positions).reshape(-1, 3)
-    queries = queries @ out_matrix[:3, :3].T + out_matrix[:3, 3]
-    # only the sign of the dot is read
-    facings = numpy.asarray(output_normals).reshape(-1, 3)
-    facings = facings @ _rotation_array(out_matrix).T
+#     out_matrix = numpy.asarray(output_matrix, dtype=numpy.float64)
+#     queries = numpy.asarray(output_positions).reshape(-1, 3)
+#     queries = queries @ out_matrix[:3, :3].T + out_matrix[:3, 3]
+#     # only the sign of the dot is read
+#     facings = numpy.asarray(output_normals).reshape(-1, 3)
+#     facings = facings @ _rotation_array(out_matrix).T
 
-    def nearest(input_indices, output_indices):
-        kd = KDTree(len(input_indices))
-        for i in input_indices:
-            kd.insert(positions[i], int(i))
-        kd.balance()
-        mapped = []
-        for i in output_indices:
-            found = kd.find_n(queries[i], NEAREST_VERTS)
-            best = found[0][1]
-            for _, index, _ in found:
-                if normals[index] @ facings[i] > 0:
-                    best = index
-                    break
-            mapped.append(best)
-        return mapped
+#     def nearest(input_indices, output_indices):
+#         kd = KDTree(len(input_indices))
+#         for i in input_indices:
+#             kd.insert(positions[i], int(i))
+#         kd.balance()
+#         mapped = []
+#         for i in output_indices:
+#             found = kd.find_n(queries[i], NEAREST_VERTS)
+#             best = found[0][1]
+#             for _, index, _ in found:
+#                 if normals[index] @ facings[i] > 0:
+#                     best = index
+#                     break
+#             mapped.append(best)
+#         return mapped
 
-    return nearest
-
-
-# in world space unless a frame is given for each
-def vertex_map(input_mesh, output, matrix=None, out_matrix=None):
-    if matrix is None:
-        matrix = input_mesh.matrix_world
-    if out_matrix is None:
-        out_matrix = output.matrix_world
-    nearest = facing_matcher(
-        _vertex_array(input_mesh.data, "co"),
-        _vertex_array(input_mesh.data, "normal"),
-        numpy.array(matrix, dtype=numpy.float64),
-        _vertex_array(output.data, "co"),
-        _vertex_array(output.data, "normal"),
-        numpy.array(out_matrix, dtype=numpy.float64),
-    )
-    return nearest(
-        range(len(input_mesh.data.vertices)), range(len(output.data.vertices))
-    )
+#     return nearest
 
 
-# another mesh's cut network redrawn along input_mesh's own edges
-def snap_cuts(input_mesh, mapped, cuts):
-    data = input_mesh.data
-    verts = _vertex_array(data, "co").tolist()
-    return proxy_transfer.snap_cuts(verts, _edge_array(data), mapped, cuts)
+# # in world space unless a frame is given for each
+# def vertex_map(input_mesh, output, matrix=None, out_matrix=None):
+#     if matrix is None:
+#         matrix = input_mesh.matrix_world
+#     if out_matrix is None:
+#         out_matrix = output.matrix_world
+#     nearest = facing_matcher(
+#         vertex_position_array(input_mesh.data),
+#         _vertex_normals(input_mesh.data),
+#         numpy.array(matrix, dtype=numpy.float64),
+#         vertex_position_array(output.data),
+#         _vertex_normals(output.data),
+#         numpy.array(out_matrix, dtype=numpy.float64),
+#     )
+#     return nearest(
+#         range(len(input_mesh.data.vertices)), range(len(output.data.vertices))
+#     )
+
+
+# # another mesh's cut network redrawn along input_mesh's own edges
+# def snap_cuts(input_mesh, mapped, cuts):
+#     data = input_mesh.data
+#     verts = vertex_position_array(data).tolist()
+#     return proxy_transfer.snap_cuts(verts, _edge_array(data), mapped, cuts)
 
 
 # in mean proxy edge lengths, how far a ray along the vertex normal may travel
@@ -353,18 +358,17 @@ class FaceLookup:
 # the (dense, proxy) arrays the transfer pipeline reads
 def transfer_inputs(input_mesh, output):
     data = input_mesh.data
-    corners = numpy.empty(len(data.loops), dtype=numpy.int64)
-    data.loops.foreach_get("vertex_index", corners)
+    corners, totals = face_vertex_arrays(data)
     dense = {
-        "positions": _vertex_array(data, "co"),
-        "normals": _vertex_array(data, "normal"),
+        "positions": vertex_position_array(data),
+        "normals": _vertex_normals(data),
         "matrix": numpy.array(input_mesh.matrix_world, dtype=numpy.float64),
         "corners": corners,
-        "face_sizes": numpy.array(loop_totals(data), dtype=numpy.int64),
+        "face_sizes": totals,
     }
     out_data = output.data
     proxy = {
-        "positions": _vertex_array(out_data, "co"),
+        "positions": vertex_position_array(out_data),
         "matrix": numpy.array(output.matrix_world, dtype=numpy.float64),
         "faces": face_vertices(out_data),
         "corner_uvs": corner_uvs(out_data),

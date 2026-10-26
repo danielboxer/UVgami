@@ -1,5 +1,5 @@
 import bpy
-from blender_fixtures import addon
+from blender_fixtures import add_cube, addon
 
 
 def find_twins(objects):
@@ -8,14 +8,9 @@ def find_twins(objects):
     return addon.src.similar.find_twins(objects)
 
 
-def add_cube(location=(0, 0, 0)):
-    bpy.ops.mesh.primitive_cube_add(size=2, location=location)
-    return bpy.context.active_object
-
-
 # transform_apply with a negative scale reverses the face loops on 5.2 only
 def mirrored_cube(location):
-    obj = add_cube(location)
+    obj = add_cube("mirrored", location=location)
     for vertex in obj.data.vertices:
         vertex.co.x *= -1
     bpy.ops.object.mode_set(mode="EDIT")
@@ -26,7 +21,7 @@ def mirrored_cube(location):
 
 
 def test_exact_twin_keeps_its_own_materials():
-    first = add_cube()
+    first = add_cube("first")
     red = bpy.data.materials.new("red")
     first.data.materials.append(red)
     bpy.ops.object.duplicate()
@@ -44,7 +39,7 @@ def test_exact_twin_keeps_its_own_materials():
 
 def test_reordered_twin_with_shared_material_matches():
     red = bpy.data.materials.new("red")
-    first = add_cube()
+    first = add_cube("first")
     first.data.materials.append(red)
     second = mirrored_cube((6, 0, 0))
     second.data.materials.append(red)
@@ -56,7 +51,7 @@ def test_reordered_twin_with_shared_material_matches():
 
 
 def test_reordered_twin_with_other_material_is_refused():
-    first = add_cube()
+    first = add_cube("first")
     first.data.materials.append(bpy.data.materials.new("red"))
     second = mirrored_cube((6, 0, 0))
     second.data.materials.append(bpy.data.materials.new("blue"))

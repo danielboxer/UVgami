@@ -2,8 +2,9 @@ import functools
 
 import numpy
 
-from .ops.guides import SEAM_RESTRICTIONS_GROUP, exposure_weights
+from .ops.guides import exposure_weights, seam_restriction_weights
 from .seams import EngineError, OptcutsRun, preseed_job
+from .seams.mesh import edge_keys, index_ranges
 from .seams.worker import WorkerProcess
 from .utils.mesh import (
     face_vertex_arrays,
@@ -31,15 +32,7 @@ def optcuts_run(engine_args):
 
 # the same group the engine reads, higher repels seams
 def seam_restrictions(obj):
-    group = obj.vertex_groups.get(SEAM_RESTRICTIONS_GROUP)
-    if group is None:
-        return None
-    weights = {}
-    for v in obj.data.vertices:
-        for g in v.groups:
-            if g.group == group.index and g.weight:
-                weights[v.index] = g.weight
-                break
+    weights = {v: w for v, w in seam_restriction_weights(obj).items() if w}
     return weights or None
 
 
@@ -54,7 +47,7 @@ def _edge_keys(mesh):
     pairs = numpy.empty(len(mesh.edges) * 2, dtype=numpy.int64)
     mesh.edges.foreach_get("vertices", pairs)
     pairs = pairs.reshape(-1, 2)
-    return (pairs.min(axis=1) << 32) | pairs.max(axis=1)
+    return edge_keys(pairs[:, 0], pairs[:, 1])
 
 
 # edges given as (low, high) index pairs
@@ -64,14 +57,12 @@ def apply_seams(mesh, seams):
 
 # like apply_seams, but the edges of these faces keep their marks
 def apply_seams_except_faces(mesh, faces, seams):
-    loop_total = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
-    mesh.polygons.foreach_get("loop_total", loop_total)
     loop_edges = numpy.empty(len(mesh.loops), dtype=numpy.int64)
     mesh.loops.foreach_get("edge_index", loop_edges)
     kept_faces = numpy.zeros(len(mesh.polygons), dtype=bool)
     kept_faces[list(faces)] = True
     kept = numpy.zeros(len(mesh.edges), dtype=bool)
-    kept[loop_edges[numpy.repeat(kept_faces, loop_total)]] = True
+    kept[loop_edges[numpy.repeat(kept_faces, loop_totals(mesh))]] = True
     flags = numpy.isin(_edge_keys(mesh), _packed(seams))
     flags[kept] = seam_flags(mesh)[kept]
     mesh.edges.foreach_set("use_seam", flags)
@@ -99,21 +90,12 @@ def seam_flags(mesh):
 #     return {(a, b) for a, b in pairs.tolist()}
 
 
-def apply_face_uvs(mesh, uvs, only):
-    coords = loop_uvs(mesh)
-    starts = loop_starts(mesh)
-    for f in only:
-        start = int(starts[f])
-        coords[start : start + len(uvs[f])] = uvs[f]
-    set_loop_uvs(mesh, coords)
-
-
-# uvs has the loops of these faces in face order
+# uvs has the loops of these faces, in the order faces lists them
 def apply_loop_uvs(mesh, uvs, faces):
-    flattened = numpy.zeros(len(mesh.polygons), dtype=bool)
-    flattened[faces] = True
+    faces = numpy.asarray(faces, dtype=numpy.int64)
+    totals = numpy.asarray(loop_totals(mesh), dtype=numpy.int64)
     coords = loop_uvs(mesh)
-    coords[numpy.repeat(flattened, loop_totals(mesh))] = uvs
+    coords[index_ranges(loop_starts(mesh)[faces], totals[faces])] = uvs
     set_loop_uvs(mesh, coords)
 
 
