@@ -54,3 +54,17 @@ def test_preview_colors_a_beveled_cube_hard_surface(load_obj, preview):
     assert auto_preview.HARD_COLOR in shape_colors(result)
     assert auto_preview.ORGANIC_COLOR not in shape_colors(result)
     assert "1 part: 0 organic, 1 hard surface" in result.lines
+
+
+def test_preview_in_edit_mode_shows_an_unsaved_part_mode(load_obj, preview):
+    load_obj("cube-bevel2")
+    bpy.context.scene.uvgami.split_regions = False
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.context.scene.uvgami_part_overrides.surface_mode = "ORGANIC"
+
+    result = preview()
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    assert auto_preview.ORGANIC_COLOR in shape_colors(result)
+    assert auto_preview.HARD_COLOR not in shape_colors(result)
