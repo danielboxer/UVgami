@@ -17,12 +17,12 @@ ARROW_FONT_SIZE = 24
 DONE_FONT_SIZE = 14
 GRID_GAP = 8
 
-# the stretch overlay adds onto this grey, baked in so the fill covers the grid
+# the stretch fill is blended onto this grey and drawn opaque over the grid
 EDITOR_BACKGROUND = 0.22
 
 WIRE_WIDTH = 1.0
 WIRE_OUTLINE_WIDTH = 3.0
-# what the core of a blender uv edge measures at
+# the color of the core of a blender uv edge
 WIRE_COLOR = (0.54, 0.54, 0.54)
 # a wire over triangles this small covers the colors
 WIRE_HIDDEN_PIXELS = 3.0
@@ -191,7 +191,7 @@ def clear_snapshot():
     _fill_batch = None
 
 
-# 0 to 1 on how many pixels wide the typical triangle draws
+# zero to one, by how many pixels wide the typical triangle draws
 def _wire_fade(typical_edge):
     view2d = bpy.context.region.view2d
     left = view2d.view_to_region(0.0, 0.0, clip=False)[0]
@@ -211,7 +211,7 @@ def _draw():
         _wire_shader.uniform_float("viewportSize", gpu.state.viewport_get()[2:])
         _wire_shader.uniform_bool("lineSmooth", True)
     for typical_edge, batch in _wire_batches:
-        # without a fill the wire is the whole picture, so it never fades out
+        # without a fill the wire is the whole picture
         fade = _wire_fade(typical_edge) if _fill_batch is not None else 1.0
         if fade <= 0:
             continue
@@ -257,7 +257,7 @@ def _schedule_workspace_trim(window, name):
     bpy.app.timers.register(tick, first_interval=0.0)
 
 
-# blf works in pixels, so the grid corner anchor is converted from uv space
+# blf draws in pixels, not uv space
 def _draw_hint_text():
     font = 0
     blf.color(font, 1.0, 1.0, 1.0, 0.9)
@@ -348,7 +348,7 @@ class UVGAMI_OT_view_unwrap(bpy.types.Operator):
             # leftover from a crashed session
             window.workspace = workspace
 
-        # an edit mode mesh would draw its own uv map under the snapshot
+        # an edit mode mesh draws its uv map under the snapshot
         old_mode = None
         active = context.view_layer.objects.active
         if active is not None and active.mode != "OBJECT":
@@ -412,5 +412,5 @@ class UVGAMI_OT_view_unwrap(bpy.types.Operator):
 
             return {"FINISHED"}
 
-        # let navigation through so the map can be panned and zoomed
+        # navigation events reach the editor
         return {"PASS_THROUGH"}

@@ -108,7 +108,7 @@ def test_other_engines_unwrap_the_cylinder(load_obj, unwrap, outputs, engine):
 
     unwrap(engine)
 
-    assert manager.summary == ["UV unwrap complete!"]
+    assert manager.summary == ["UV unwrap complete"]
     assert manager.error_messages == []
     layer = outputs()["cylinder_unwrapped"].data.uv_layers.active
     assert layer is not None

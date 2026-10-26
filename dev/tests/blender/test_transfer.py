@@ -37,7 +37,7 @@ def test_transfer_writes_uvs_onto_the_input_and_keeps_its_quads(unwrap, outputs)
 
     unwrap()
 
-    assert manager.summary == ["UV unwrap complete!"]
+    assert manager.summary == ["UV unwrap complete"]
     assert manager.transfer_uv_failed is False
     assert outputs() == {}
     assert not cube.hide_get()
@@ -52,7 +52,7 @@ def test_transfer_on_an_organic_mesh(unwrap, outputs):
 
     unwrap()
 
-    assert manager.summary[0] == "UV unwrap complete!"
+    assert manager.summary[0] == "UV unwrap complete"
     assert manager.transfer_uv_failed is False
     assert outputs() == {}
     assert has_uvs(sphere)
@@ -85,7 +85,7 @@ def test_import_uvs_runs_with_and_without_a_map(unwrap, outputs, with_map):
 
     unwrap()
 
-    assert manager.summary == ["UV unwrap complete!"]
+    assert manager.summary == ["UV unwrap complete"]
     assert manager.error_messages == []
     assert has_uvs(outputs()["cube_unwrapped"])
 
@@ -99,7 +99,7 @@ def test_proxy_with_transfer_lands_on_the_input(unwrap, outputs):
 
     unwrap()
 
-    assert manager.summary[0] == "UV unwrap complete!"
+    assert manager.summary[0] == "UV unwrap complete"
     assert manager.transfer_uv_failed is False
     assert outputs() == {}
     assert not sphere.hide_get()
@@ -122,7 +122,7 @@ def test_proxy_on_a_multi_part_mesh_decimates_only_the_part_over_the_budget(
 
     unwrap()
 
-    assert manager.summary[0] == "UV unwrap complete!"
+    assert manager.summary[0] == "UV unwrap complete"
     assert manager.transfer_uv_failed is False
     assert outputs() == {}
     assert has_uvs(joined)
@@ -146,7 +146,7 @@ def test_proxy_without_transfer_replaces_the_output_with_a_full_copy(unwrap, out
 
     unwrap()
 
-    assert manager.summary[0] == "UV unwrap complete!"
+    assert manager.summary[0] == "UV unwrap complete"
     assert manager.transfer_uv_failed is False
     assert list(outputs()) == ["sphere_unwrapped"]
     output = outputs()["sphere_unwrapped"]

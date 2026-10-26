@@ -30,7 +30,6 @@ from .utils.mesh import (
 from .utils.paths import clear_io_dir, get_io_dir_paths, get_preferences
 from .utils.ui import popup, set_status, switch_solid_color, tag_redraw
 
-# how long a clean run's status bar message stays up
 STATUS_SECONDS = 5
 SETTLE_TICK_SECONDS = 0.05
 DISPATCH_SECONDS = 0.1
@@ -38,13 +37,13 @@ DISPATCH_SECONDS = 0.1
 QUEUED_DISPATCH_SECONDS = 0.02
 # a transfer doing its lookup in poll() only stops for a redraw
 LOOKUP_DISPATCH_SECONDS = 0.0
-# held back from the start or the bar drops when the engine hands over
+# reserved from the start, or the bar moves backward when the transfer begins
 TRANSFER_PROGRESS_SHARE = 0.4
 # a sidebar rebuild mid click drops the click
 PANEL_REDRAW_SECONDS = 1.0
 
 
-# frozen at session start, a slider moved mid-run changes nothing
+# a slider moved mid-run changes nothing
 class Settings:
     def __init__(self, props):
         for prop in props.bl_rna.properties:
@@ -68,7 +67,6 @@ PendingTransfer = namedtuple(
 )
 # an object being preseeded, before its pieces exist
 Preparing = namedtuple("Preparing", ["name", "cancel"])
-# how long to wait for the engine to stop before killing it
 STOP_SECONDS = 180
 
 
@@ -76,37 +74,30 @@ class UnwrapManager:
     def __init__(self):
         self._queue = deque()
         self._running = []
-        # reused across meshes
         self._shared_processes = []
         self._pack_output_objects = []
         self._pack_topology = {}
         self.engine = None
-        # run context returned by engine.validate, opaque to the manager
         self.engine_ctx = None
         self.is_active = False
-        # the session was started from the uv editor, so its queue ui goes there
         self.in_uv_editor = False
         self._dispatch_handle = None
-        # one per Unwrap still feeding pieces in, blocks the session finishing
         self.pieces_still_arriving = 0
         # _reset_session must not clear this, the builders add and remove entries
         self.preparing = []
         # session progress as (done, running, remaining) fractions
         self.progress = numpy.zeros(3)
-        # last session's summary, shown as a banner until dismissed
         self.summary = []
         self.summary_failed = False
         self._reset_session()
 
     # called from __init__ too, end_session can run before a session starts
     def _reset_session(self):
-        # frozen scene.uvgami, set in start()
         self.props = None
         self.moved_to_invalid = False
-        # (unwrap, result) per settled piece, the source for all counts
+        # (unwrap, result) per settled piece
         self.results = []
         self._to_import = []
-        # one per proxy finish still running in its worker thread
         self.pending_transfers = []
         self.cancelled_transfers = set()
         self.transfer_uv_failed = False
@@ -156,7 +147,7 @@ class UnwrapManager:
         engine = self.engine
         if engine.batches_queue(props):
             if self.pieces_still_arriving > 0:
-                # a batch needs the whole queue at once, so wait for every exporter
+                # a batch needs the whole queue at once
                 return
             if any(u.batch_process is not None for u in self._running):
                 return
@@ -165,7 +156,7 @@ class UnwrapManager:
                 return
             # a single queued mesh runs the normal solo path
         max_concurrent = 1 if engine.batches_queue(props) else props.max_cores
-        # pieces export in queue order, so nothing behind an unexported one is ready
+        # pieces export in queue order
         for unwrap in list(self._queue):
             if len(self._running) >= max_concurrent:
                 break
@@ -176,7 +167,10 @@ class UnwrapManager:
                 continue
             self._queue.remove(unwrap)
             shared_args = engine.build_shared_args(
-                self.engine_ctx, unwrap.path, props, self._shared_threads(unwrap, props)
+                self.engine_ctx,
+                unwrap.path,
+                props,
+                self._shared_threads(unwrap, props),
             )
             if shared_args is None:
                 unwrap.start_unwrap()
@@ -198,7 +192,7 @@ class UnwrapManager:
             return 0
         return max(1, multiprocessing.cpu_count() // props.max_cores)
 
-    # spawning costs 50ms inside Blender, so processes are reused
+    # spawning a process costs 50ms inside Blender
     def _send_to_shared_process(self, unwrap, args):
         # a part priority override runs with other args
         process = next(
@@ -255,7 +249,7 @@ class UnwrapManager:
                     elif time.monotonic() - unwrap.stop_requested_at > STOP_SECONDS:
                         unwrap.stop_process()
                         failed.append((unwrap, -3))
-                        # already failed this tick, the poll below must not re-add it
+                        # the poll below must not fail it a second time
                         continue
 
                 timeout_minutes = bpy.context.scene.uvgami.unwrap_timeout
@@ -266,7 +260,7 @@ class UnwrapManager:
                     and time.monotonic() - unwrap.started_at > timeout_minutes * 60
                 ):
                     if self.engine.supports_early_stop:
-                        # the stop flow above requests the map and force kills if ignored
+                        # force killed after STOP_SECONDS by the stop branch above
                         unwrap.is_stopped = True
                         self.error_messages.append(
                             f"{unwrap.input_name}: timed out,"
@@ -275,7 +269,7 @@ class UnwrapManager:
                     else:
                         unwrap.stop_process()
                         failed.append((unwrap, -2))
-                        # already failed this tick, the poll below must not re-add it
+                        # the poll below must not fail it a second time
                         continue
 
                 ret_code = unwrap.poll_engine()
@@ -283,7 +277,6 @@ class UnwrapManager:
                     if ret_code == 0 and unwrap.output_path.is_file():
                         completed.append(unwrap)
                     elif ret_code == 0:
-                        # exit 0 with no output file
                         failed.append((unwrap, -4))
                     else:
                         # a batched mesh that never started goes back to the queue
@@ -323,7 +316,6 @@ class UnwrapManager:
 
             self._fill_slots()
 
-            # an exporter or a transfer may still be running
             if (
                 not self._running
                 and not self._queue
@@ -442,7 +434,6 @@ class UnwrapManager:
             )
         self.record_result(twin, result)
 
-    # every result imports here on the timer
     def _drain_imports(self):
         for item in self._to_import:
             is_group = isinstance(item, Join)
@@ -467,7 +458,7 @@ class UnwrapManager:
                 )
         self._to_import.clear()
 
-    # settles either way, an exception here would leave its group waiting forever
+    # an exception here leaves the piece's group waiting forever
     def _settle_step(self, unwrap, doing, step, *args):
         try:
             step(unwrap, *args)
@@ -552,7 +543,7 @@ class UnwrapManager:
 
         if unwrap.transfer_uvs_job is not None:
             job = unwrap.transfer_uvs_job
-            # locate output in the pack list before the transfer deletes output
+            # output is deleted by the transfer
             pack_index = None
             if props.pack_after_unwrap:
                 for i, obj in enumerate(self._pack_output_objects):
@@ -589,7 +580,6 @@ class UnwrapManager:
         collection = check_collection("UVgami Unwrapped", bpy.context.scene.collection)
         move_to_collection(output, collection)
 
-    # everything after a transfer's report: pack list, hide state, grid, collection
     def _settle_transfer(self, job, output, pack_index, report):
         job.settled = True
         props = self.props
@@ -606,7 +596,7 @@ class UnwrapManager:
                 self._pack_output_objects[pack_index] = replacement
             output = replacement
         else:
-            # no hide job exists when a transfer job holds the slot
+            # no hide job exists when a transfer job is in the slot
             if check_exists(input_mesh):
                 input_mesh.hide_set(True)
             self.transfer_uv_failed = True
@@ -660,7 +650,7 @@ class UnwrapManager:
                     logger.add_data("errors", line)
                     print(line)
 
-    # the input mesh survives once a transfer has deleted the output
+    # the input mesh is still there after a transfer deletes the output
     def _add_auto_grid(self, props, obj):
         if props.auto_grid:
             add_grid(obj, make_grid_mat(make_grid_img()))
@@ -714,7 +704,7 @@ class UnwrapManager:
             ret_code -= 2**32
 
         move_to_invalid = False
-        # None when the message already says what the code means
+        # None when the message already explains the code
         engine_code = None
         # manager-synthetic codes for timeout, force kill and missing output
         if ret_code == -2:
@@ -733,7 +723,7 @@ class UnwrapManager:
                 msg, move_to_invalid = described
                 engine_code = ret_code
                 if not move_to_invalid:
-                    # one code can cover several causes, stderr says which
+                    # one code can cover several causes, the cause is in stderr
                     last = last_meaningful_line(unwrap.get_stderr_tail())
                     self.error_messages.append(f"{msg} ({last})" if last else msg)
             else:
@@ -745,7 +735,6 @@ class UnwrapManager:
                 if last:
                     self.error_stderr = last
                 if tail:
-                    # the whole traceback goes to the console
                     print(f"UVgami engine stderr (exit {ret_code}):")
                     for line in tail:
                         print(line)
@@ -794,7 +783,6 @@ class UnwrapManager:
             self.record_result(unwrap, Result.CANCELLED)
         self.finish_session()
 
-    # the dispatch timer and cancel all both end here
     def finish_session(self):
         props = self.props
         if props.pack_after_unwrap and self._pack_output_objects:
@@ -831,14 +819,14 @@ class UnwrapManager:
             elif finished and had_error:
                 msg.append("UV unwrap finished with errors")
             elif finished:
-                msg.append("UV unwrap complete!")
+                msg.append("UV unwrap complete")
             elif stopped and not invalid:
                 msg.append("UV unwrap stopped")
             else:
                 msg.append("UV unwrap failed")
 
             if invalid:
-                logger.add_data("errors", "Some meshes were not able to be unwrapped")
+                logger.add_data("errors", "Some meshes failed to unwrap")
             if finished and cancelled:
                 objects = "object" if cancelled == 1 else "objects"
                 msg.append(f"{cancelled} {objects} cancelled")
@@ -863,7 +851,7 @@ class UnwrapManager:
                 msg.append(err_msg)
                 logger.add_data("errors", err_msg)
 
-            # a whole queue can fail the same way, show the line once
+            # a whole queue can fail with the same message
             for err in dict.fromkeys(self.error_messages):
                 msg.append(err)
                 logger.add_data("errors", err)
@@ -889,7 +877,7 @@ class UnwrapManager:
             )
 
     def log_final_status(self):
-        # called here so the last import, transfer and pack are in the time
+        # after the last import, transfer and pack
         logger.update_time()
         counts = self._result_counts()
         cancelled = counts[Result.CANCELLED] == len(self.results)
@@ -917,7 +905,7 @@ class UnwrapManager:
     def finished_adding(self):
         self.pieces_still_arriving = max(0, self.pieces_still_arriving - 1)
 
-    # the one teardown every ending goes through, idempotent
+    # safe to call more than once
     def end_session(self):
         # late import: ops.viewer imports the manager
         from .ops.viewer import stop_viewer_draw

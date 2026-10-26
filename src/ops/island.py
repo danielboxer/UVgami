@@ -13,6 +13,7 @@ from ..proxy import make_proxy, triangle_count
 from ..seams import (
     FLIP_NOISE,
     face_edges,
+    find,
     flatten_distortion,
     island_groups,
     pair,
@@ -33,7 +34,7 @@ from ..utils.mesh import (
     new_bmesh,
     set_bmesh,
     set_loop_uvs,
-    triangulate,
+    triangulate_mesh,
     vertex_positions,
 )
 from ..utils.paths import (
@@ -43,12 +44,12 @@ from ..utils.paths import (
     unused_input_path,
 )
 
-# blender's default is 10, 50 flattens the stubborn folds
+# blender's default of 10 leaves folds
 REPAIR_ITERATIONS = 50
 
-# a rectified island reverts when its solved area fell under this fraction
+# a rectified island reverts when its solved area falls under this fraction
 RECTIFY_COLLAPSE = 0.5
-# or when its scale-free Dirichlet rose more than this over the engine's map
+# or when its scale free Dirichlet energy rises more than this over the engine's map
 RECTIFY_DISTORTION = 1.0
 
 
@@ -127,13 +128,7 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
     temp = bpy.data.objects.new("uvgami_island", island_mesh)
     bpy.context.scene.collection.objects.link(temp)
     temp.matrix_world = obj.matrix_world.copy()
-
-    bm = new_bmesh(temp)
-    if any(len(f.verts) > 3 for f in bm.faces):
-        triangulate(bm, temp.data)
-        set_bmesh(bm, temp)
-    else:
-        bm.free()
+    triangulate_mesh(temp.data)
 
     proxied = props.use_proxy and make_proxy(temp, props.proxy_faces)
 
@@ -141,7 +136,7 @@ def queue_island(obj, group, bbox, area, k, input_path, props):
     path = unused_input_path(input_path, name)
     export_obj(temp, path, False)
     vertex_count = len(temp.data.vertices)
-    # make_proxy swaps in a mesh of its own
+    # make_proxy replaces temp.data with a new mesh
     mesh = temp.data
     bpy.data.objects.remove(temp, do_unlink=True)
     bpy.data.meshes.remove(mesh)
@@ -178,7 +173,7 @@ def folded_faces(bm, uvl):
     return [face for face, areas in fans if any(a * orientation < 0 for a in areas)]
 
 
-# the uv discontinuities are marked as seams so the island's own cuts survive
+# seams on the uv discontinuities keep the island's cuts through the unwrap
 def repair_flipped_island(obj, temp):
     bm = new_bmesh(temp)
     uvl = bm.loops.layers.uv.active
@@ -365,7 +360,7 @@ def remove_temp(temp):
     bpy.data.meshes.remove(mesh)
 
 
-# the engine keeps the map, only the stretch moves
+# nocut leaves the cuts as they are and only reduces stretch
 def queue_nocut(obj, temp, group, bbox, area, k, input_path, props):
     layer = temp.data.uv_layers.active
     total = 0.0
@@ -380,12 +375,7 @@ def queue_nocut(obj, temp, group, bbox, area, k, input_path, props):
             u, w = corner.vector
             corner.vector = (-u, w)
 
-    bm = new_bmesh(temp)
-    if any(len(f.verts) > 3 for f in bm.faces):
-        triangulate(bm, temp.data)
-        set_bmesh(bm, temp)
-    else:
-        bm.free()
+    triangulate_mesh(temp.data)
 
     repair_flipped_island(obj, temp)
 
@@ -412,7 +402,7 @@ def queue_relax(obj, group, bbox, area, k, input_path, props):
     queue_nocut(obj, island_copy(obj, group), group, bbox, area, k, input_path, props)
 
 
-# 1 for a disk, one less per extra hole or handle
+# one for a disk, one less per extra hole or handle
 def euler_characteristic(temp, cut_edges):
     bm = new_bmesh(temp)
     bm.edges.ensure_lookup_table()
@@ -422,7 +412,7 @@ def euler_characteristic(temp, cut_edges):
     return chi
 
 
-# the runs between two of the islands stay unmarked, which is what the unwrap welds
+# the unwrap welds the runs left unmarked between two islands
 def weld_shared_seams(temp, island_of, island_count):
     bm = new_bmesh(temp)
     uvl = bm.loops.layers.uv.active
@@ -451,20 +441,14 @@ def weld_shared_seams(temp, island_of, island_count):
 # shared mesh edges are the only places the engine can weld
 def islands_connected(mesh, targets):
     parent = list(range(len(targets)))
-
-    def find(i):
-        while parent[i] != i:
-            i = parent[i]
-        return i
-
     edge_owner = {}
     for i, (group, _, _) in enumerate(targets):
         for fi in group:
             for key in mesh.polygons[fi].edge_keys:
                 j = edge_owner.setdefault(key, i)
                 if j != i:
-                    parent[find(i)] = find(j)
-    return len({find(i) for i in range(len(targets))}) == 1
+                    parent[find(parent, i)] = find(parent, j)
+    return len({find(parent, i) for i in range(len(targets))}) == 1
 
 
 # a disconnected selection gives one area per connected piece
@@ -486,7 +470,6 @@ def target_areas(obj, rings):
         island_selected = selected & group_set
         if not island_selected:
             continue
-        # each uv-connected piece of the selection grows into its own area
         taken = set(island_selected)
         emitted = set()
         absorbed = set()
@@ -496,7 +479,7 @@ def target_areas(obj, rings):
             patch = set(seed) - absorbed
             if not patch:
                 continue
-            # grow so the fix blends out instead of stopping at the selection edge
+            # grown so the fix blends out past the selection edge
             uv_of = {
                 faces[fi][i]: uvs[fi][i] for fi in patch for i in range(len(faces[fi]))
             }
@@ -533,7 +516,7 @@ def target_areas(obj, rings):
                     for i in range(len(faces[fi]))
                 }
                 if len(comp_verts) - len(comp_edges) + len(comp) != 1:
-                    # the area rings a real hole, no selection can make it a disk
+                    # the area rings a real hole
                     ring_skipped += 1
                     continue
                 outside = group_set - comp
@@ -542,7 +525,7 @@ def target_areas(obj, rings):
     return targets, whole, ring_skipped, None
 
 
-# pieces are joined by edges whose corner uvs agree on both faces
+# pieces are joined by edges with the same corner uvs on both faces
 def face_components(faces, uvs, edges, patch):
     def corner_uv(f, v):
         return uvs[f][faces[f].index(v)]
@@ -571,7 +554,7 @@ def face_components(faces, uvs, edges, patch):
     return components
 
 
-# a ring selection strands these, and the engine can only keep a disk
+# a ring selection strands these, the engine input must be a disk
 def enclosed_faces(faces, edges, group_set, patch):
     boundary = {
         e
@@ -618,7 +601,7 @@ def has_flipped(mesh, patch, uv_of):
     return False
 
 
-# queue_area's export gives one uv per vert, so such a patch would weld the seam
+# queue_area's export gives one uv per vertex, which welds the seam
 def spans_own_seam(mesh, patch):
     layer = mesh.uv_layers.active
     uv_of = {}
@@ -648,7 +631,7 @@ def repair_flipped(obj, area_mesh, used, uv_of, border):
     bm.to_mesh(area_mesh)
     bm.free()
 
-    # multi-object edit would pull the input mesh in and clear its faces
+    # multi-object edit pulls a selected input mesh in and clears its faces
     obj.select_set(False)
     unwrap(temp, range(len(area_mesh.polygons)), REPAIR_ITERATIONS)
     obj.select_set(True)
@@ -660,7 +643,7 @@ def repair_flipped(obj, area_mesh, used, uv_of, border):
     bpy.data.objects.remove(temp, do_unlink=True)
 
 
-# inside one island every vert has one uv, so vt indices mirror v indices
+# inside one island every vertex has one uv, so vt indices match v indices
 def queue_area(obj, patch, border, k, input_path, props, nocut):
     mesh = obj.data
     layer = mesh.uv_layers.active
@@ -694,16 +677,11 @@ def queue_area(obj, patch, border, k, input_path, props, nocut):
         [[local[v] for v in mesh.polygons[fi].vertices] for fi in patch],
     )
 
-    # a flipped area would make the engine reject the map
+    # the engine rejects a map with a flipped area
     if has_flipped(mesh, patch, uv_of):
         repair_flipped(obj, area_mesh, used, uv_of, border)
 
-    bm = bmesh.new()
-    bm.from_mesh(area_mesh)
-    if any(len(f.verts) > 3 for f in bm.faces):
-        triangulate(bm, area_mesh)
-        bm.to_mesh(area_mesh)
-    bm.free()
+    triangulate_mesh(area_mesh)
 
     name = f"{obj.name}_area_{k}"
     path = unused_input_path(input_path, name)
@@ -757,7 +735,7 @@ def queue_targets(engine, engine_ctx, obj, count, queue_one):
         for k in range(count):
             queue_one(k, input_path)
     except Exception:
-        # drop the partial batch or it silently runs with the next session
+        # a partial batch left in the queue runs with the next session
         while len(manager._queue) > queued:
             manager._queue.pop()
         raise
@@ -770,7 +748,7 @@ def queue_targets(engine, engine_ctx, obj, count, queue_one):
         info.settings = describe_settings(props, fix_settings(props))
         manager.engine = engine
         manager.engine_ctx = engine_ctx
-        # these operators are run from the uv editor, so the bar belongs there
+        # these operators run from the uv editor
         manager.start(uv_editor=True)
 
 
@@ -880,7 +858,7 @@ class UVGAMI_OT_combine_islands(FixOperator, bpy.types.Operator):
         bm.free()
 
         if folded:
-            # the engine can't unfold a kept map, so it cuts the union fresh
+            # the engine can't unfold a kept map
             remove_temp(temp)
 
             def queue_one(k, input_path):

@@ -79,7 +79,7 @@ def test_chart_and_seam_counts_are_pinned(
 
     unwrap()
 
-    assert manager.summary == ["UV unwrap complete!"]
+    assert manager.summary == ["UV unwrap complete"]
     (output,) = outputs().values()
     assert (island_count(output), seam_count(output)) == EXPECTED[model, surface_mode]
 
@@ -133,7 +133,7 @@ def test_stack_similar_copies_the_twin_instead_of_unwrapping_it(unwrap, outputs)
 
     unwrap()
 
-    assert manager.summary == ["UV unwrap complete!"]
+    assert manager.summary == ["UV unwrap complete"]
     engine_runs = [u for u, _ in manager.results if u.copy_of is None]
     copies = [u for u, _ in manager.results if u.copy_of is not None]
     assert len(engine_runs) == 1 and len(copies) == 1

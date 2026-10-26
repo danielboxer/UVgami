@@ -20,7 +20,7 @@ ABSORB_SHARE = 0.29
 WELD_FRACTION = 0.5
 
 
-# (low, high) vertex pairs. a boundary edge has one face and never counts
+# (low, high) vertex pairs, boundary edges never count
 def uv_tears(faces, corner_uvs, tolerance=0.0):
     sizes = [len(face) for face in faces]
     corners = numpy.fromiter(
@@ -77,7 +77,6 @@ class AffineMaps:
         # uv length per 3d length over the whole proxy
         self.scale = numpy.sqrt(numpy.abs(uv_cross).sum() / max(area.sum(), 1e-30))
 
-    # face and positions paired
     def uv(self, face, positions):
         offset = numpy.asarray(positions) - self.origin[face]
         return self.origin_uv[face] + numpy.einsum(
@@ -114,7 +113,7 @@ def proxy_splits(faces, corner_uvs):
     return numpy.array(sorted(pairs), dtype=numpy.int64)
 
 
-# their maps agree all along that edge, so the difference is a crack, not a cut
+# a uv jump between faces with the same uvs along their shared edge is a crack
 def proxy_edge_links(faces, corner_uvs):
     pairs = set()
     for (u, v), owners in face_edges(faces).items():
@@ -317,7 +316,7 @@ class DenseMesh:
         start = int(self.starts[f])
         return range(start, start + int(self.sizes[f]))
 
-    # an end vertex has corners that disagree
+    # an end vertex has corners with different uvs
     def suspect(self, corner_uvs):
         split = numpy.zeros(len(self._one_corner), dtype=bool)
         differs = numpy.any(
@@ -330,7 +329,7 @@ class DenseMesh:
         faces = numpy.asarray(faces, dtype=numpy.int64)
         return _ranges(self.starts[faces], self.sizes[faces])
 
-    # for each corner, the position in vertices of the vertex it is of
+    # the corners at vertices, and each corner's index into vertices
     def rings(self, vertices):
         vertices = numpy.asarray(vertices, dtype=numpy.int64)
         lo = numpy.searchsorted(self._ring_sorted, vertices)
@@ -387,7 +386,7 @@ def _torn(proxy_map, face_of_vertex, positions, uvs, tail, head):
     )
 
 
-# the corner agreeing with the most others keeps its map
+# the corner whose uv matches the most others keeps its map
 def _redraw_torn_faces(proxy_map, face_of_vertex, positions, uvs, mesh, torn):
     corners = mesh.corners
     corner_uvs = uvs[corners].copy()
@@ -484,7 +483,6 @@ def connected_labels(count, edges):
                 break
             low = jumped
         label = low
-        # edges inside a merged part drop out
         a = label[a]
         b = label[b]
         keep = a != b
@@ -493,7 +491,7 @@ def connected_labels(count, edges):
     return label
 
 
-# the (a, b) pairs hold both orders of every pair
+# the (a, b) pairs have both orders of every pair
 def _components(count, a, b):
     label = numpy.arange(count)
     while True:
@@ -513,7 +511,7 @@ def _weld(corner_uvs, drawn_by, native, proxy_map, mesh):
     return corner_uvs
 
 
-# it carries the uv gradient the mesh has there, a proxy face's can be steeper
+# a proxy face's uv gradient can be steeper than the dense face's
 def _face_map(corner_uvs, mesh, g):
     start = int(mesh.starts[g])
     p = mesh.positions[mesh.corners[start : start + 3]]
@@ -605,7 +603,7 @@ def _average_around_flips(corner_uvs, mesh, flipped):
     point_vert = numpy.empty(count, dtype=numpy.int64)
     point_vert[point] = verts[of]
 
-    # moving a vertex with two uv points would warp the seam it sits on
+    # moving a vertex with two uv points warps the seam it sits on
     free = numpy.isin(point_vert, free_verts)
     free &= numpy.bincount(point_vert)[point_vert] == 1
 
@@ -729,7 +727,7 @@ def _absorb_stray_faces(corner_uvs, drawn_by, proxy_map, mesh):
             return corner_uvs[t], corner_uvs[following[t]], drawn_by[t]
         return corner_uvs[following[t]], corner_uvs[t], drawn_by[t]
 
-    # an edge joins once it shares a corner with the side and agrees there
+    # an edge joins once it shares a corner with the side and has the same uv there
     def side_of(anchor, seams):
         tail_uv, head_uv, face = across(anchor)
         tolerance = WELD_FRACTION * numpy.linalg.norm(tail_uv - head_uv)
@@ -991,7 +989,6 @@ def _straighten_seams(corner_uvs, drawn_by, proxy_map, mesh):
     cut_of = cuts.nearest(drawn_by[seam_corners], midpoints)
     on_run = numpy.zeros(len(corners), dtype=bool)
 
-    # walking the run in order
     def side_faces(vertices, run_corners):
         left, right = [], []
         for v, c in zip(vertices, run_corners):
@@ -1112,7 +1109,7 @@ def _edge_tears(tail, head, tail_uv, head_uv, tolerance):
     return {(int(key >> 32), int(key & 0xFFFFFFFF)) for key in torn.tolist()}
 
 
-# vertices renumbered from zero. also returns each new vertex's old index
+# also returns each new vertex's old index
 def dense_subset(dense, faces):
     sizes = numpy.asarray(dense["face_sizes"], dtype=numpy.int64)
     starts = numpy.cumsum(sizes) - sizes

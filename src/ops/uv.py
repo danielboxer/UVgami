@@ -38,7 +38,7 @@ def island_stacks(obj, faces=None, edges=None):
         )
         reference = complex(*uvs[reference_loop[0]][reference_loop[1]])
         if reference == anchor:
-            # a zero size island can't recover a transform, pack it normally
+            # a zero size island has no transform to recover
             continue
         duplicate_faces = [fi for group in duplicates for fi in group]
         kept_loops = {}
@@ -69,7 +69,7 @@ def _deselect_stacked_duplicates(obj, stacks):
             bm.faces[fi].select = False
 
 
-# replays the kept island's similarity transform onto its duplicates
+# applies the kept island's similarity transform to its duplicates
 def _restack(obj, stacks):
     if not stacks:
         return
@@ -86,7 +86,7 @@ def _restack(obj, stacks):
         )
         new_anchor = loop_uv(anchor_loop)
         ratio = (loop_uv(reference_loop) - new_anchor) / (reference - anchor)
-        # the next pack must still see the stack as bit equal copies
+        # the stack must still be bit equal copies at the next pack
         exact = {
             uv: tuple(bm.faces[fi].loops[ci][uv_layer].uv)
             for uv, (fi, ci) in kept_loops.items()
@@ -138,7 +138,7 @@ def pack(stacks_of):
     tool_settings.use_uv_select_sync = False
     try:
         select_uvs()
-        # a rotated twin's 3d area computes a few ulps apart
+        # a rotated copy's 3d area differs in the last few digits
         for obj, stacks in stacks_of.items():
             _deselect_stacked_duplicates(obj, stacks)
         # without the average first, a repeat pack scales a part again

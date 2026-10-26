@@ -51,7 +51,7 @@ def test_two_objects_each_get_an_output(unwrap, outputs):
 
     unwrap()
 
-    assert manager.summary == ["UV unwrap complete!"]
+    assert manager.summary == ["UV unwrap complete"]
     assert sorted(outputs()) == ["a_unwrapped", "b_unwrapped"]
     assert a.hide_get() and b.hide_get()
     assert len(manager.results) == 2
@@ -67,7 +67,7 @@ def test_loose_parts_unwrap_as_pieces_and_join_back(unwrap, outputs):
 
     unwrap()
 
-    assert manager.summary == ["UV unwrap complete!"]
+    assert manager.summary == ["UV unwrap complete"]
     assert list(outputs()) == [f"{joined.name}_unwrapped"]
     output = outputs()[f"{joined.name}_unwrapped"]
     positions = {tuple(round(c, 3) for c in v.co) for v in output.data.vertices}
@@ -125,7 +125,7 @@ def test_cancel_one_queued_piece_lets_the_other_finish(unwrap, outputs):
     bpy.ops.uvgami.cancel(stem=queued.path.stem)
     pump.run_until(lambda: not manager.is_active, UNWRAP_SECONDS)
 
-    assert manager.summary == ["UV unwrap complete!", "1 object cancelled"]
+    assert manager.summary == ["UV unwrap complete", "1 object cancelled"]
     assert len(outputs()) == 1
     assert f"{queued.input_name}_unwrapped" not in outputs()
     assert not bpy.data.objects[queued.input_name].hide_get()
@@ -161,7 +161,7 @@ def test_stop_a_solving_piece_keeps_its_partial_map(unwrap, outputs, invalid_obj
 
     # the engine answers a stop with its current map and exits 0
     assert piece.result is Result.FINISHED
-    assert manager.summary == ["UV unwrap complete!"]
+    assert manager.summary == ["UV unwrap complete"]
     assert invalid_objects() == {}
     output = outputs()["sphere_unwrapped"]
     assert output.data.uv_layers.active is not None
@@ -178,7 +178,7 @@ def test_cancel_a_solving_piece_lets_the_queued_one_finish(unwrap, outputs):
     bpy.ops.uvgami.cancel(stem=piece.path.stem)
     pump.run_until(lambda: not manager.is_active, UNWRAP_SECONDS)
 
-    assert manager.summary == ["UV unwrap complete!", "1 object cancelled"]
+    assert manager.summary == ["UV unwrap complete", "1 object cancelled"]
     assert len(outputs()) == 1
     assert f"{piece.input_name}_unwrapped" not in outputs()
     assert not bpy.data.objects[piece.input_name].hide_get()

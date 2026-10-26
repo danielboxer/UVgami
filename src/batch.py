@@ -10,7 +10,7 @@ LOG_UNLOCK_SECONDS = 0.1
 LOG_UNLOCK_POLL_SECONDS = 0.001
 
 
-# stdout and stderr go to files, a pipe needs a thread to keep it from filling
+# the engine is blocked once an unread stdout buffer is full
 class EngineProcess:
     def __init__(self, args, env=None):
         self._log_dir = tempfile.TemporaryDirectory(
@@ -40,7 +40,7 @@ class EngineProcess:
         text = self._stderr_path.read_text(errors="replace")
         return text.splitlines()[-STDERR_TAIL_LINES:]
 
-    # windows can't delete a file the engine still holds open
+    # windows can't delete a file that is still open in the engine
     def close(self):
         self._stdout.close()
         deadline = time.monotonic() + LOG_UNLOCK_SECONDS
@@ -147,7 +147,7 @@ class BatchProcess:
         try:
             self.process.stdin.close()
         except OSError:
-            # a dead engine refuses the flush in close
+            # flushing a dead engine's stdin in close raises
             pass
         self.process.wait()
         self._engine_process.close()
@@ -156,7 +156,7 @@ class BatchProcess:
     def stderr_lines(self):
         return self._engine_process.stderr_tail()
 
-    # len(started) keeps a startup crash from requeuing forever
+    # a startup crash is requeued forever without the len(started) check
     def should_retry(self, stem):
         return (
             self.process.poll() is not None

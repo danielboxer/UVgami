@@ -84,7 +84,7 @@ def corner_uvs(mesh):
     return split_per_face(corners, loop_totals(mesh))
 
 
-# float noise between loops of one vert would read as a seam
+# float noise between loops of one vertex reads as a seam
 def face_uvs(mesh):
     return [[(round(u, 6), round(v, 6)) for u, v in face] for face in corner_uvs(mesh)]
 
@@ -93,6 +93,16 @@ def face_uvs(mesh):
 def triangulate(bm, mesh):
     _split_conflicting_quads(bm, mesh)
     bmesh.ops.triangulate(bm, faces=bm.faces, quad_method="BEAUTY")
+
+
+# a mesh of triangles is left as it is
+def triangulate_mesh(mesh):
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    if any(len(face.verts) > 3 for face in bm.faces):
+        triangulate(bm, mesh)
+        bm.to_mesh(mesh)
+    bm.free()
 
 
 # one integer per edge, the same for both directions
@@ -161,7 +171,7 @@ def _split_conflicting_quads(bm, mesh):
         edge_of = dict(zip(keys, edge_flags))
 
         def conflicts(key):
-            # a split face drops to 3 verts
+            # a split face drops to 3 vertices
             return (
                 edge_of[key]
                 or key in split_keys

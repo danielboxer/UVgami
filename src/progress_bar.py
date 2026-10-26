@@ -7,7 +7,7 @@ X = 25
 Y = 25
 WIDTH = 150
 TOP = Y + 5
-# created on first use, gpu is unavailable at import time in background mode
+# gpu is unavailable at import time in background mode
 SHADER = None
 
 

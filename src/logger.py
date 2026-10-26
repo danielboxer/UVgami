@@ -7,7 +7,7 @@ from .utils.paths import get_addon_version, get_extension_dir_path
 
 LOG_FILE_NAME = "log.txt"
 HEADER_PREFIX = "UVgami "
-# a bug report wants the recent runs, not every run since install
+# a bug report needs only the recent runs
 LOG_LINE_LIMIT = 500
 UNSAVED_FILE_NAME = "unsaved"
 
@@ -16,7 +16,7 @@ def get_log_path():
     return get_extension_dir_path() / LOG_FILE_NAME
 
 
-# the .blend is in it so the runs under one header all came from that file
+# the header includes the .blend name of the runs under it
 def block_header():
     name = bpy.path.basename(bpy.data.filepath) or UNSAVED_FILE_NAME
     return (
@@ -138,7 +138,7 @@ class Logger:
         self.unwrap_end = None
         self.header = None
 
-    # the next run opens a block of its own, under a header naming the file it ran on
+    # the next run is under a new header
     def reset(self):
         self.unwrap_info.clear()
         self.header = None

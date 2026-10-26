@@ -17,7 +17,6 @@ def group_targets(job_id):
     ]
 
 
-# resolved at execute time, so a stale click on a settled piece does nothing
 def piece_target(stem):
     return [u for u in manager.active if u.path.stem == stem]
 
@@ -43,7 +42,7 @@ class UVGAMI_OT_stop(bpy.types.Operator):
     def execute(self, context):
         unwraps = group_targets(self.job_id) if self.job_id else piece_target(self.stem)
 
-        # collect cancellations so group members can be merged into one import
+        # a group's cancelled pieces merge into one import
         to_cancel = []
         for unwrap in unwraps:
             if unwrap.is_solving and manager.engine.supports_early_stop:
@@ -54,7 +53,7 @@ class UVGAMI_OT_stop(bpy.types.Operator):
                 if not delivered and unwrap.process.poll() is None:
                     self.report({"ERROR"}, "Could not stop unwrap")
             elif not unwrap.is_running:
-                # stopping a queued mesh would give a map with no work in it
+                # a queued mesh has no partial map yet
                 to_cancel.append(unwrap)
             # a mesh with no early stop settles on its own
 
@@ -63,7 +62,7 @@ class UVGAMI_OT_stop(bpy.types.Operator):
             manager.exit_viewer = True
             tag_redraw()
 
-        # without early stop the wait would be a full unwrap
+        # without early stop the wait lasts a full unwrap
         if manager.engine.supports_early_stop:
             manager.run_until_settled(unwraps)
         return {"FINISHED"}
@@ -83,7 +82,7 @@ class UVGAMI_OT_stop(bpy.types.Operator):
                 singles.extend(group)
                 continue
             self._import_merged_group(context, group)
-            # import already done above
+            # _import_merged_group already imported these
             for unwrap in group:
                 drop_unwrap(context, unwrap, None, Result.STOPPED)
 
@@ -91,7 +90,7 @@ class UVGAMI_OT_stop(bpy.types.Operator):
             drop_unwrap(context, unwrap, "Stopped", Result.STOPPED)
 
     def _import_merged_group(self, context, group):
-        # merge before any settle: record_result deletes these input files
+        # record_result deletes these input files
         paths = [unwrap.path for unwrap in group if unwrap.path.is_file()]
         if not paths:
             return
@@ -110,7 +109,7 @@ class UVGAMI_OT_cancel(bpy.types.Operator):
     job_id: bpy.props.IntProperty(options={"SKIP_SAVE"})
 
     def invoke(self, context, event):
-        # only a group cancel can discard finished pieces, so only it confirms
+        # only a group cancel can discard finished pieces
         targets = group_targets(self.job_id) if self.job_id else []
         if targets and targets[0].join_job.finished:
             count = len(targets[0].join_job.finished)
@@ -127,7 +126,6 @@ class UVGAMI_OT_cancel(bpy.types.Operator):
     def execute(self, context):
         unwraps = group_targets(self.job_id) if self.job_id else piece_target(self.stem)
         if self.job_id:
-            # the already finished pieces get discarded instead of joined
             for unwrap in unwraps:
                 if unwrap.join_job is not None:
                     unwrap.join_job.discard = True
@@ -157,7 +155,6 @@ class UVGAMI_OT_cancel_background(bpy.types.Operator):
     name: bpy.props.StringProperty()
 
     def execute(self, context):
-        # resolved at execute time, so a stale click is a no-op
         entry = next((p for p in manager.preparing if p.name == self.name), None)
         if entry is not None:
             entry.cancel()

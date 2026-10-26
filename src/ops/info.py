@@ -25,7 +25,6 @@ def _text_editor_area():
     return None
 
 
-# the newest block, so the log opens on the run being reported
 def _last_block_line(lines):
     return max(
         (i for i, line in enumerate(lines) if line.startswith(HEADER_PREFIX)),
@@ -44,7 +43,7 @@ class UVGAMI_OT_open_logs(bpy.types.Operator):
         text.clear()
         text.write(body + "\n")
         start = _last_block_line(body.splitlines())
-        # the view follows the cursor, which write leaves on the last line
+        # the text view scrolls to the cursor
         text.cursor_set(start)
 
         area = _text_editor_area()

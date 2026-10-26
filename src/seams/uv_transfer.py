@@ -144,7 +144,7 @@ def _weld_parts(parts, positions):
             za, zb = flat[assign.index(a)], flat[assign.index(b)]
             if za == zb:
                 return None
-            # both frames hold the true 3d shape wound the same way
+            # both frames have the true 3d shape wound the same way
             s = (placed[a] - placed[b]) / (za - zb)
             t = placed[a] - s * za
 
@@ -404,7 +404,7 @@ def transfer_exact(
                 loop_uvs[base + local[in_v]] = uv
             continue
 
-        # a uv cut runs through this face, so one face can't hold its uvs
+        # a uv cut runs through this face
         if len({frozenset(assign) for assign, _ in parts}) != len(parts):
             return TransferFailure(
                 AMBIGUOUS_GEOMETRY,
@@ -446,7 +446,6 @@ def transfer_exact(
     return TransferPlan(loop_uvs, split_faces, seams, untouched)
 
 
-# transfer_exact taking flat arrays for a worker process
 def transfer_exact_job(
     input_positions,
     input_corners,

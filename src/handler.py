@@ -31,7 +31,7 @@ def handle_error(error, location, **kwargs):
 
 def cleanup(location, objects=frozenset()):
     if location == "START":
-        # the delete below would take a live session's objects too
+        # the delete below also removes a live session's objects
         if manager.is_active:
             return
         # every object created since the operator started is temporary

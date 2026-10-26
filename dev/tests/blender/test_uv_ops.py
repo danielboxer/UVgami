@@ -84,7 +84,7 @@ def test_operator_moves_the_distorted_vertex_and_restores_edit_mode(
 
     session(getattr(bpy.ops.uvgami, operator))
 
-    assert manager.summary[0] == "UV unwrap complete!", manager.summary
+    assert manager.summary[0] == "UV unwrap complete", manager.summary
     assert manager.error_messages == []
     assert grid.mode == "EDIT"
     assert vertex_uvs(grid, center) != before
@@ -101,7 +101,7 @@ def test_combine_islands_joins_two_islands_into_one(session, make_mesh, face_uvs
 
     session(bpy.ops.uvgami.combine_islands)
 
-    assert manager.summary[0] == "UV unwrap complete!", manager.summary
+    assert manager.summary[0] == "UV unwrap complete", manager.summary
     bpy.ops.object.mode_set(mode="OBJECT")
     first, second = face_uvs(obj)
     # the shared 3d edge 1-2 now has one uv per vertex
@@ -121,7 +121,7 @@ def test_expand_rings_free_the_border_of_the_selection(session, rings, moves):
 
     session(bpy.ops.uvgami.relax_area)
 
-    assert manager.summary[0] == "UV unwrap complete!", manager.summary
+    assert manager.summary[0] == "UV unwrap complete", manager.summary
     assert (vertex_uvs(grid, border) != before) is moves
 
 
@@ -220,7 +220,7 @@ def test_combine_keeps_a_cube_corner_as_one_island(session, make_mesh, face_uvs)
 
     session(bpy.ops.uvgami.combine_islands)
 
-    assert manager.summary[0] == "UV unwrap complete!", manager.summary
+    assert manager.summary[0] == "UV unwrap complete", manager.summary
     bpy.ops.object.mode_set(mode="OBJECT")
     assert uv_island_count(obj, face_uvs(obj)) == 1
 
@@ -236,7 +236,7 @@ def test_combine_keeps_the_islands_other_seams(session, make_mesh, face_uvs):
 
     session(bpy.ops.uvgami.combine_islands)
 
-    assert manager.summary[0] == "UV unwrap complete!", manager.summary
+    assert manager.summary[0] == "UV unwrap complete", manager.summary
     bpy.ops.object.mode_set(mode="OBJECT")
     uvs = face_uvs(obj)
     assert uv_island_count(obj, uvs) == 1

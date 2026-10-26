@@ -11,13 +11,13 @@ STRIP_ELONGATION = 3.0
 # a corner concentrates about 90 degrees inside this share of the perimeter
 CORNER_WINDOW = 0.02
 CORNER_TURN = 45
-# opposite sides of a real strip match, and the rectangle holds its area
+# opposite sides of a real strip match, and the rectangle keeps its area
 CORNER_SIDE_RATIO = 2.0
 CORNER_FIT_AREA = 1.6
 # a jagged edge full of sharp turns must not crowd out the real end corners
 CORNER_CANDIDATES = 12
 SPINE_SAMPLES = 64
-# rings around a flipped face that move to the neighbor average, and the cap
+# rings around a flipped face that move to the neighbor average
 RELAX_RING = 2
 RELAX_ROUNDS = 200
 
@@ -364,7 +364,7 @@ def _rectangle_targets(loop, area, interior=None):
         )
 
     if turned and interior:
-        # arc length would force a constant width, stretching a tapered strip
+        # arc length forces a constant width and stretches a tapered strip
         rotated_interior = [
             (
                 (q[0] - mean_x) * cos_a + (q[1] - mean_y) * sin_a,

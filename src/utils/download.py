@@ -5,7 +5,6 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-# github releases honor Range, so a dropped download resumes
 _CHUNK = 1 << 20
 _ATTEMPTS = 4
 _BACKOFF = 2.0
