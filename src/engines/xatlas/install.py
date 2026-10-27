@@ -8,7 +8,7 @@ from ..binary_engine import (
 )
 
 # must match the xatlas engine VERSION
-XATLAS_VERSION = "0.2.5"
+XATLAS_VERSION = "0.2.6"
 XATLAS_MINIMUM_VERSION = "0.2.0"
 XATLAS_ARCHIVE_SHA256S = {
     "windows": "f4545018283b6f1141213674a075ed7a3379e3556404e0db4f205df3d79aca23",
