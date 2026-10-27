@@ -2,7 +2,6 @@ import math
 
 import numpy
 import pytest
-from addon_src import similar
 
 from seams import (
     SURFACE_MODE_CODES,
@@ -12,6 +11,7 @@ from seams import (
     preseed_job,
 )
 from seams.islands import SPLIT_TARGET
+from seams.mirror import mirror_partners
 from seams.preseed import submesh
 
 # the addon's balanced bound and default seam weight
@@ -29,7 +29,7 @@ def test_submesh_compacts_the_subset(unit_cube):
 # the hard surface command and optcuts' run, found like the addon finds them
 @pytest.fixture
 def engines(engine_binary):
-    return [engine_binary("hardsurface")], OptcutsRun(
+    return [engine_binary("uvgami-tools")], OptcutsRun(
         [engine_binary("optcuts")], None, ENGINE_ARGS
     )
 
@@ -157,10 +157,7 @@ def symmetric_preseed(engines, tmp_path, positions, faces, surface_modes):
     diagonal = numpy.linalg.norm(high - low)
     # drifted off an exact mirror, as a mesh that ships whole is
     positions[0] += 0.001 * diagonal
-    partner = similar._mutual_partners(
-        positions, center, "X", similar.SYMMETRY_CELL * diagonal
-    )
-    partners = similar.partner_map(partner)
+    partners = mirror_partners(engines[0], tmp_path, positions, center, "X")
     seams, _, flattened = run_preseed(
         engines, tmp_path, positions, faces, surface_modes, plane=(0, partners)
     )

@@ -46,7 +46,7 @@ from seams.segmentation import classify_job
 # the hard surface exe's classifier flags with every part on Auto
 @pytest.fixture
 def classify_hard(engine_binary, tmp_path):
-    command = [engine_binary("hardsurface")]
+    command = [engine_binary("uvgami-tools")]
 
     def run(verts, faces):
         modes = numpy.full(len(faces), SURFACE_MODE_CODES["AUTO"])
@@ -58,7 +58,7 @@ def classify_hard(engine_binary, tmp_path):
 # the hard surface exe's placed seams as (low, high) vertex pairs
 @pytest.fixture
 def exe_seams(engine_binary):
-    hardsurface = engine_binary("hardsurface")
+    tools = engine_binary("uvgami-tools")
 
     def run(verts, faces, angle=30, weights=None):
         with tempfile.TemporaryDirectory() as folder:
@@ -67,7 +67,7 @@ def exe_seams(engine_binary):
             _write_weights(Path(folder) / "mesh_weights", weights)
             out = Path(folder) / "seams.txt"
             subprocess.run(
-                [hardsurface, "seams", obj, out, "--angle", str(angle)],
+                [tools, "seams", obj, out, "--angle", str(angle)],
                 check=True,
                 capture_output=True,
             )
@@ -986,7 +986,7 @@ def test_classify_resolves_only_auto_parts(fixture_mesh, engine_binary, tmp_path
         expected += [SURFACE_MODE_CODES[resolved]] * len(faces)
 
     result = classify_job(
-        [engine_binary("hardsurface")],
+        [engine_binary("uvgami-tools")],
         tmp_path,
         numpy.array(positions),
         numpy.array(corners, dtype=numpy.int64),

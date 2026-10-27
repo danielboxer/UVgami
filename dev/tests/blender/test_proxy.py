@@ -5,7 +5,6 @@ from blender_fixtures import add_cube, addon, join
 
 make_proxy = addon.src.proxy.make_proxy
 mirror_proxy = addon.src.proxy.mirror_proxy
-mirror_partners = addon.src.similar.mirror_partners
 needs_proxy = addon.src.proxy.needs_proxy
 part_triangles = addon.src.proxy.part_triangles
 triangle_count = addon.src.proxy.triangle_count
@@ -53,6 +52,16 @@ def test_a_part_at_the_face_count_keeps_its_faces():
     assert not needs_proxy(obj, triangles)
     assert not make_proxy(obj, triangles)
     assert triangle_count(obj) == triangles
+
+
+def mirror_partners(mesh, center, axis):
+    return addon.src.seams.mirror.mirror_partners(
+        addon.src.utils.uvgami_tools.tools_command(),
+        addon.src.job.mirror_workdir(),
+        addon.src.utils.mesh.vertex_position_array(mesh),
+        center,
+        axis,
+    )
 
 
 def test_a_mirrored_proxy_has_a_partner_for_every_vertex():

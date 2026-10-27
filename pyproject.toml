@@ -33,7 +33,7 @@ extend-select = ["I", "UP"]
 
 [tool.pytest.ini_options]
 # pytest skips a testpath that is not there
-testpaths = ["dev/tests", "private/bench/tests", "private/engine/partuv/tests", "private/engine/segment"]
+testpaths = ["dev/tests", "private/bench/tests", "private/engine/partuv/tests", "private/engine/uvgami-tools"]
 markers = ["smoke: runs the real engine binary"]
 # the partuv driver source must import for the wheel tests, with no built _core
 pythonpath = ["private/engine/partuv", "private/bench/src"]

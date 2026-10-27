@@ -19,20 +19,18 @@ jobs:
           ENGINE_RELEASE_REPO: ${{ secrets.ENGINE_RELEASE_REPO }}
         run: |
           mkdir -p bin/licenses
-          for ENGINE in segment hardsurface; do
-            CONSTANT="$(echo "$ENGINE" | tr a-z A-Z)_VERSION"
-            VERSION=$(grep -m1 "^$CONSTANT = " src/engines/bundled.py | cut -d'"' -f2)
-            gh release download "$ENGINE-v$VERSION" -R "$ENGINE_RELEASE_REPO" --pattern "$ENGINE-engine-$VERSION-*.zip" --dir "package/$ENGINE"
-            for TAG in windows linux macos-x64 macos-arm64; do
-              BINARY=$ENGINE
-              if [ "$TAG" = "windows" ]; then BINARY=$ENGINE.exe; fi
-              mkdir -p "extracted/$ENGINE/$TAG" "bin/$TAG"
-              unzip -q "package/$ENGINE/$ENGINE-engine-$VERSION-$TAG.zip" -d "extracted/$ENGINE/$TAG"
-              cp "$(find "extracted/$ENGINE/$TAG" -type f -name "$BINARY")" "bin/$TAG/"
-            done
-            cp "$(find "extracted/$ENGINE/linux" -type d -name licenses)"/* bin/licenses/
+          ENGINE=uvgami-tools
+          VERSION=$(grep -m1 "^UVGAMI_TOOLS_VERSION = " src/utils/uvgami_tools.py | cut -d'"' -f2)
+          gh release download "$ENGINE-v$VERSION" -R "$ENGINE_RELEASE_REPO" --pattern "$ENGINE-engine-$VERSION-*.zip" --dir package
+          for TAG in windows linux macos-x64 macos-arm64; do
+            BINARY=$ENGINE
+            if [ "$TAG" = "windows" ]; then BINARY=$ENGINE.exe; fi
+            mkdir -p "extracted/$TAG" "bin/$TAG"
+            unzip -q "package/$ENGINE-engine-$VERSION-$TAG.zip" -d "extracted/$TAG"
+            cp "$(find "extracted/$TAG" -type f -name "$BINARY")" "bin/$TAG/"
           done
-          cp "$(find extracted/segment/linux -type f -name LICENSE.txt)" bin/
+          cp "$(find extracted/linux -type d -name licenses)"/* bin/licenses/
+          cp "$(find extracted/linux -type f -name LICENSE.txt)" bin/
 
       - run: zip -r addon.zip $INCLUDED_FILES bin
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -229,10 +227,8 @@ jobs:
             cp "$(find extracted/$ENGINE -type f -name "$ENGINE$EXE")" engine-builds/$TAG/
             chmod +x "engine-builds/$TAG/$ENGINE$EXE"
           done
-          for ENGINE in segment hardsurface; do
-            unzip -q -j addon.zip "bin/$TAG/$ENGINE$EXE" -d engine-builds/$TAG
-            chmod +x "engine-builds/$TAG/$ENGINE$EXE"
-          done
+          unzip -q -j addon.zip "bin/$TAG/uvgami-tools$EXE" -d engine-builds/$TAG
+          chmod +x "engine-builds/$TAG/uvgami-tools$EXE"
 
       - name: Run the suite inside blender
         if: matrix.platform.suite

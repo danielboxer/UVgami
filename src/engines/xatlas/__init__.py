@@ -11,7 +11,6 @@ class XatlasEngine(XatlasInstall):
     label = "xatlas"
     description = "Fast CPU engine for baking lightmaps and texture painting"
     icon = "MESH_GRID"
-    supports_symmetry = True
 
     # xatlas has no hard surface route
     def unset_surface_mode(self, props):

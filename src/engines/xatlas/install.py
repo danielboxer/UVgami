@@ -33,8 +33,9 @@ class UVGAMI_OT_install_xatlas(InstallEngineTask, bpy.types.Operator):
     release = XATLAS
 
 
-# regions need the bundled segment binary
+# regions and symmetry need the bundled uvgami-tools binary
 class XatlasInstall(BinaryEngine):
     release = XATLAS
     supports_regions = True
+    supports_symmetry = True
     classes = (UVGAMI_OT_install_xatlas, UVGAMI_OT_delete_engine)

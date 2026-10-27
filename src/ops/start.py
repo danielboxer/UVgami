@@ -10,7 +10,6 @@ import mathutils
 import numpy
 
 from ..engines import active_engine, get_engine
-from ..engines.bundled import resolve_bundled_command
 from ..handler import handle_error
 from ..job import (
     HideInput,
@@ -23,6 +22,7 @@ from ..job import (
     Symmetrise,
     TransferUVs,
     mirror_segmentation,
+    mirror_workdir,
     paints_seams,
     unwrap_plan,
 )
@@ -47,6 +47,7 @@ from ..seams import (
     islands_overlap,
     uv_island_groups,
 )
+from ..seams.mirror import mirror_partners
 from ..seams.worker import WorkerError
 from ..segmentation import (
     SegmentWeld,
@@ -54,7 +55,7 @@ from ..segmentation import (
     segment_work,
     split_on_borders,
 )
-from ..similar import find_twins, mirror_partners, write_twin_output
+from ..similar import find_twins, write_twin_output
 from ..ui.panels import describe_settings, unwrap_settings
 from ..unwrap import Unwrap
 from ..utils.geometry import applied_matrix
@@ -74,6 +75,7 @@ from ..utils.mesh import (
 )
 from ..utils.paths import get_preferences, unused_input_path
 from ..utils.ui import tag_redraw
+from ..utils.uvgami_tools import tools_command
 from .guides import seam_restriction_weights
 
 # finish is called with the done task
@@ -617,7 +619,13 @@ class SessionBuilder:
             partners = symmetry.partners
             # the proxy and the region split both renumber the vertices
             if proxied or border_positions is not None:
-                partners = mirror_partners(obj.data, symmetry.center, symmetry.axis)
+                partners = mirror_partners(
+                    tools_command(),
+                    mirror_workdir(),
+                    vertex_position_array(obj.data),
+                    symmetry.center,
+                    symmetry.axis,
+                )
             plane = ("XYZ".index(symmetry.axis), partners)
 
         separate = functools.partial(
@@ -838,7 +846,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
             segment_command = None
             if engine.splits_regions(props):
                 try:
-                    segment_command = resolve_bundled_command("segment", "Segmentation")
+                    segment_command = [*tools_command(), "segment"]
                 except RuntimeError as error:
                     self.report({"ERROR"}, str(error))
                     logger.discard_info()

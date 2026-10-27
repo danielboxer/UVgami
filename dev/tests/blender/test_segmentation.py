@@ -12,7 +12,7 @@ from blender_fixtures import (
     logger,
     manager,
     needs_engine,
-    needs_segment,
+    needs_tools,
     needs_xatlas,
 )
 
@@ -107,7 +107,7 @@ def uvs(mesh):
 
 
 @needs_engine
-@needs_segment
+@needs_tools
 def test_the_dumbbell_splits_on_the_neck_and_welds_back(load_obj, unwrap, outputs):
     (dumbbell,) = load_obj("dumbbell")
     vertex_count = len(dumbbell.data.vertices)
@@ -142,7 +142,7 @@ def test_the_dumbbell_splits_on_the_neck_and_welds_back(load_obj, unwrap, output
 
 # symmetry stays on for the uv mirror after the unwrap
 @needs_xatlas
-@needs_segment
+@needs_tools
 def test_xatlas_splits_the_dumbbell_and_welds_back(load_obj, unwrap, outputs):
     (dumbbell,) = load_obj("dumbbell")
     vertex_count = len(dumbbell.data.vertices)
@@ -192,9 +192,7 @@ def test_cancel_stops_a_running_segmentation(load_obj, unwrap, outputs, monkeypa
     load_obj("dumbbell")
     # stands in for a segmentation that runs long
     stalled = [sys.executable, "-c", "import time; time.sleep(120)"]
-    monkeypatch.setattr(
-        addon.src.ops.start, "resolve_bundled_command", lambda name, label: stalled
-    )
+    monkeypatch.setattr(addon.src.ops.start, "tools_command", lambda: stalled)
     bpy.context.scene.uvgami.optcuts.mode = "ORGANIC"
     bpy.context.scene.uvgami.symmetry = False
     runs = addon.src.utils.paths.get_extension_dir_path() / "segment"
@@ -214,10 +212,10 @@ def test_a_missing_segment_binary_stops_the_unwrap(
 ):
     load_obj("dumbbell")
     monkeypatch.setattr(
-        addon.src.engines.bundled, "get_local_engine_path", lambda name: None
+        addon.src.utils.uvgami_tools, "get_local_engine_path", lambda name: None
     )
-    monkeypatch.setattr(addon.src.engines.bundled, "get_dir_path", lambda: tmp_path)
-    with pytest.raises(RuntimeError, match="Segmentation"):
+    monkeypatch.setattr(addon.src.utils.uvgami_tools, "get_dir_path", lambda: tmp_path)
+    with pytest.raises(RuntimeError, match="UVgami tools"):
         unwrap()
 
     assert outputs() == {}

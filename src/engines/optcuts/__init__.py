@@ -54,7 +54,6 @@ class OptcutsEngine(OptcutsInstall):
     supports_early_stop = True
     supports_import_uvs = True
     supports_proxy = True
-    supports_symmetry = True
 
     def draw_settings(self, layout, props):
         if not self.supports_hard_surface:

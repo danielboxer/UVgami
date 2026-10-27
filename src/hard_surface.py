@@ -15,6 +15,7 @@ from .utils.mesh import (
     vertex_position_array,
 )
 from .utils.paths import get_extension_dir_path, get_preferences
+from .utils.uvgami_tools import tools_command
 
 
 def optcuts_run(engine_args):
@@ -99,22 +100,12 @@ def apply_loop_uvs(mesh, uvs, faces):
     set_loop_uvs(mesh, coords)
 
 
-def hardsurface_command():
-    # imported here: engines imports this module back
-    from .engines.bundled import resolve_bundled_command
-
-    try:
-        return resolve_bundled_command("hardsurface", "Hard surface")
-    except RuntimeError as error:
-        raise EngineError(str(error)) from error
-
-
 # compute is bpy-free so a worker thread can run it, the exposure ray cast is not
 def preseed_work(obj, angle, split_target, engine_args, weights, surface_modes, plane):
     mesh = obj.data
     worker = WorkerProcess(
         preseed_job,
-        hardsurface_command(),
+        tools_command(),
         optcuts_run(engine_args),
         get_extension_dir_path() / "preseed",
         vertex_position_array(mesh),

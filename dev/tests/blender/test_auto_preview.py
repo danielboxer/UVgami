@@ -1,6 +1,6 @@
 import bpy
 import pytest
-from blender_fixtures import addon, needs_segment
+from blender_fixtures import addon, needs_tools
 
 auto_preview = addon.src.ops.auto_preview
 
@@ -22,7 +22,7 @@ def shape_colors(result):
     return {shape.color for shape in result.shapes}
 
 
-@needs_segment
+@needs_tools
 def test_preview_draws_the_region_borders(load_obj, preview):
     load_obj("dumbbell")
     bpy.context.scene.uvgami.optcuts.mode = "ORGANIC"

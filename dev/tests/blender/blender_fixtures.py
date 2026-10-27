@@ -21,9 +21,9 @@ needs_engine = pytest.mark.skipif(
     addon.src.utils.engine_binaries.get_local_engine_path("optcuts") is None,
     reason="no local optcuts binary, and downloading one would need the network",
 )
-needs_segment = pytest.mark.skipif(
-    addon.src.utils.engine_binaries.get_local_engine_path("segment") is None,
-    reason="no local segment binary, and no release exists to download",
+needs_tools = pytest.mark.skipif(
+    addon.src.utils.engine_binaries.get_local_engine_path("uvgami-tools") is None,
+    reason="no local uvgami-tools binary, and no release exists to download",
 )
 needs_xatlas = pytest.mark.skipif(
     addon.src.utils.engine_binaries.get_local_engine_path("xatlas") is None,

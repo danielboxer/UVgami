@@ -28,19 +28,31 @@ def plane_vertices(mesh, axis):
     return [v.index for v in mesh.vertices if abs(v.co[axis] - center) <= tolerance]
 
 
+def symmetric_axis(mesh, center):
+    mesh_arrays = addon.src.utils.mesh
+    return addon.src.seams.mirror.symmetric_axis(
+        addon.src.utils.uvgami_tools.tools_command(),
+        addon.src.job.mirror_workdir(),
+        mesh_arrays.vertex_position_array(mesh),
+        *mesh_arrays.face_vertex_arrays(mesh),
+        center,
+        1e-6,
+    )
+
+
 def test_auto_takes_the_first_axis_the_mesh_mirrors_across():
     bpy.ops.mesh.primitive_cube_add()
     cube = bpy.context.active_object
     center = mathutils.Vector((0, 0, 0))
-    assert addon.src.similar.symmetric_axis(cube.data, center)[:2] == ("X", True)
+    assert symmetric_axis(cube.data, center)[:2] == ("X", True)
 
     # a mesh that only mirrors across Y
     cube.data.vertices[0].co.x += 0.1
     cube.data.vertices[2].co.x += 0.1
-    assert addon.src.similar.symmetric_axis(cube.data, center)[:2] == ("Y", True)
+    assert symmetric_axis(cube.data, center)[:2] == ("Y", True)
 
     cube.data.vertices[0].co.x += 0.1
-    assert addon.src.similar.symmetric_axis(cube.data, center) is None
+    assert symmetric_axis(cube.data, center) is None
 
 
 def auto_plan(mesh):
