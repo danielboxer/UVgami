@@ -17,12 +17,11 @@ from ..seams import (
     flatten_distortion,
     island_groups,
     pair,
-    rectify_targets,
     signed_area,
-    split_moves,
     uv_island_groups,
     uv_tears,
 )
+from ..seams.island_repair import rectify_plans, split_moves
 from ..ui.panels import describe_settings, fix_settings
 from ..unwrap import Unwrap
 from ..utils.io import export_obj
@@ -37,7 +36,8 @@ from ..utils.mesh import (
     triangulate_mesh,
     vertex_positions,
 )
-from ..utils.paths import get_preferences, unused_input_path
+from ..utils.paths import get_extension_dir_path, get_preferences, unused_input_path
+from ..utils.uvgami_tools import tools_command
 
 # blender's default of 10 leaves folds
 REPAIR_ITERATIONS = 50
@@ -208,40 +208,41 @@ def read_mesh(mesh):
     return MeshReads(vertex_positions(mesh), faces, edges, uvs, seams, groups)
 
 
+def repair_workdir():
+    return get_extension_dir_path() / "repair"
+
+
 # returns the reads as they are after the moves
 def finish_preseed(obj, reads, ranges=None):
     mesh = obj.data
-    starts = loop_starts(mesh)
-    moves, seams, groups = split_moves(
+    if ranges is None:
+        ranges = [(0, len(reads.faces))]
+    split = split_moves(
+        tools_command(),
+        repair_workdir(),
         reads.coords,
         reads.faces,
         reads.uvs,
-        starts.tolist(),
         ranges,
-        reads.edges,
-        reads.seams,
-        reads.groups,
     )
-    if not moves:
+    if not len(split.moved_faces):
         return reads
+    loops = loop_starts(mesh)[split.moved_faces] + split.moved_corners
     coords = loop_uvs(mesh)
-    for loop_index, u, v in moves:
-        coords[loop_index] = (u, v)
+    coords[loops] = split.moved_uvs
     set_loop_uvs(mesh, coords)
 
     # blender stores uvs as float32
-    loops = numpy.fromiter((m[0] for m in moves), numpy.int64, len(moves))
     stored = coords[loops].astype(numpy.float32).astype(numpy.float64).tolist()
-    face_of = numpy.searchsorted(starts, loops, "right") - 1
-    corners = (loops - starts[face_of]).tolist()
     uvs = list(reads.uvs)
     copied = set()
-    for fi, corner, (u, v) in zip(face_of.tolist(), corners, stored):
+    moved = zip(split.moved_faces.tolist(), split.moved_corners.tolist(), stored)
+    for fi, corner, (u, v) in moved:
         if fi not in copied:
             uvs[fi] = list(uvs[fi])
             copied.add(fi)
         uvs[fi][corner] = (round(u, 6), round(v, 6))
-    return reads._replace(uvs=uvs, seams=seams, groups=groups)
+    return reads._replace(uvs=uvs, seams=reads.seams | split.cuts, groups=split.islands)
 
 
 def _fan_triangle_has_area(coords, face, i):
@@ -260,11 +261,11 @@ def _fan_triangle_has_area(coords, face, i):
 def rectify_islands(obj, reads):
     mesh = obj.data
     coords, faces, edges, uvs, seams, groups = reads
-    plans = rectify_targets(uvs, groups)
+    plans = rectify_plans(tools_command(), repair_workdir(), uvs, groups)
     if not plans:
         return
     before_distortion = [
-        flatten_distortion(coords, faces, uvs, group) for group, _, _ in plans
+        flatten_distortion(coords, faces, uvs, plan.group) for plan in plans
     ]
 
     # the unwrap splits charts by seam marks, not by the uv map
@@ -272,18 +273,16 @@ def rectify_islands(obj, reads):
     bm = new_bmesh(obj)
     uvl = bm.loops.layers.uv.active
     bm.faces.ensure_lookup_table()
-    for group, targets, inner in plans:
-        for fi in group:
+    for plan in plans:
+        for fi in plan.group:
             for corner, loop in enumerate(bm.faces[fi].loops):
-                target = targets.get(uvs[fi][corner])
-                if target is None and inner is not None:
-                    target = inner.get(uvs[fi][corner])
+                target = plan.targets.get((fi, corner))
                 if target is not None:
                     loop[uvl].uv = target
-                    loop[uvl].pin_uv = inner is None
+                    loop[uvl].pin_uv = plan.pinned
     set_bmesh(bm, obj)
 
-    solver_faces = [fi for group, _, inner in plans if inner is None for fi in group]
+    solver_faces = [fi for plan in plans if plan.pinned for fi in plan.group]
     if solver_faces:
         unwrap(obj, solver_faces, REPAIR_ITERATIONS, method="CONFORMAL")
         unwrap(obj, solver_faces, REPAIR_ITERATIONS)
@@ -291,7 +290,8 @@ def rectify_islands(obj, reads):
     bm = new_bmesh(obj)
     uvl = bm.loops.layers.uv.active
     bm.faces.ensure_lookup_table()
-    for (group, _, _), before in zip(plans, before_distortion):
+    for plan, before in zip(plans, before_distortion):
+        group = plan.group
         total = sum(signed_area(uvs[fi]) for fi in group)
         orientation = 1 if total >= 0 else -1
         area_before = abs(total)

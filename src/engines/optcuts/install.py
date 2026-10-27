@@ -8,7 +8,7 @@ from ..binary_engine import (
 )
 
 # must match the optcuts engine VERSION
-OPTCUTS_VERSION = "1.23.0"
+OPTCUTS_VERSION = "1.23.1"
 OPTCUTS_MINIMUM_VERSION = "1.23.0"
 OPTCUTS_ARCHIVE_SHA256S = {
     "windows": "924cac80bcaa9f3fdf82fc7d75522110441efa7c43babe09e2488e5e4066a0cd",

@@ -10,12 +10,13 @@ from seams import (
     pair,
     preseed_job,
 )
-from seams.islands import SPLIT_TARGET
 from seams.mirror import mirror_partners
 from seams.preseed import submesh
 
 # the addon's balanced bound and default seam weight
 ENGINE_ARGS = ["-u", "4.2", "-s", "100"]
+# the balanced priority's split target
+SPLIT_TARGET = 0.5
 
 
 def test_submesh_compacts_the_subset(unit_cube):

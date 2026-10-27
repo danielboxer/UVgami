@@ -383,6 +383,44 @@ def test_optcuts_nocut_keeps_hole_chart(tmp_path, engine_binary):
     assert len(uvs) == len(verts)
 
 
+# float noise puts the pieces of each straight end a hair off one line
+@pytest.mark.smoke
+def test_optcuts_keeps_a_flat_fan_with_straight_ends(tmp_path, engine_binary):
+    input_dir, out_dir = make_dirs(tmp_path)
+    obj = input_dir / "fan.obj"
+    rows, cols, span = 3, 12, math.radians(315.5)
+    verts = []
+    for c in range(cols + 1):
+        angle = span * c / cols
+        for r in range(rows + 1):
+            radius = 1.0 + 0.1 * r
+            verts.append((radius * math.cos(angle), radius * math.sin(angle), 0.0))
+    faces = []
+    for c in range(cols):
+        for r in range(rows):
+            a = c * (rows + 1) + r
+            faces.append((a, a + 1, a + rows + 2))
+            faces.append((a, a + rows + 2, a + rows + 1))
+    with obj.open("w") as f:
+        for x, y, z in verts:
+            f.write(f"v {x!r} {y!r} {z!r}\n")
+        for x, y, _ in verts:
+            f.write(f"vt {x!r} {y!r}\n")
+        for face in faces:
+            f.write("f " + " ".join(f"{c + 1}/{c + 1}" for c in face) + "\n")
+
+    assert run_engine(engine_binary("optcuts"), obj, out_dir).returncode == 0
+
+    # the input map is already isometric, so a kept map comes back only scaled
+    uvs, vt_map = read_output(out_dir / "fan.obj", faces)
+    inputs = [math.dist(verts[0][:2], verts[t][:2]) for t in range(len(verts))]
+    outputs = [math.dist(uvs[vt_map[0]], uvs[vt_map[t]]) for t in range(len(verts))]
+    scale = max(outputs) / max(inputs)
+    assert max(abs(o - scale * i) for o, i in zip(outputs, inputs)) < 1e-5 * max(
+        outputs
+    )
+
+
 # drag one interior uv far away, inverting its faces
 def drag_center_uv(obj, verts):
     lines = obj.read_text().splitlines()

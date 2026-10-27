@@ -9,36 +9,23 @@ import pytest
 
 from seams import (
     SURFACE_MODE_CODES,
-    TURN_COST,
-    crease_relief,
-    cross,
-    crosses,
-    cut_path,
     face_edges,
     flatten_distortion,
-    island_eulers,
     island_groups,
     island_layout,
-    island_ruined,
     islands_overlap,
     pair,
-    path_cost,
-    rectify_targets,
     restriction_weights,
     signed_area,
-    split_islands,
-    split_moves,
     uv_area_fit,
     uv_fit,
     uv_island_groups,
     uv_tears,
-    uv_topology,
     uvs_collapsed,
 )
 from seams.cuts import VISIBILITY_SHARE
 from seams.engine_run import write_obj
-from seams.islands import absorb_fragments, lazy_relief, split_pieces
-from seams.mesh import weighted_normals
+from seams.island_repair import rectify_plans, split_moves
 from seams.preseed import _write_weights, hard_faces
 from seams.segmentation import classify_job
 
@@ -75,6 +62,30 @@ def exe_seams(engine_binary):
                 tuple(int(v) for v in line.split())
                 for line in out.read_text().splitlines()
             }
+
+    return run
+
+
+# the split pass over the whole mesh as one range unless ranges are given
+@pytest.fixture
+def split(engine_binary, tmp_path):
+    command = [engine_binary("uvgami-tools")]
+
+    def run(verts, faces, uvs, ranges=None):
+        if ranges is None:
+            ranges = [(0, len(faces))]
+        return split_moves(command, tmp_path, verts, faces, uvs, ranges)
+
+    return run
+
+
+# plans for the islands of the uv map
+@pytest.fixture
+def rectify(engine_binary, tmp_path):
+    command = [engine_binary("uvgami-tools")]
+
+    def run(faces, uvs):
+        return rectify_plans(command, tmp_path, uvs, uv_groups(faces, uvs))
 
     return run
 
@@ -198,12 +209,6 @@ def test_paint_cannot_block_a_cut_that_has_to_happen(exe_seams):
     assert len(exe_seams(verts, faces, weights=painted)) == 1
 
 
-def folded_pair(z):
-    verts = [[0, 0, 0], [0, 1, 0], [-1, 0.5, 0], [1, 0.5, z]]
-    faces = [[0, 1, 2], [1, 0, 3]]
-    return verts, faces
-
-
 def test_restriction_weights_take_the_larger_of_paint_and_exposure():
     exposure = {0: 1.0, 1: 0.5, 2: 0.0}
     painted = {1: 1.0, 3: 0.2}
@@ -225,95 +230,6 @@ def test_weights_sidecar_lists_vertex_weight_pairs(tmp_path):
     assert not path.with_name("none_weights").exists()
 
 
-def test_crease_relief_orders_concave_convex_flat():
-    def relief_at(z):
-        verts, faces = folded_pair(z)
-        weighted, edges = weighted_normals(verts, faces), face_edges(faces)
-        relief = crease_relief(verts, faces, weighted, edges)
-        return relief.get(pair(0, 1), 1.0)
-
-    concave, convex, flat = relief_at(1.0), relief_at(-1.0), relief_at(0.0)
-    assert concave < convex < flat == 1.0
-
-
-def folded_flap():
-    rows = 7
-    verts = (
-        [[0, y, 0] for y in range(rows)]
-        + [[1, y, 0] for y in range(rows)]
-        + [[1, y, 1] for y in range(rows)]
-    )
-    faces = []
-    for y in range(rows - 1):
-        faces.append([y, rows + y, rows + y + 1, y + 1])
-        faces.append([rows + y, 2 * rows + y, 2 * rows + y + 1, rows + y + 1])
-    return verts, faces
-
-
-def test_cut_path_rides_the_crease():
-    # the fold route is 8 long against 6 direct
-    verts, faces = folded_flap()
-    weighted, edges = weighted_normals(verts, faces), face_edges(faces)
-    relief = crease_relief(verts, faces, weighted, edges)
-    adjacent = vertex_adjacency(faces)
-
-    plain = cut_path(verts, adjacent, {0}, {6}, relief={})
-    assert all(verts[v][0] == 0 for v in plain)
-
-    creased = cut_path(verts, adjacent, {0}, {6}, relief=relief)
-    assert sum(1 for v in creased if verts[v][0] == 1 and verts[v][2] == 0) == 7
-
-
-def rook_grid():
-    verts = [(x, y, 0.0) for y in range(3) for x in range(3)]
-    adjacent = collections.defaultdict(set)
-    for y in range(3):
-        for x in range(3):
-            a = 3 * y + x
-            if x < 2:
-                adjacent[a].add(a + 1)
-                adjacent[a + 1].add(a)
-            if y < 2:
-                adjacent[a].add(a + 3)
-                adjacent[a + 3].add(a)
-    return verts, adjacent
-
-
-def turn_count(verts, path):
-    turns = 0
-    for u, v, w in zip(path, path[1:], path[2:]):
-        a = [verts[v][i] - verts[u][i] for i in range(3)]
-        b = [verts[w][i] - verts[v][i] for i in range(3)]
-        if cross(a, b) != [0, 0, 0]:
-            turns += 1
-    return turns
-
-
-def test_dull_cut_is_a_line():
-    # every corner-to-corner path is 4 long
-    verts, adjacent = rook_grid()
-    path = cut_path(verts, adjacent, {0}, {8}, relief={})
-    assert len(path) == 5
-    assert turn_count(verts, path) == 1
-
-
-def test_creased_staircase_beats_the_line():
-    # crease edges are exempt from the turn penalty and discounted
-    verts, adjacent = rook_grid()
-    stairs = [(0, 1), (1, 4), (4, 5), (5, 8)]
-    relief = {pair(a, b): 0.85 for a, b in stairs}
-    path = cut_path(verts, adjacent, {0}, {8}, relief=relief)
-    assert set(path) == {0, 1, 4, 5, 8}
-
-
-def test_path_cost_prices_turns():
-    verts, _ = rook_grid()
-    straight = path_cost(verts, [0, 1, 2], relief={})
-    bent = path_cost(verts, [0, 1, 4], relief={})
-    assert straight == 2.0
-    assert bent == 2.0 + TURN_COST * 0.5
-
-
 def strip_island(quads, scale=1.0, angle=0.0):
     points, faces = [], []
     cos, sin = math.cos(angle), math.sin(angle)
@@ -328,10 +244,6 @@ def strip_island(quads, scale=1.0, angle=0.0):
     uvs = [[points[v] for v in f] for f in faces]
     verts = [(x, y, 0.0) for x, y in points]
     return verts, faces, uvs
-
-
-def fold_face(uvs, fi):
-    uvs[fi] = [uvs[fi][1], uvs[fi][0], uvs[fi][2]]
 
 
 def island_count(faces, seams):
@@ -363,117 +275,88 @@ def merge_islands(a, b):
     return verts_a + verts_b, faces, uvs_a + uvs_b
 
 
-def test_clean_long_island_splits_for_packing():
+@pytest.mark.smoke
+def test_clean_long_island_splits_for_packing(split):
     # flip-free, but far longer than the square its own uv area needs
     verts, faces, uvs = strip_island(30)
-    extra = split_islands(verts, faces, set(), uvs)
-    assert island_count(faces, extra) == 4
+    cuts = split(verts, faces, uvs).cuts
+    assert island_count(faces, cuts) == 4
+    # each cut is one rung straight across the strip
+    assert len(cuts) == 3
+    assert all(verts[a][0] == verts[b][0] for a, b in cuts)
 
 
-def test_clean_short_strip_is_not_split():
+@pytest.mark.smoke
+def test_clean_short_strip_is_not_split(split):
     # a thin strip next to a much bigger island, the kind a bevel band leaves
     verts, faces, uvs = merge_islands(
         strip_island(30, scale=1 / 200), strip_island(2, scale=10.0)
     )
-    assert split_islands(verts, faces, set(), uvs) == set()
+    assert split(verts, faces, uvs).cuts == set()
 
 
-def test_clean_compact_island_is_not_split():
+@pytest.mark.smoke
+def test_each_range_splits_at_its_own_scale(split):
+    # the strip is under half the cap the bigger island sets, but past its own
+    verts, faces, uvs = merge_islands(strip_island(30), strip_island(2, scale=40.0))
+    assert split(verts, faces, uvs).cuts == set()
+    cuts = split(verts, faces, uvs, [(0, 60), (60, len(faces))]).cuts
+    assert island_count(faces, cuts) == 5
+
+
+@pytest.mark.smoke
+def test_clean_compact_island_is_not_split(split):
     verts, faces, uvs = strip_island(4)
-    assert split_islands(verts, faces, set(), uvs) == set()
+    assert split(verts, faces, uvs).cuts == set()
 
 
-# packing is blind to rotation and scale, so each placement slices the same
-@pytest.mark.parametrize(
-    "placement",
-    [{}, {"angle": 0.7}, {"scale": 1 / 200}],
-    ids=["plain", "rotated", "scaled"],
-)
-def test_folded_long_island_is_split_into_even_pieces(placement):
-    verts, faces, uvs = strip_island(30, **placement)
-    fold_face(uvs, 20)
-    extra = split_islands(verts, faces, set(), uvs)
-    # 29.3 long against a cap of 7.7, so 4 slices, each under the cap
-    assert island_count(faces, extra) == 4
-
-
-def test_split_accepts_shared_edges_and_relief_cache():
-    # a caller scanning a joined mesh passes one edge map and one relief cache
-    verts, faces, uvs = strip_island(30)
-    fold_face(uvs, 20)
-    edges = face_edges(faces)
-    groups = island_groups(faces, set(), edges)
-    cut_relief = lazy_relief(verts, faces, edges)
-    extra = split_islands(verts, faces, set(), uvs, groups, edges, cut_relief)
-    assert extra == split_islands(verts, faces, set(), uvs)
-    assert cut_relief.cache_info().currsize
-
-
-def test_split_moves_part_the_sliced_strips():
+@pytest.mark.smoke
+def test_split_moves_part_the_sliced_strips(split):
     # the whole scan on plain data, the long strip slices into 4
     verts, faces, uvs = strip_island(30)
-    starts = []
-    base = 0
-    for face in faces:
-        starts.append(base)
-        base += len(face)
     edges = face_edges(faces)
     assert len(uv_island_groups(faces, uvs, edges)) == 1
 
-    result = split_moves(verts, faces, uvs, starts)
-    moves, seams, pieces = result
-    assert moves
-    face_of = {}
-    for face_index, start in enumerate(starts):
-        for corner in range(len(faces[face_index])):
-            face_of[start + corner] = (face_index, corner)
+    result = split(verts, faces, uvs)
+    assert len(result.moved_faces)
     moved = [list(corners) for corners in uvs]
-    for loop_index, u, v in moves:
-        face_index, corner = face_of[loop_index]
-        moved[face_index][corner] = (u, v)
+    moves = zip(
+        result.moved_faces.tolist(),
+        result.moved_corners.tolist(),
+        result.moved_uvs.tolist(),
+    )
+    for face_index, corner, uv in moves:
+        moved[face_index][corner] = tuple(uv)
     after = uv_island_groups(faces, moved, edges)
     assert len(after) == 4
-    assert seams == uv_tears(faces, moved)
-    assert sorted(pieces) == sorted(after)
-
-    # one range covering everything scans exactly like the whole-mesh path
-    assert split_moves(verts, faces, uvs, starts, [(0, len(faces))]) == result
+    assert uv_tears(faces, uvs) | result.cuts == uv_tears(faces, moved)
+    assert sorted(result.islands) == sorted(after)
 
 
-def test_island_eulers_match_uv_topology():
-    verts, faces, uvs = strip_island(6)
-    fold_face(uvs, 2)
-    annulus_verts, annulus_faces, annulus_uvs = annulus_island()
-    offset = len(verts)
-    faces = faces + [[v + offset for v in face] for face in annulus_faces]
-    uvs = uvs + annulus_uvs
-    edges = face_edges(faces)
-    seams = {pair(4, 5)}
-    groups = island_groups(faces, seams, edges)
-    assert len(groups) == 3
-    expected = [uv_topology(group, faces, edges, seams)[0] for group in groups]
-    assert island_eulers(groups, faces, seams) == expected
-    assert sorted(expected) == [0, 1, 1]
-
-    # enough corners that a corner pair key passes int32
-    verts, faces, uvs = strip_island(15000)
-    assert island_eulers([list(range(len(faces)))], faces, set()) == [1]
+# the engine re-cuts a ruined island itself
+@pytest.mark.smoke
+def test_folded_island_is_left_to_the_engine(split):
+    verts, faces, uvs = strip_island(30)
+    assert split(verts, faces, uvs).cuts
+    # the top vertex at x 20 drops below the strip, every corner of it at once
+    for face, corners in zip(faces, uvs):
+        for i, v in enumerate(face):
+            if v == 41:
+                corners[i] = (20.0, -1.0)
+    result = split(verts, faces, uvs)
+    assert result.cuts == set()
+    assert not len(result.moved_faces)
 
 
-def test_folded_compact_island_is_halved():
-    # not a strip, but island_ruined all the same, so it still gets one cut
-    verts, faces, uvs = strip_island(4)
-    fold_face(uvs, 2)
-    extra = split_islands(verts, faces, set(), uvs)
-    assert island_count(faces, extra) == 2
-
-
-def test_halving_cut_takes_the_shortest_path():
-    # 5 quads put the halving line mid-quad, where the raw bin cut takes the diagonal
-    verts, faces, uvs = strip_island(5)
-    fold_face(uvs, 2)
-    extra = split_islands(verts, faces, set(), uvs)
-    assert extra in ({pair(4, 5)}, {pair(6, 7)})
+@pytest.mark.smoke
+def test_island_with_a_hole_is_left_to_the_engine(split):
+    verts, faces, uvs = grid_island(30, 3)
+    assert split(verts, faces, uvs).cuts
+    hole = [faces.index([47, 48, 79]), faces.index([47, 79, 78])]
+    for fi in sorted(hole, reverse=True):
+        del faces[fi]
+        del uvs[fi]
+    assert split(verts, faces, uvs).cuts == set()
 
 
 def tube_island(rows, cols, shear):
@@ -507,10 +390,11 @@ def tube_island(rows, cols, shear):
     return verts, faces, uvs, seams, row_of
 
 
-def test_sheared_tube_splits_into_rings_not_slivers():
+@pytest.mark.smoke
+def test_sheared_tube_splits_into_rings_not_slivers(split):
     # 40 rows of 6 unit quads, sheared so the seam's two sides sit 3 rows apart
     verts, faces, uvs, seams, row_of = tube_island(40, 6, 0.5)
-    extra = split_islands(verts, faces, seams, uvs)
+    extra = split(verts, faces, uvs).cuts
     assert island_count(faces, seams | extra) == 2
 
     groups = island_groups(faces, seams | extra, face_edges(faces))
@@ -559,10 +443,11 @@ def cone_island(rows, cols, sector, inner):
     return verts, faces, uvs, seams, col_of
 
 
-def test_cone_fan_is_cut_along_radii():
+@pytest.mark.smoke
+def test_cone_fan_is_cut_along_radii(split):
     # a cone frustum unrolls into a 300 degree fan of uv area 199 against a cap of 20
     verts, faces, uvs, seams, col_of = cone_island(4, 48, 5 * math.pi / 3, 7.5)
-    extra = split_islands(verts, faces, seams, uvs)
+    extra = split(verts, faces, uvs).cuts
     assert island_count(faces, seams | extra) == 3
 
     remaining = set(extra)
@@ -581,57 +466,6 @@ def test_cone_fan_is_cut_along_radii():
         spans.append(max(cols_cut) - min(cols_cut))
     assert len(spans) == 2
     assert max(spans) <= 1
-
-
-def test_boxed_in_fragment_rejoins_one_side():
-    # a chain of 9 faces with face 4 boxed in alone
-    links = {f: [] for f in range(9)}
-    edge_names = iter("abcdefgh")
-    for f in range(8):
-        name = next(edge_names)
-        links[f].append((f + 1, name))
-        links[f + 1].append((f, name))
-    links[4].append((5, "x"))
-    links[5].append((4, "x"))
-    cuts = {"d", "e", "x"}
-    pieces = split_pieces(list(range(9)), links, cuts)
-    assert sorted(len(p) for p in pieces) == [1, 4, 4]
-    pieces, cuts = absorb_fragments(pieces, links, cuts, lambda f: 1.0, 2.0)
-    assert cuts == {"d"}
-    assert sorted(sorted(p) for p in pieces) == [[0, 1, 2, 3], [4, 5, 6, 7, 8]]
-
-
-def test_split_pieces_among_tiny_pieces_keep_their_cut():
-    # halving a 4-face island leaves two pieces under the floor
-    links = {f: [] for f in range(4)}
-    for f, name in zip(range(3), "abc"):
-        links[f].append((f + 1, name))
-        links[f + 1].append((f, name))
-    cuts = {"b"}
-    pieces = split_pieces(list(range(4)), links, cuts)
-    pieces, cuts = absorb_fragments(pieces, links, cuts, lambda f: 1.0, 3.0)
-    assert cuts == {"b"}
-    assert len(pieces) == 2
-
-
-def test_large_area_fragment_keeps_its_cut():
-    # a one-face piece whose face is big is a packable island, not a crumb
-    links = {f: [] for f in range(9)}
-    edge_names = iter("abcdefgh")
-    for f in range(8):
-        name = next(edge_names)
-        links[f].append((f + 1, name))
-        links[f + 1].append((f, name))
-    cuts = {"d", "e"}
-    pieces = split_pieces(list(range(9)), links, cuts)
-    assert sorted(len(p) for p in pieces) == [1, 4, 4]
-
-    def area(f):
-        return 10.0 if f == 4 else 1.0
-
-    pieces, cuts = absorb_fragments(pieces, links, cuts, area, 2.0)
-    assert cuts == {"d", "e"}
-    assert sorted(len(p) for p in pieces) == [1, 4, 4]
 
 
 def blob_strip_island(blob, strip):
@@ -655,32 +489,36 @@ def blob_strip_island(blob, strip):
     return verts, faces, uvs
 
 
-def test_long_island_cut_at_the_feature_neck():
+@pytest.mark.smoke
+def test_long_island_cut_at_the_feature_neck(split):
     # a 20x20 blob with a 20x1 tail, the width step at the join is ~20x
     verts, faces, uvs = blob_strip_island(20, 20)
-    extra = split_islands(verts, faces, set(), uvs)
+    extra = split(verts, faces, uvs).cuts
     groups = sorted(island_groups(faces, extra, face_edges(faces)), key=len)
     assert len(groups) == 2
     # the small piece is the tail, give or take a slab of blob columns
     assert 15 <= len(groups[0]) <= 60
 
 
-def test_neck_scan_needs_a_long_island():
+@pytest.mark.smoke
+def test_neck_scan_needs_a_long_island(split):
     # the same blob and tail next to a much larger island, now under half the cap
     verts, faces, uvs = merge_islands(
         blob_strip_island(20, 20), strip_island(1, scale=60.0)
     )
-    assert split_islands(verts, faces, set(), uvs) == set()
+    assert split(verts, faces, uvs).cuts == set()
 
 
-def test_neck_and_fill_compose():
+@pytest.mark.smoke
+def test_neck_and_fill_compose(split):
     # a 45 long tail, the tail piece alone is still past the cap
     verts, faces, uvs = blob_strip_island(20, 45)
-    extra = split_islands(verts, faces, set(), uvs)
+    extra = split(verts, faces, uvs).cuts
     assert island_count(faces, extra) == 3
 
 
-def test_second_neck_found_on_the_piece():
+@pytest.mark.smoke
+def test_second_neck_found_on_the_piece(split):
     # a second 12x12 blob on the far end of the tail
     verts, faces, uvs = blob_strip_island(20, 20)
 
@@ -697,28 +535,31 @@ def test_second_neck_found_on_the_piece():
         for y in range(12):
             faces.append([vid(x, y), vid(x + 1, y), vid(x + 1, y + 1), vid(x, y + 1)])
     uvs = [[(verts[v][0], verts[v][1]) for v in f] for f in faces]
-    extra = split_islands(verts, faces, set(), uvs)
+    extra = split(verts, faces, uvs).cuts
     groups = sorted(island_groups(faces, extra, face_edges(faces)), key=len)
     assert [len(g) for g in groups] == [20, 144, 400]
 
 
-def test_split_scan_restricted_to_given_groups():
+# an island belongs to the range holding its lowest face
+@pytest.mark.smoke
+def test_split_scans_only_islands_in_a_range(split):
     verts, faces, uvs = strip_island(30)
-    fold_face(uvs, 20)
-    assert split_islands(verts, faces, set(), uvs, []) == set()
-    everything = [list(range(len(faces)))]
-    assert split_islands(verts, faces, set(), uvs, everything)
+    assert split(verts, faces, uvs, []).cuts == set()
+    assert split(verts, faces, uvs, [(1, len(faces))]).cuts == set()
+    assert split(verts, faces, uvs, [(0, 1)]).cuts
 
 
-def test_split_respects_existing_seams():
-    # a seam already cuts the strip in half, each folded island is 14.3 to a 7.7 cap
-    verts, faces, uvs = strip_island(30)
-    fold_face(uvs, 10)
-    fold_face(uvs, 50)
-    mid = pair(30, 31)
-    extra = split_islands(verts, faces, {mid}, uvs)
+@pytest.mark.smoke
+def test_split_respects_existing_seams(split):
+    # a uv tear already cuts a 60 long strip in half
+    verts, faces, uvs = strip_island(60)
+    for fi in range(60, 120):
+        uvs[fi] = [(u + 5.0, v) for u, v in uvs[fi]]
+    mid = pair(60, 61)
+    assert uv_tears(faces, uvs) == {mid}
+    extra = split(verts, faces, uvs).cuts
     assert mid not in extra
-    assert island_count(faces, extra | {mid}) == 4
+    assert island_count(faces, extra | {mid}) == 6
 
 
 def test_uv_islands_follow_the_uv_map():
@@ -732,12 +573,12 @@ def test_uv_islands_follow_the_uv_map():
     assert sorted(len(g) for g in groups) == [4, 4]
 
 
-def vertex_adjacency(faces):
-    adjacent = collections.defaultdict(set)
-    for a, b in face_edges(faces):
-        adjacent[a].add(b)
-        adjacent[b].add(a)
-    return adjacent
+# def vertex_adjacency(faces):
+#     adjacent = collections.defaultdict(set)
+#     for a, b in face_edges(faces):
+#         adjacent[a].add(b)
+#         adjacent[b].add(a)
+#     return adjacent
 
 
 # def test_snap_paths_redraws_a_cut_on_the_dense_mesh():
@@ -846,56 +687,6 @@ def annulus_island():
         del faces[fi]
         del uvs[fi]
     return verts, faces, uvs
-
-
-def test_uv_topology_reads_the_unwrap_not_the_mesh():
-    verts, faces, uvs = strip_island(4)
-    edges = face_edges(faces)
-    ec, loops = uv_topology(list(range(len(faces))), faces, edges, set())
-    assert ec == 1 and len(loops) == 1
-    # a seam splits corners apart: still one disk per side of the cut
-    seams = {pair(4, 5)}
-    for group in island_groups(faces, seams, edges):
-        ec, loops = uv_topology(group, faces, edges, seams)
-        assert ec == 1 and len(loops) == 1
-
-
-def test_annulus_island_is_ruined_and_opened_not_split():
-    verts, faces, uvs = annulus_island()
-    edges = face_edges(faces)
-    group = list(range(len(faces)))
-    ec, loops = uv_topology(group, faces, edges, set())
-    assert ec == 0 and len(loops) == 2
-    assert island_ruined(group, faces, uvs, edges, set())
-
-    extra = split_islands(verts, faces, set(), uvs)
-    assert extra
-    # opened, not split: still one island, and a disk once the cut is a seam
-    assert island_count(faces, extra) == 1
-    ec, loops = uv_topology(group, faces, edges, extra)
-    assert ec == 1 and len(loops) == 1
-
-
-def test_slit_sides_crossing_counts_as_ruined():
-    # a dangling seam between two interior verts makes a slit
-    verts, faces, uvs = grid_island(3, 2)
-    edges = face_edges(faces)
-    seams = {pair(5, 6)}
-    group = list(range(len(faces)))
-    below = faces.index([1, 6, 5])
-    above = faces.index([5, 6, 10])
-    assert not island_ruined(group, faces, uvs, edges, seams)
-    uvs[below] = [(1.0, 0.0), (1.8, 0.85), (1.2, 0.85)]
-    uvs[above] = [(1.4, 0.7), (1.6, 1.0), (2.0, 2.0)]
-    assert island_ruined(group, faces, uvs, edges, seams)
-
-
-def test_crosses_includes_collinear_overlap():
-    # the branch a naive segment test misses
-    assert crosses((0, 0), (2, 0), (1, -1), (1, 1))
-    assert not crosses((0, 0), (2, 0), (0, 1), (2, 1))
-    assert crosses((0, 0), (2, 0), (3, 0), (1, 0))
-    assert not crosses((0, 0), (2, 0), (3, 0), (5, 0))
 
 
 def sphere(rings=12, sides=24):
@@ -1053,6 +844,15 @@ def uv_groups(faces, uvs):
     return uv_island_groups(faces, uvs, face_edges(faces))
 
 
+# a uv edge only one face uses is on the outline
+def outline_points(uvs):
+    counts = collections.Counter()
+    for corners in uvs:
+        for a, b in zip(corners, corners[1:] + corners[:1]):
+            counts[frozenset((a, b))] += 1
+    return {point for edge, count in counts.items() if count == 1 for point in edge}
+
+
 def target_box(targets):
     xs = [p[0] for p in targets.values()]
     ys = [p[1] for p in targets.values()]
@@ -1067,7 +867,8 @@ def on_perimeter(point, box, tol=1e-6):
     return inside and edge
 
 
-def test_rectify_straightens_a_wavy_strip():
+@pytest.mark.smoke
+def test_rectify_straightens_a_wavy_strip(rectify):
     verts, faces, uvs = grid_island(8, 1)
 
     def wobble(uv):
@@ -1076,19 +877,19 @@ def test_rectify_straightens_a_wavy_strip():
         return (x, y + lean) if y in (0.0, 1.0) else uv
 
     uvs = [[wobble(uv) for uv in face] for face in uvs]
-    plans = rectify_targets(uvs, uv_groups(faces, uvs))
+    plans = rectify(faces, uvs)
     assert len(plans) == 1
-    group, targets, inner = plans[0]
-    assert sorted(group) == list(range(len(faces)))
-    box = target_box(targets)
-    assert all(on_perimeter(t, box) for t in targets.values())
+    plan = plans[0]
+    assert sorted(plan.group) == list(range(len(faces)))
+    box = target_box(plan.targets)
+    assert all(on_perimeter(t, box) for t in plan.targets.values())
     corners = [(box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])]
     hits = sum(
-        1 for c in corners if any(math.dist(c, t) < 1e-6 for t in targets.values())
+        1 for c in corners if any(math.dist(c, t) < 1e-6 for t in plan.targets.values())
     )
     assert hits == 4
     # the wavy long sides actually moved onto the straight edges
-    assert any(math.dist(p, t) > 0.01 for p, t in targets.items())
+    assert any(math.dist(uvs[f][c], t) > 0.01 for (f, c), t in plan.targets.items())
 
 
 def arc_island(radius=2.0, width=0.5, span=240, segments=24, rows=2):
@@ -1108,22 +909,25 @@ def arc_island(radius=2.0, width=0.5, span=240, segments=24, rows=2):
     return faces, uvs
 
 
-def test_rectify_straightens_a_curled_strip():
+@pytest.mark.smoke
+def test_rectify_straightens_a_curled_strip(rectify):
     radius, width, span, segments = 2.0, 0.5, 240, 24
     faces, uvs = arc_island(radius, width, span, segments)
-    plans = rectify_targets(uvs, uv_groups(faces, uvs))
+    plans = rectify(faces, uvs)
     assert len(plans) == 1
-    _, targets, inner = plans[0]
+    plan = plans[0]
+    targets = list(plan.targets.values())
     # the chord-based box fit reads a 240 degree curl far shorter than its spine
     spine = math.radians(span) * radius
     diagonal = math.sqrt(spine**2 + width**2)
-    reach = max(math.dist(a, b) for a in targets.values() for b in targets.values())
+    reach = max(math.dist(a, b) for a in targets for b in targets)
     assert abs(reach - diagonal) / diagonal < 0.05
     # the mid ring rides along, unrolled evenly down the rectangle's middle
-    assert inner
+    assert not plan.pinned
+    placed = {uvs[f][c]: t for (f, c), t in plan.targets.items()}
     step = spine / segments
     mids = [
-        inner[
+        placed[
             (
                 radius * math.cos(math.radians(span) * k / segments),
                 radius * math.sin(math.radians(span) * k / segments),
@@ -1135,16 +939,18 @@ def test_rectify_straightens_a_curled_strip():
         assert 0.8 * step < math.dist(a, b) < 1.2 * step
 
 
-def test_rectify_skips_a_blob():
+@pytest.mark.smoke
+def test_rectify_skips_a_blob(rectify):
     points = [(0.0, 0.0)] + [
         (math.cos(a * math.pi / 3), math.sin(a * math.pi / 3)) for a in range(6)
     ]
     faces = [(0, i + 1, (i + 1) % 6 + 1) for i in range(6)]
     uvs = [[points[v] for v in face] for face in faces]
-    assert rectify_targets(uvs, uv_groups(faces, uvs)) == []
+    assert rectify(faces, uvs) == []
 
 
-def test_rectify_admits_a_toothed_strip_by_its_boundary():
+@pytest.mark.smoke
+def test_rectify_admits_a_toothed_strip_by_its_boundary(rectify):
     # deep teeth push the strip under the share gate
     verts, faces, uvs = grid_island(12, 1)
 
@@ -1154,28 +960,34 @@ def test_rectify_admits_a_toothed_strip_by_its_boundary():
         return (x, y + lean) if y in (0.0, 1.0) else uv
 
     uvs = [[tooth(uv) for uv in face] for face in uvs]
-    plans = rectify_targets(uvs, uv_groups(faces, uvs))
+    plans = rectify(faces, uvs)
     assert len(plans) == 1
-    _, targets, inner = plans[0]
-    box = target_box(targets)
-    assert all(on_perimeter(t, box) for t in targets.values())
+    box = target_box(plans[0].targets)
+    assert all(on_perimeter(t, box) for t in plans[0].targets.values())
     assert box[2] - box[0] > 14
 
 
-def test_rectify_reaches_islands_bordering_their_own_cut():
+@pytest.mark.smoke
+def test_rectify_reaches_islands_bordering_their_own_cut(rectify):
     # a cut open tube carries two uvs on every cut vertex
     verts, faces, uvs, seams, row_of = tube_island(6, 8, 0.0)
-    plans = rectify_targets(uvs, uv_groups(faces, uvs))
+    plans = rectify(faces, uvs)
     assert len(plans) == 1
-    group, targets, inner = plans[0]
-    assert sorted(group) == list(range(len(faces)))
-    box = target_box(targets)
-    assert all(on_perimeter(t, box) for t in targets.values())
+    plan = plans[0]
+    assert sorted(plan.group) == list(range(len(faces)))
+    outline = {
+        corner: target
+        for corner, target in plan.targets.items()
+        if uvs[corner[0]][corner[1]] in outline_points(uvs)
+    }
+    box = target_box(outline)
+    assert all(on_perimeter(t, box) for t in outline.values())
 
 
-def test_rectify_skips_an_island_with_a_hole():
+@pytest.mark.smoke
+def test_rectify_skips_an_island_with_a_hole(rectify):
     verts, faces, uvs = annulus_island()
-    assert rectify_targets(uvs, uv_groups(faces, uvs)) == []
+    assert rectify(faces, uvs) == []
 
 
 FLAT_QUAD_VERTS = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)]
