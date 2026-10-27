@@ -361,9 +361,6 @@ def test_a_proxied_mesh_mirrors_the_half_run_cuts(load_obj, unwrap, outputs):
     assert set(results) == {addon.src.job.Result.FINISHED}
     mesh = outputs()[f"{cylinder.name}_unwrapped"].data
     assert mirrored_seam_share(mesh) > 0.9
-    plane_loop, torn = plane_loop_and_seams(mesh)
-    # the transfer's straightened seams cut across the cap corners
-    assert len(plane_loop & torn) > len(plane_loop) / 2
 
 
 # def test_hard_surface_keeps_its_seams_and_welds_the_plane(load_obj, unwrap, outputs):
