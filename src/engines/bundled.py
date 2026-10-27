@@ -8,7 +8,7 @@ from ..utils.engine_binaries import (
 from ..utils.paths import get_dir_path
 
 # each must match that engine's VERSION
-SEGMENT_VERSION = "0.2.1"
+SEGMENT_VERSION = "0.2.2"
 HARDSURFACE_VERSION = "0.1.1"
 
 
