@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.2.3
+
+**New:**
+
+- Auto mode: Automatically picks hard surface or organic per part
+- Symmetry option for symmetrical uvs
+- Segmentation: Automatically split organic parts into separate regions
+- Keep quads option
+- Preview and edit parts
+
+**Improvements:**
+
+- Hard surface mode improved and reworked
+- Speed ups for proxy and hard surface mode
+
+**Breaking changes**
+
+- Remove reduce stretching weight option
+- Default mode is now Auto
+
 ## 2.2.0
 
 **New:**
