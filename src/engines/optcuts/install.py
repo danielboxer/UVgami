@@ -11,10 +11,10 @@ from ..binary_engine import (
 OPTCUTS_VERSION = "1.23.0"
 OPTCUTS_MINIMUM_VERSION = "1.23.0"
 OPTCUTS_ARCHIVE_SHA256S = {
-    "windows": "072dee9d46e3f7426b14efb81cd66b2264ca76f61dd711f871f08b4756f49d92",
-    "linux": "6ceb5414da0943fbf85a6e5cd9a7bf90130ecb13b77e57c4f4ae9d228d75d9a7",
-    "macos-x64": "77c9aacbefeb19638dcbfa8e99ef2bb133cd444aead7a6a7cc4e203ba0d03215",
-    "macos-arm64": "4fc181b2e67141826e41f56492659e14da92a2dde1a7c0eef54c34ec6103c6d1",
+    "windows": "924cac80bcaa9f3fdf82fc7d75522110441efa7c43babe09e2488e5e4066a0cd",
+    "linux": "428fcb1cf5253dff1a9ba944ce50818198319a961fb440bfd1da238aafff113f",
+    "macos-x64": "53bcee016614896e58f3203065fec55d106630bdc86155ffda4e2d9ec5598b72",
+    "macos-arm64": "bae86425275926504c9fc3411c88059f842b833e6938cae051d9bdec9dccc6ee",
 }
 OPTCUTS = EngineRelease(
     "optcuts",
