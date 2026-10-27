@@ -26,8 +26,8 @@ jobs:
             for TAG in windows linux macos-x64 macos-arm64; do
               BINARY=$ENGINE
               if [ "$TAG" = "windows" ]; then BINARY=$ENGINE.exe; fi
+              mkdir -p "extracted/$ENGINE/$TAG" "bin/$TAG"
               unzip -q "package/$ENGINE/$ENGINE-engine-$VERSION-$TAG.zip" -d "extracted/$ENGINE/$TAG"
-              mkdir -p "bin/$TAG"
               cp "$(find "extracted/$ENGINE/$TAG" -type f -name "$BINARY")" "bin/$TAG/"
             done
             cp "$(find "extracted/$ENGINE/linux" -type d -name licenses)"/* bin/licenses/
