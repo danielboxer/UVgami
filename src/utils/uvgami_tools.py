@@ -9,7 +9,7 @@ from .engine_binaries import (
 from .paths import get_dir_path
 
 # must match the engine's VERSION
-UVGAMI_TOOLS_VERSION = "0.2.0"
+UVGAMI_TOOLS_VERSION = "0.4.0"
 
 TOOLS_NAME = "uvgami-tools"
 

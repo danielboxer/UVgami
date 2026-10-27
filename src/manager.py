@@ -34,8 +34,6 @@ STATUS_SECONDS = 5
 DISPATCH_SECONDS = 0.1
 # a finished piece waits for the tick
 QUEUED_DISPATCH_SECONDS = 0.02
-# a transfer doing its lookup in poll() only stops for a redraw
-LOOKUP_DISPATCH_SECONDS = 0.0
 # reserved from the start, or the bar moves backward when the transfer begins
 TRANSFER_PROGRESS_SHARE = 0.4
 # a sidebar rebuild mid click drops the click
@@ -362,8 +360,6 @@ class UnwrapManager:
             handle_error(e, "MIDDLE")
             return None
 
-        if any(entry.job.works_in_poll for entry in self.pending_transfers):
-            return LOOKUP_DISPATCH_SECONDS
         return QUEUED_DISPATCH_SECONDS if self._queue else DISPATCH_SECONDS
 
     # a piece with a uv transfer splits its bar between the engine and the transfer

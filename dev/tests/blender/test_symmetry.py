@@ -269,10 +269,7 @@ def mirrored_seam_share(mesh):
     faces = addon.src.utils.mesh.face_vertices(mesh)
     uvs = addon.src.utils.mesh.face_uvs(mesh)
     seams = list(
-        {
-            addon.src.seams.pair(a, b)
-            for a, b in addon.src.seams.proxy_transfer.uv_tears(faces, uvs)
-        }
+        {addon.src.seams.pair(a, b) for a, b in addon.src.seams.uv_tears(faces, uvs)}
     )
     positions = numpy.array([v.co[:] for v in mesh.vertices])
     center = (positions[:, 0].min() + positions[:, 0].max()) / 2
@@ -295,9 +292,7 @@ def plane_loop_and_seams(mesh):
     faces = addon.src.utils.mesh.face_vertices(mesh)
     torn = {
         addon.src.seams.pair(a, b)
-        for a, b in addon.src.seams.proxy_transfer.uv_tears(
-            faces, addon.src.utils.mesh.face_uvs(mesh)
-        )
+        for a, b in addon.src.seams.uv_tears(faces, addon.src.utils.mesh.face_uvs(mesh))
     }
     positions = numpy.array([v.co[:] for v in mesh.vertices])
     center = (positions[:, 0].min() + positions[:, 0].max()) / 2

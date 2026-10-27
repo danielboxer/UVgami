@@ -17,7 +17,7 @@ from .logger import logger
 from .objfile import merge_obj_files
 from .ops.guides import seam_restriction_weights
 from .part_overrides import read_overrides
-from .proxy import FaceLookup, transfer_inputs
+from .proxy import transfer_inputs
 from .seams import uv_area_fit
 from .seams.mesh import transformed
 from .seams.mirror import (
@@ -26,11 +26,7 @@ from .seams.mirror import (
     symmetric_axis,
     symmetric_regions,
 )
-from .seams.proxy_transfer import (
-    LOOKUP_SHARE,
-    dense_subset,
-    transfer_from_lookup,
-)
+from .seams.proxy_transfer import TransferRun, dense_subset
 from .seams.segmentation import border_edges, edge_face_pairs
 from .seams.uv_transfer import transfer_exact_job
 from .seams.worker import WorkerProcess
@@ -167,15 +163,13 @@ class HideInput:
             self.input_mesh.hide_set(True)
 
 
-# the read is bpy-free and runs in a worker process
+# the read is bpy-free and runs in another process
 class Transfer:
     # the manager repacks the input in place of the deleted output
     repack_input = True
     allows_missing_pieces = True
     # a copy of the input the result went onto, in place of the output
     replacement = None
-    # poll() does a slice of the work itself
-    works_in_poll = False
 
     def __init__(self, input_mesh):
         self.input_mesh = input_mesh
@@ -510,10 +504,6 @@ class AreaUVs(IslandUVs):
                 plan.loop_uvs[k] = old
 
 
-# the window is frozen for this long per poll
-LOOKUP_SLICE_SECONDS = 0.05
-
-
 # the original was never unwrapped, only its proxy
 class ProxyUVs(Transfer):
     # a missing piece is a hole in the proxy map
@@ -522,28 +512,14 @@ class ProxyUVs(Transfer):
     def _extract(self, target, output):
         return transfer_inputs(target, output)
 
-    @property
-    def works_in_poll(self):
-        return self.task is None
-
     def _begin(self, inputs):
-        self._inputs = inputs
-        self._lookup = FaceLookup(*inputs)
+        self.task = TransferRun(
+            tools_command(), get_extension_dir_path() / "proxy", *inputs
+        )
 
     def _work_done(self):
-        if self.task is not None:
-            self.progress = max(self.progress, self.task.progress)
-            return self.task.done()
-        self._lookup.advance(LOOKUP_SLICE_SECONDS)
-        self.progress = LOOKUP_SHARE * self._lookup.fraction
-        if self._lookup.done:
-            self.task = WorkerProcess(
-                transfer_from_lookup,
-                *self._inputs,
-                self._lookup.face_of_vertex,
-            )
-            self._inputs = self._lookup = None
-        return False
+        self.progress = self.task.progress
+        return self.task.done()
 
     def _apply(self, target, result):
         seams, uvs = result

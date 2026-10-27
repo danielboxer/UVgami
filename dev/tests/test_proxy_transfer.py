@@ -1,9 +1,11 @@
+import time
+
 import numpy
 import pytest
 
-from seams import Cancelled
+from seams.engine_run import POLL_INTERVAL
 from seams.mesh import connected_labels, uv_tears
-from seams.proxy_transfer import AffineMaps, dense_subset, transfer_projected
+from seams.proxy_transfer import TransferRun, dense_subset
 
 IDENTITY = numpy.eye(4)
 GRID = 6
@@ -71,24 +73,28 @@ def split_proxy(right_corner_uv=None):
     return proxy_arrays(verts, faces, uvs)
 
 
-def plane_locator(proxy):
-    positions = numpy.asarray(proxy["positions"], dtype=numpy.float64)[:, :2]
-    triangles = positions[numpy.array([face[:3] for face in proxy["faces"]])]
+@pytest.fixture
+def start_transfer(engine_binary, tmp_path):
+    command = [engine_binary("uvgami-tools")]
 
-    def barycentric(point, tri):
-        a, b, c = tri
-        matrix = numpy.array([b - a, c - a]).T
-        s, t = numpy.linalg.solve(matrix, point - a)
-        return numpy.array([1 - s - t, s, t])
+    def start(dense, proxy):
+        return TransferRun(command, tmp_path, dense, proxy)
 
-    def nearest_faces(points, normals):
-        found = []
-        for point in numpy.asarray(points)[:, :2]:
-            lowest = [barycentric(point, tri).min() for tri in triangles]
-            found.append(int(numpy.argmax(lowest)))
-        return numpy.array(found)
+    return start
 
-    return nearest_faces
+
+def finished(run):
+    while not run.done():
+        time.sleep(POLL_INTERVAL)
+    return run
+
+
+@pytest.fixture
+def transfer(start_transfer):
+    def run(dense, proxy):
+        return finished(start_transfer(dense, proxy)).result()
+
+    return run
 
 
 def test_uv_tears_finds_only_the_torn_interior_edge():
@@ -128,36 +134,33 @@ def test_dense_subset_renumbers_the_kept_faces():
 #     assert snap_cuts(verts, edges, mapped, {(0, 1)}) == {(0, 1), (1, 2), (2, 3)}
 
 
-def test_affine_map_continues_past_the_face():
-    maps = AffineMaps(
-        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
-        [[0, 1, 2]],
-        [[(0.0, 0.0), (2.0, 0.0), (0.0, 2.0)]],
-    )
-    uv = maps.uv(numpy.array([0, 0]), [(0.25, 0.25, 0.0), (3.0, -1.0, 5.0)])
-    assert numpy.allclose(uv, [(0.5, 0.5), (6.0, -2.0)])
-
-
 @pytest.mark.parametrize("faces_of", [lambda faces: faces, triangulated])
-def test_transfer_projected_reads_a_continuous_map_exactly(faces_of):
+def test_transfer_reads_a_continuous_map_exactly(transfer, faces_of):
     verts, faces = quad_grid(GRID)
     faces = faces_of(faces)
     proxy_verts, proxy_faces = quad_grid(1, GRID)
     proxy_faces = triangulated(proxy_faces)
     proxy = proxy_arrays(proxy_verts, proxy_faces, grid_uvs(proxy_verts, proxy_faces))
     dense = dense_arrays(verts, faces)
-    reported = []
 
-    seams, uvs = transfer_projected(dense, proxy, plane_locator(proxy), reported.append)
+    seams, uvs = transfer(dense, proxy)
 
     expected = numpy.array(verts)[dense["corners"]][:, :2]
     assert numpy.allclose(uvs, expected)
     assert seams == set()
-    assert reported == sorted(reported)
-    assert reported[-1] == 1.0
 
 
-def test_transfer_projected_matches_the_meshes_in_the_proxy_space():
+def test_transfer_run_reaches_full_progress(start_transfer):
+    verts, faces = quad_grid(GRID)
+    proxy = split_proxy()
+
+    run = finished(start_transfer(dense_arrays(verts, faces), proxy))
+
+    assert run.progress == pytest.approx(1.0)
+    run.result()
+
+
+def test_transfer_matches_the_meshes_in_the_proxy_space(transfer):
     verts, faces = quad_grid(GRID)
     offset = numpy.eye(4)
     offset[0, 3] = 5.0
@@ -167,9 +170,31 @@ def test_transfer_projected_matches_the_meshes_in_the_proxy_space():
     proxy = proxy_arrays(proxy_verts, proxy_faces, grid_uvs(proxy_verts, proxy_faces))
     dense = dense_arrays(verts, faces, offset)
 
-    _, uvs = transfer_projected(dense, proxy, plane_locator(proxy))
+    _, uvs = transfer(dense, proxy)
 
     expected = numpy.array(verts)[dense["corners"]][:, :2] + (5.0, 0.0)
+    assert numpy.allclose(uvs, expected)
+
+
+def test_transfer_reads_the_side_of_a_thin_wall_it_faces(transfer):
+    wall = 0.1
+    proxy_verts, proxy_faces = quad_grid(1, GRID)
+    top = triangulated(proxy_faces)
+    bottom = [[v + len(proxy_verts) for v in reversed(face)] for face in top]
+    proxy_verts = proxy_verts + [(x, y, -wall) for x, y, _ in proxy_verts]
+    uvs = grid_uvs(proxy_verts, top) + [
+        [(u + SHIFT, v) for u, v in face] for face in grid_uvs(proxy_verts, bottom)
+    ]
+    proxy = proxy_arrays(proxy_verts, top + bottom, uvs)
+    verts, faces = quad_grid(GRID)
+    # the dense underside is nearer the proxy's top
+    verts = [(x, y, -0.4 * wall) for x, y, _ in verts]
+    dense = dense_arrays(verts, [face[::-1] for face in faces])
+    dense["normals"] = [(0.0, 0.0, -1.0)] * len(verts)
+
+    _, uvs = transfer(dense, proxy)
+
+    expected = numpy.array(verts)[dense["corners"]][:, :2] + (SHIFT, 0.0)
     assert numpy.allclose(uvs, expected)
 
 
@@ -181,12 +206,12 @@ def torn_columns(faces, verts):
     return left, straddling, right
 
 
-def test_transfer_projected_tears_the_dense_mesh_along_the_proxy_cut():
+def test_transfer_tears_the_dense_mesh_along_the_proxy_cut(transfer):
     verts, faces = quad_grid(GRID)
     proxy = split_proxy()
     dense = dense_arrays(verts, faces)
 
-    seams, uvs = transfer_projected(dense, proxy, plane_locator(proxy))
+    seams, uvs = transfer(dense, proxy)
 
     xy = numpy.array(verts)[dense["corners"]][:, :2]
     corner_face = numpy.repeat(numpy.arange(len(faces)), 4)
@@ -219,13 +244,13 @@ def loose_halves_proxy(gap):
     return proxy_arrays(verts, faces, uvs)
 
 
-def test_transfer_projected_tears_between_loose_proxy_pieces():
+def test_transfer_tears_between_loose_proxy_pieces(transfer):
     verts, faces = quad_grid(GRID)
     gap = 1.5
     proxy = loose_halves_proxy(gap)
     dense = dense_arrays(verts, faces)
 
-    seams, uvs = transfer_projected(dense, proxy, plane_locator(proxy))
+    seams, uvs = transfer(dense, proxy)
 
     xy = numpy.array(verts)[dense["corners"]][:, :2]
     corner_face = numpy.repeat(numpy.arange(len(faces)), 4)
@@ -238,12 +263,12 @@ def test_transfer_projected_tears_between_loose_proxy_pieces():
     assert seams == {(y * side + 3, (y + 1) * side + 3) for y in range(GRID)}
 
 
-def test_transfer_projected_never_tears_between_linked_proxy_faces():
+def test_transfer_never_tears_between_linked_proxy_faces(transfer):
     verts, faces = quad_grid(GRID)
     proxy = split_proxy(right_corner_uv=(SHIFT + 2.0, GRID + 2.0))
     dense = dense_arrays(verts, faces)
 
-    seams, uvs = transfer_projected(dense, proxy, plane_locator(proxy))
+    seams, uvs = transfer(dense, proxy)
 
     side = GRID + 1
     assert seams == {(y * side + 3, (y + 1) * side + 3) for y in range(GRID)}
@@ -257,7 +282,7 @@ def test_transfer_projected_never_tears_between_linked_proxy_faces():
         assert numpy.array_equal(uvs[on_straddlers[0]], uvs[on_straddlers[1]])
 
 
-def test_transfer_projected_pulls_a_zigzag_seam_onto_one_edge_row():
+def test_transfer_pulls_a_zigzag_seam_onto_one_edge_row(transfer):
     verts, faces = quad_grid(GRID)
     faces = triangulated(faces)
     proxy = split_proxy()
@@ -265,14 +290,14 @@ def test_transfer_projected_pulls_a_zigzag_seam_onto_one_edge_row():
     proxy["positions"] = [(y, x, z) for x, y, z in proxy["positions"]]
     dense = dense_arrays(verts, faces)
 
-    seams, _ = transfer_projected(dense, proxy, plane_locator(proxy))
+    seams, _ = transfer(dense, proxy)
 
     side = GRID + 1
     rows = [{(y * side + x, y * side + x + 1) for x in range(GRID)} for y in (2, 3)]
     assert seams in rows
 
 
-def test_transfer_projected_straightens_a_staircase_onto_the_diagonals():
+def test_transfer_straightens_a_staircase_onto_the_diagonals(transfer):
     verts, faces = quad_grid(GRID)
     faces = triangulated(faces)
     # two proxy triangles either side of the line y = x + 0.5
@@ -288,7 +313,7 @@ def test_transfer_projected_straightens_a_staircase_onto_the_diagonals():
     proxy = proxy_arrays(proxy_verts, proxy_faces, uvs)
     dense = dense_arrays(verts, faces)
 
-    seams, _ = transfer_projected(dense, proxy, plane_locator(proxy))
+    seams, _ = transfer(dense, proxy)
 
     side = GRID + 1
 
@@ -299,22 +324,6 @@ def test_transfer_projected_straightens_a_staircase_onto_the_diagonals():
     # the run's two ends sit on the grid boundary and may keep a step each
     assert len(off_diagonal) <= 2, off_diagonal
     assert len(seams) - len(off_diagonal) >= GRID - 1
-
-
-def test_transfer_projected_stops_on_cancel():
-    verts, faces = quad_grid(GRID)
-    proxy = split_proxy()
-    calls = []
-
-    def counting(points, normals):
-        calls.append(len(points))
-        return plane_locator(proxy)(points, normals)
-
-    with pytest.raises(Cancelled):
-        transfer_projected(
-            dense_arrays(verts, faces), proxy, counting, cancelled=lambda: True
-        )
-    assert calls == []
 
 
 # the face folded over the panel, z = 0.5 - x / 16
@@ -332,7 +341,7 @@ def folded_proxy():
     return proxy_arrays(verts, faces, uvs)
 
 
-def test_transfer_projected_tears_between_faces_split_at_a_shared_vertex():
+def test_transfer_tears_between_faces_split_at_a_shared_vertex(transfer):
     proxy = folded_proxy()
     columns, rows = 6, [0.3, 0.5, 0.7, 0.9, 1.1, 1.3]
     verts = [(1.0 + x, y, 0.25) for y in rows for x in range(columns)]
@@ -347,84 +356,14 @@ def test_transfer_projected_tears_between_faces_split_at_a_shared_vertex():
         for x in range(columns - 1)
     ]
     dense = dense_arrays(verts, faces)
+    # the folded face faces down, so the rows with downward normals read it
+    dense["normals"] = [(0.0, 0.0, 1.0 if y < 0.6 else -1.0) for _, y, _ in verts]
 
-    # the bottom two vertex rows read the panel, the rest the folded face
-    def nearest_faces(points, normals):
-        points = numpy.asarray(points, dtype=numpy.float64)
-        return numpy.where(points[:, 1] > 0.6, 2, 0)
-
-    seams, uvs = transfer_projected(dense, proxy, nearest_faces)
+    seams, uvs = transfer(dense, proxy)
 
     face_u = uvs[:, 0].reshape(len(faces), 4)
     assert numpy.all(face_u.max(axis=1) - face_u.min(axis=1) < 2.0)
     assert seams == {(2 * columns + x, 2 * columns + x + 1) for x in range(columns - 1)}
-
-
-def grid_mesh(mirrored):
-    from seams.proxy_transfer import DenseMesh
-
-    verts, quads = quad_grid(8)
-    faces = triangulated(quads)
-    corners = numpy.array([v for face in faces for v in face], dtype=numpy.int64)
-    sizes = numpy.array([len(face) for face in faces], dtype=numpy.int64)
-    positions = numpy.array(verts, dtype=numpy.float64)
-    mesh = DenseMesh(corners, sizes, positions)
-    corner_uvs = positions[corners][:, :2].copy()
-    if mirrored:
-        corner_uvs[:, 0] *= -1
-        mesh.orientation[:] = -1
-    return mesh, corner_uvs
-
-
-@pytest.mark.parametrize("mirrored", [False, True])
-def test_relax_flips_repairs_an_inverted_interior_vertex(mirrored):
-    from seams.proxy_transfer import _face_areas, _relax_flips
-
-    mesh, corner_uvs = grid_mesh(mirrored)
-    # vertex (4, 4) dragged past its ring inverts part of its fan
-    middle = 4 * 9 + 4
-    corner_uvs[mesh.corners == middle] = (-5.5 if mirrored else 5.5, 5.5)
-    every = numpy.arange(len(mesh.sizes))
-    assert numpy.any(_face_areas(corner_uvs, mesh, every) < 0)
-
-    _relax_flips(corner_uvs, mesh)
-
-    assert not numpy.any(_face_areas(corner_uvs, mesh, every) < 0)
-    assert corner_uvs[mesh.corners == 0].tolist() == [[0.0, 0.0]] * 2
-
-
-def test_relax_flips_leaves_a_mirrored_island_alone():
-    from seams.proxy_transfer import _relax_flips
-
-    mesh, corner_uvs = grid_mesh(mirrored=True)
-    before = corner_uvs.copy()
-
-    _relax_flips(corner_uvs, mesh)
-
-    assert numpy.array_equal(corner_uvs, before)
-
-
-# (2, 0) sits on a ring edge, so one fan face has zero area beside the flipped one
-@pytest.mark.parametrize("start", [(2.0, 2.0), (2.0, 0.0)])
-def test_place_in_kernels_moves_a_vertex_averaging_leaves_outside(start):
-    from seams.proxy_transfer import DenseMesh, _face_areas, _place_in_kernels
-
-    # an L shaped ring: the neighbour average sits in the notch, outside the kernel
-    ring = [(0, 0), (4, 0), (4, 1), (1, 1), (1, 4), (0, 4)]
-    positions = numpy.array([(*start, 0.0)] + [(x, y, 0.0) for x, y in ring])
-    faces = [[0, i, i % 6 + 1] for i in range(1, 7)]
-    corners = numpy.array([v for face in faces for v in face], dtype=numpy.int64)
-    sizes = numpy.array([3] * 6, dtype=numpy.int64)
-    mesh = DenseMesh(corners, sizes, positions)
-    corner_uvs = positions[corners][:, :2].copy()
-    every = numpy.arange(len(sizes))
-    assert numpy.any(_face_areas(corner_uvs, mesh, every) < 0)
-
-    _place_in_kernels(corner_uvs, mesh)
-
-    assert numpy.all(_face_areas(corner_uvs, mesh, every) > 0)
-    centre = corner_uvs[corners == 0][0]
-    assert 0 < centre[0] < 1 and 0 < centre[1] < 1
 
 
 def test_connected_labels_separates_loose_parts():

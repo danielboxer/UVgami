@@ -1,6 +1,9 @@
 import itertools
+import tempfile
 import time
 from pathlib import Path
+
+import numpy
 
 from .cancel import Cancelled
 from .worker import (
@@ -19,6 +22,11 @@ class EngineError(RuntimeError):
 
 # how often a cancellable engine run checks on the engine
 POLL_INTERVAL = 0.05
+
+PACKED_INPUT_NAME = "input.bin"
+PACKED_OUTPUT_NAME = "output.bin"
+INTEGER = numpy.dtype("<i8")
+FLOAT = numpy.dtype("<f8")
 
 
 # result() also removes the workdir
@@ -45,6 +53,44 @@ class EngineRun:
 
     def stop(self):
         stop_process(self.process, self.workdir)
+
+
+def face_arrays(uvs):
+    sizes = numpy.fromiter((len(face) for face in uvs), INTEGER, len(uvs))
+    flat = itertools.chain.from_iterable(itertools.chain.from_iterable(uvs))
+    return sizes, numpy.fromiter(flat, FLOAT, 2 * int(sizes.sum()))
+
+
+# arrays one after another, each length known from the ones before it
+def packed_reader(data):
+    offset = 0
+
+    def take(dtype, count):
+        nonlocal offset
+        values = numpy.frombuffer(data, dtype, count, offset)
+        offset += values.nbytes
+        return values
+
+    return take
+
+
+# the arrays go in as the command's input, read gets its output's bytes
+def start_packed(command, workdir, subcommand, arrays, read):
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    folder = Path(tempfile.mkdtemp(dir=workdir))
+    with (folder / PACKED_INPUT_NAME).open("wb") as file:
+        for array in arrays:
+            file.write(array.tobytes())
+    paths = [folder / PACKED_INPUT_NAME, folder / PACKED_OUTPUT_NAME]
+    args = [str(arg) for arg in [*command, subcommand, *paths]]
+    return EngineRun(
+        launch(folder, args, None),
+        folder,
+        paths[1],
+        0,
+        lambda path, _: read(path.read_bytes()),
+    )
 
 
 def write_obj(path, verts, faces):

@@ -1,13 +1,9 @@
-import time
-
 import bmesh
 import bpy
 import numpy
 from mathutils import Matrix, Vector
-from mathutils.bvhtree import BVHTree
 
 # from mathutils.kdtree import KDTree
-from .seams import proxy_transfer
 from .seams.mesh import connected_labels
 from .utils.geometry import cut_on_axis
 from .utils.mesh import (
@@ -268,91 +264,6 @@ def _edge_array(data):
 #     data = input_mesh.data
 #     verts = vertex_position_array(data).tolist()
 #     return proxy_transfer.snap_cuts(verts, _edge_array(data), mapped, cuts)
-
-
-# in mean proxy edge lengths, how far a ray along the vertex normal may travel
-RAY_REACH_EDGES = 1.0
-# how far to look for a facing face when the nearest faces away, a thin wall
-FACING_SEARCH_EDGES = 2.0
-# a hit past this many times the nearest distance skimmed off a wrinkle
-HIT_OVER_NEAREST = 3.0
-
-
-# a point on a bulge over a crease is nearest the wrong one of the two faces
-def face_locator(positions, faces):
-    positions = numpy.asarray(positions, dtype=numpy.float64).reshape(-1, 3)
-    tree = BVHTree.FromPolygons(positions.tolist(), [list(face) for face in faces])
-    first = numpy.array([face[:2] for face in faces], dtype=numpy.int64)
-    edge_lengths = numpy.linalg.norm(
-        positions[first[:, 1]] - positions[first[:, 0]], axis=1
-    )
-    reach = RAY_REACH_EDGES * edge_lengths.mean()
-    radius = FACING_SEARCH_EDGES * edge_lengths.mean()
-
-    def facing(normal, direction):
-        return (
-            normal.x * direction[0] + normal.y * direction[1] + normal.z * direction[2]
-        )
-
-    def nearest_faces(points, normals):
-        found = numpy.empty(len(points), dtype=numpy.int64)
-        for i, (point, normal) in enumerate(zip(points.tolist(), normals.tolist())):
-            _, face_normal, index, nearest_distance = tree.find_nearest(point)
-            backward = tuple(-c for c in normal)
-            hits = [
-                tree.ray_cast(point, normal, reach),
-                tree.ray_cast(point, backward, reach),
-            ]
-            hits = [
-                hit for hit in hits if hit[2] is not None and facing(hit[1], normal) > 0
-            ]
-            if hits:
-                _, _, hit_index, distance = min(hits, key=lambda hit: hit[3])
-                if distance <= HIT_OVER_NEAREST * nearest_distance:
-                    found[i] = hit_index
-                    continue
-            if facing(face_normal, normal) < 0:
-                nearby = sorted(
-                    tree.find_nearest_range(point, radius), key=lambda hit: hit[3]
-                )
-                for _, other_normal, other, _ in nearby:
-                    if facing(other_normal, normal) > 0:
-                        index = other
-                        break
-            found[i] = index
-        return found
-
-    return nearest_faces
-
-
-# how many dense vertices are looked up between two looks at the clock
-LOOKUP_BATCH = 500
-
-
-# the lookup needs mathutils, which only exists inside blender
-class FaceLookup:
-    def __init__(self, dense, proxy):
-        self._positions, self._normals = proxy_transfer.proxy_space(dense, proxy)
-        self._nearest_faces = face_locator(proxy["positions"], proxy["faces"])
-        self.face_of_vertex = numpy.empty(len(self._positions), dtype=numpy.int64)
-        self._looked_up = 0
-
-    @property
-    def done(self):
-        return self._looked_up >= len(self._positions)
-
-    @property
-    def fraction(self):
-        return self._looked_up / max(len(self._positions), 1)
-
-    def advance(self, seconds):
-        deadline = time.monotonic() + seconds
-        while not self.done and time.monotonic() < deadline:
-            batch = slice(self._looked_up, self._looked_up + LOOKUP_BATCH)
-            self.face_of_vertex[batch] = self._nearest_faces(
-                self._positions[batch], self._normals[batch]
-            )
-            self._looked_up += LOOKUP_BATCH
 
 
 # the (dense, proxy) arrays the transfer pipeline reads
