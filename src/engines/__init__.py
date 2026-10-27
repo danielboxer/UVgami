@@ -62,11 +62,21 @@ class Engine:
     def uses_proxy(self, props):
         return props.use_proxy and self.supports_proxy
 
+    # region borders become seams across the imported islands
     def splits_regions(self, props):
-        return props.split_regions and self.supports_regions
+        return (
+            props.split_regions
+            and self.supports_regions
+            and not self.uses_import_uvs(props)
+        )
 
+    # the mirrored half replaces the imported seams on the other side
     def uses_symmetry(self, props):
-        return props.symmetry and self.supports_symmetry
+        return (
+            props.symmetry
+            and self.supports_symmetry
+            and not self.uses_import_uvs(props)
+        )
 
     def unset_surface_mode(self, props):
         return "AUTO"

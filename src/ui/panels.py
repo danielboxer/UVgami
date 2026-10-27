@@ -558,13 +558,14 @@ class UVGAMI_PT_advanced(EnginePanel, bpy.types.Panel):
 
         if engine.supports_regions:
             split = box.split(factor=0.7)
+            split.active = not engine.uses_import_uvs(props)
             split.label(icon="MOD_EXPLODE", text="Segmentation")
             split.prop(props, "split_regions")
         # if engine.splits_regions(props):
         #     draw_segment_edit(box, context)
 
         if engine.supports_symmetry:
-            draw_symmetry(box, props)
+            draw_symmetry(box, engine, props)
         draw_auto_preview(box)
 
         if is_editing() and context.mode == "EDIT_MESH":
@@ -575,8 +576,9 @@ class UVGAMI_PT_advanced(EnginePanel, bpy.types.Panel):
             row.operator("uvgami.edit_part_overrides", icon="EDITMODE_HLT")
 
 
-def draw_symmetry(layout, props):
+def draw_symmetry(layout, engine, props):
     split = layout.split(factor=0.7)
+    split.active = not engine.uses_import_uvs(props)
     split.label(icon="MOD_MIRROR", text="Symmetry")
     split.prop(props, "symmetry", text="")
     # if props.symmetry == "AXES":
