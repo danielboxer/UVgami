@@ -25,19 +25,20 @@ from seams import (
 )
 from seams.cuts import VISIBILITY_SHARE
 from seams.engine_run import write_obj
-from seams.island_repair import rectify_plans, split_moves
-from seams.preseed import _write_weights, hard_faces
+from seams.island_repair import finish_uvs, rectify_plans, split_moves
+from seams.preseed import _write_weights, resolved_surface_modes
 from seams.segmentation import classify_job
 
 
-# the hard surface exe's classifier flags with every part on Auto
+# the hard surface exe's pick per face with every part on Auto
 @pytest.fixture
 def classify_hard(engine_binary, tmp_path):
     command = [engine_binary("uvgami-tools")]
 
     def run(verts, faces):
         modes = numpy.full(len(faces), SURFACE_MODE_CODES["AUTO"])
-        return hard_faces(command, tmp_path, verts, faces, modes)
+        resolved = resolved_surface_modes(command, tmp_path, verts, faces, modes)
+        return resolved == SURFACE_MODE_CODES["HARD"]
 
     return run
 
@@ -86,6 +87,24 @@ def rectify(engine_binary, tmp_path):
 
     def run(faces, uvs):
         return rectify_plans(command, tmp_path, uvs, uv_groups(faces, uvs))
+
+    return run
+
+
+# the finished uv map, the whole mesh as one range
+@pytest.fixture
+def finish(engine_binary, tmp_path):
+    command = [engine_binary("uvgami-tools")]
+
+    def run(verts, faces, uvs):
+        finished = finish_uvs(command, tmp_path, verts, faces, uvs, [(0, len(faces))])
+        result = [list(corners) for corners in uvs]
+        changes = zip(
+            finished.faces.tolist(), finished.corners.tolist(), finished.uvs.tolist()
+        )
+        for face, corner, uv in changes:
+            result[face][corner] = tuple(uv)
+        return result
 
     return run
 
@@ -988,6 +1007,86 @@ def test_rectify_reaches_islands_bordering_their_own_cut(rectify):
 def test_rectify_skips_an_island_with_a_hole(rectify):
     verts, faces, uvs = annulus_island()
     assert rectify(faces, uvs) == []
+
+
+def quad_grid(cols, rows):
+    verts = [
+        (float(x), float(y), 0.0) for y in range(rows + 1) for x in range(cols + 1)
+    ]
+    faces = []
+    for cy in range(rows):
+        for cx in range(cols):
+            a = cy * (cols + 1) + cx
+            faces.append([a, a + 1, a + cols + 2, a + cols + 1])
+    return verts, faces
+
+
+# the grid's outline pulled onto a superellipse, whose corners are too round to turn
+def rounded_strip(cols, rows, power):
+    verts, faces = quad_grid(cols, rows)
+
+    def round_corners(vertex):
+        x, y = vertex[0], vertex[1]
+        u = (x - cols / 2) / (cols / 2)
+        v = (y - rows / 2) / (rows / 2)
+        square = max(abs(u), abs(v))
+        if square == 0:
+            return (x, y)
+        shrink = square / (abs(u) ** power + abs(v) ** power) ** (1 / power)
+        return (cols / 2 * (1 + u * shrink), rows / 2 * (1 + v * shrink))
+
+    uvs = [[round_corners(verts[v]) for v in face] for face in faces]
+    return verts, faces, uvs
+
+
+# the grid's outline pulled in towards its middle row, pointed at both ends
+def lens_strip(cols, rows, squeeze):
+    verts, faces = quad_grid(cols, rows)
+
+    def pinch(vertex):
+        x, y = vertex[0], vertex[1]
+        width = math.sqrt(1 - squeeze * ((x - cols / 2) / (cols / 2)) ** 2)
+        return (x, (y - rows / 2) * width + rows / 2)
+
+    uvs = [[pinch(verts[v]) for v in face] for face in faces]
+    return verts, faces, uvs
+
+
+@pytest.mark.smoke
+def test_finish_parts_a_long_strip(finish):
+    verts, faces, uvs = strip_island(30)
+    assert len(uv_groups(faces, finish(verts, faces, uvs))) == 4
+
+
+@pytest.mark.smoke
+def test_finish_solves_a_pinned_strip_inside_its_rectangle(finish, rectify):
+    verts, faces, uvs = rounded_strip(12, 4, 3)
+    (plan,) = rectify(faces, uvs)
+    assert plan.pinned
+    finished = finish(verts, faces, uvs)
+    for (face, corner), target in plan.targets.items():
+        assert math.dist(finished[face][corner], target) < 1e-9
+    x0, y0, x1, y1 = target_box(plan.targets)
+    free = [
+        (face, corner)
+        for face, corners in enumerate(uvs)
+        for corner in range(len(corners))
+        if (face, corner) not in plan.targets
+    ]
+    assert any(finished[f][c] != uvs[f][c] for f, c in free)
+    assert all(
+        x0 < finished[f][c][0] < x1 and y0 < finished[f][c][1] < y1 for f, c in free
+    )
+    assert all(signed_area(corners) > 0 for corners in finished)
+
+
+# the pointed ends put three pinned corners of an end face on one side of the rectangle
+@pytest.mark.smoke
+def test_finish_keeps_the_engine_map_when_the_rectangle_crushes_a_face(finish, rectify):
+    verts, faces, uvs = lens_strip(16, 3, 0.9)
+    (plan,) = rectify(faces, uvs)
+    assert plan.pinned
+    assert finish(verts, faces, uvs) == [list(corners) for corners in uvs]
 
 
 FLAT_QUAD_VERTS = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)]

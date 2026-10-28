@@ -9,6 +9,7 @@ from .mesh import faces_from_arrays
 
 INPUT_NAME = "mirror.obj"
 LABELS_NAME = "labels.txt"
+UVS_NAME = "uvs.txt"
 OUTPUT_NAME = "output.txt"
 DONE_PREFIX = "done: "
 
@@ -40,7 +41,9 @@ def _plane_flags(center, axis=None, tolerance=None):
 
 
 # read takes the run folder, which is removed once it returns
-def _run(command, workdir, subcommand, positions, faces, flags, read, labels=None):
+def _run(
+    command, workdir, subcommand, positions, faces, flags, read, labels=None, uvs=None
+):
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(dir=workdir))
@@ -50,6 +53,9 @@ def _run(command, workdir, subcommand, positions, faces, flags, read, labels=Non
     if labels is not None:
         paths.append(folder / LABELS_NAME)
         paths[-1].write_text("".join(f"{label}\n" for label in labels.tolist()))
+    if uvs is not None:
+        paths.append(folder / UVS_NAME)
+        paths[-1].write_text("".join(f"{u!r} {v!r}\n" for u, v in uvs.tolist()))
     paths.append(folder / OUTPUT_NAME)
     args = [*command, subcommand, *paths, *flags]
     process = launch(folder, [str(arg) for arg in args], None)
@@ -88,12 +94,26 @@ def mirror_partners(command, workdir, positions, center, axis):
     return _run(command, workdir, "mirror-partners", positions, [], flags, read)
 
 
-# the cleaner half's regions copied onto the other half, kept_side is 1 for the positive half
+# kept_side is 1 for the positive half, border_edges are (low, high) pairs
+MirroredRegions = namedtuple(
+    "MirroredRegions", "kept_side labels border_edges region_count"
+)
+
+
+# the cleaner half's regions copied onto the other half
 def symmetric_regions(
     command, workdir, positions, corners, totals, labels, axis, center, tolerance
 ):
     def read(folder):
-        return int(_done(folder)), _read_integers(folder)
+        kept_side, region_count = map(int, _done(folder).split())
+        values = _read_integers(folder)
+        edges = values[len(faces) :].reshape(-1, 2).tolist()
+        return MirroredRegions(
+            kept_side,
+            values[: len(faces)],
+            [tuple(edge) for edge in edges],
+            region_count,
+        )
 
     faces = faces_from_arrays(corners, totals)
     flags = _plane_flags(center, axis=axis, tolerance=tolerance)
@@ -102,15 +122,19 @@ def symmetric_regions(
     )
 
 
-# each corner on the negative side and the corner at its mirror image on the other side
-def mirrored_corner_sources(
-    command, workdir, positions, corners, totals, center, axis, tolerance
+# the negative side mirrors the kept side's uvs, then the map fits the unit square
+def mirrored_uvs(
+    command, workdir, positions, corners, totals, uvs, center, axis, tolerance
 ):
     def read(folder):
         _done(folder)
-        pairs = _read_integers(folder).reshape(-1, 2)
-        return pairs[:, 0], pairs[:, 1]
+        values = numpy.loadtxt(folder / OUTPUT_NAME, dtype=numpy.float64, ndmin=2)
+        if values.shape != uvs.shape:
+            raise EngineError(
+                f"the mirror engine wrote {values.shape} uvs for {uvs.shape}"
+            )
+        return values
 
     faces = faces_from_arrays(corners, totals)
     flags = _plane_flags(center, axis=axis, tolerance=tolerance)
-    return _run(command, workdir, "mirror-corners", positions, faces, flags, read)
+    return _run(command, workdir, "mirror-uvs", positions, faces, flags, read, uvs=uvs)

@@ -21,13 +21,12 @@ from .proxy import transfer_inputs
 from .seams import uv_area_fit
 from .seams.mesh import transformed
 from .seams.mirror import (
-    mirrored_corner_sources,
+    mirrored_uvs,
     partner_map,
     symmetric_axis,
     symmetric_regions,
 )
 from .seams.proxy_transfer import TransferRun, dense_subset
-from .seams.segmentation import border_edges, edge_face_pairs
 from .seams.uv_transfer import transfer_exact_job
 from .seams.worker import WorkerProcess
 from .utils.geometry import PLANE_SNAP, cut_on_axis
@@ -679,7 +678,7 @@ def mirror_segmentation(positions, corners, totals, segmentation, symmetry):
     mirrored = symmetry is not None and symmetry.kind in ("BISECT", "WHOLE")
     if not mirrored or not segmentation.border_edges:
         return symmetry, segmentation
-    kept_side, labels = symmetric_regions(
+    regions = symmetric_regions(
         tools_command(),
         mirror_workdir(),
         positions,
@@ -690,13 +689,12 @@ def mirror_segmentation(positions, corners, totals, segmentation, symmetry):
         symmetry.center,
         symmetry.tolerance,
     )
-    face_pairs = edge_face_pairs(corners, totals)
     segmentation = segmentation._replace(
-        border_edges=border_edges(face_pairs, labels),
-        region_count=len(numpy.unique(labels[labels > 0])),
-        labels=labels,
+        border_edges=regions.border_edges,
+        region_count=regions.region_count,
+        labels=regions.labels,
     )
-    return symmetry._replace(kept_side=kept_side), segmentation
+    return symmetry._replace(kept_side=regions.kept_side), segmentation
 
 
 class Symmetrise:
@@ -800,25 +798,15 @@ class MirrorUVs:
         mesh = output.data
         corners, totals = face_vertex_arrays(mesh)
         local = matrix.to_3x3().inverted().to_4x4()
-        targets, sources = mirrored_corner_sources(
+        coords = mirrored_uvs(
             tools_command(),
             mirror_workdir(),
             transformed(vertex_position_array(mesh), local),
             corners,
             totals,
+            loop_uvs(mesh),
             self.center,
             self.axis,
             self.tolerance,
         )
-        coords = loop_uvs(mesh)
-        kept = numpy.ones(len(coords), dtype=bool)
-        kept[targets] = False
-        # flipped past the kept side's right edge
-        right = coords[kept, 0].max()
-        coords[targets, 0] = 2 * right - coords[sources, 0]
-        coords[targets, 1] = coords[sources, 1]
-        low = coords.min(axis=0)
-        size = (coords.max(axis=0) - low).max()
-        if size > 0:
-            coords = (coords - low) / size
         set_loop_uvs(mesh, coords)

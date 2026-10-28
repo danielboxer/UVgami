@@ -1,27 +1,19 @@
-import collections
-
 import bmesh
 import bpy
-import numpy
 
 from ..engines import get_engine
-from ..hard_surface import apply_seams
 from ..job import AreaUVs, IslandUVs, ProxyIslandUVs
 from ..logger import logger
 from ..manager import manager
 from ..proxy import make_proxy, triangle_count
 from ..seams import (
-    FLIP_NOISE,
     face_edges,
     find,
-    flatten_distortion,
-    island_groups,
     pair,
     signed_area,
     uv_island_groups,
-    uv_tears,
 )
-from ..seams.island_repair import rectify_plans, split_moves
+from ..seams.island_repair import finish_uvs
 from ..ui.panels import describe_settings, fix_settings
 from ..unwrap import Unwrap
 from ..utils.io import export_obj
@@ -42,14 +34,9 @@ from ..utils.uvgami_tools import tools_command
 # blender's default of 10 leaves folds
 REPAIR_ITERATIONS = 50
 
-# a rectified island reverts when its solved area falls under this fraction
-RECTIFY_COLLAPSE = 0.5
-# or when its scale free Dirichlet energy rises more than this over the engine's map
-RECTIFY_DISTORTION = 1.0
-
 
 # bpy.ops pins uvs, which the engine's flatten mode has no channel for
-def unwrap(obj, only, iterations, method="MINIMUM_STRETCH"):
+def unwrap(obj, only, iterations):
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
     bpy.ops.object.mode_set(mode="EDIT")
@@ -59,7 +46,7 @@ def unwrap(obj, only, iterations, method="MINIMUM_STRETCH"):
     for fi in only:
         obj.data.polygons[fi].select = True
     bpy.ops.object.mode_set(mode="EDIT")
-    bpy.ops.uv.unwrap(method=method, margin=0.001, iterations=iterations)
+    bpy.ops.uv.unwrap(method="MINIMUM_STRETCH", margin=0.001, iterations=iterations)
     bpy.ops.object.mode_set(mode="OBJECT")
 
 
@@ -196,133 +183,26 @@ def repair_flipped_island(obj, temp):
     obj.select_set(True)
 
 
-MeshReads = collections.namedtuple("MeshReads", "coords faces edges uvs seams groups")
-
-
-def read_mesh(mesh):
-    faces = face_vertices(mesh)
-    uvs = face_uvs(mesh)
-    edges = face_edges(faces)
-    seams = uv_tears(faces, uvs)
-    groups = island_groups(faces, seams, edges)
-    return MeshReads(vertex_positions(mesh), faces, edges, uvs, seams, groups)
-
-
 def repair_workdir():
     return get_extension_dir_path() / "repair"
 
 
-# returns the reads as they are after the moves
-def finish_preseed(obj, reads, ranges=None):
+# ranges are the face ranges of the preseeded pieces, each with its own uv scale
+def finish_hard_surface(obj, faces, ranges):
     mesh = obj.data
-    if ranges is None:
-        ranges = [(0, len(reads.faces))]
-    split = split_moves(
+    finished = finish_uvs(
         tools_command(),
         repair_workdir(),
-        reads.coords,
-        reads.faces,
-        reads.uvs,
+        vertex_positions(mesh),
+        faces,
+        face_uvs(mesh),
         ranges,
     )
-    if not len(split.moved_faces):
-        return reads
-    loops = loop_starts(mesh)[split.moved_faces] + split.moved_corners
-    coords = loop_uvs(mesh)
-    coords[loops] = split.moved_uvs
-    set_loop_uvs(mesh, coords)
-
-    # blender stores uvs as float32
-    stored = coords[loops].astype(numpy.float32).astype(numpy.float64).tolist()
-    uvs = list(reads.uvs)
-    copied = set()
-    moved = zip(split.moved_faces.tolist(), split.moved_corners.tolist(), stored)
-    for fi, corner, (u, v) in moved:
-        if fi not in copied:
-            uvs[fi] = list(uvs[fi])
-            copied.add(fi)
-        uvs[fi][corner] = (round(u, 6), round(v, 6))
-    return reads._replace(uvs=uvs, seams=reads.seams | split.cuts, groups=split.islands)
-
-
-def _fan_triangle_has_area(coords, face, i):
-    x0, y0, z0 = coords[face[0]]
-    ax, ay, az = coords[face[i]]
-    bx, by, bz = coords[face[i + 1]]
-    ux, uy, uz = ax - x0, ay - y0, az - z0
-    vx, vy, vz = bx - x0, by - y0, bz - z0
-    cx = uy * vz - uz * vy
-    cy = uz * vx - ux * vz
-    cz = ux * vy - uy * vx
-    return cx * cx + cy * cy + cz * cz > 0.0
-
-
-# blender's unwrap reinitializes from scratch, a pinned solve can't unbend a curl
-def rectify_islands(obj, reads):
-    mesh = obj.data
-    coords, faces, edges, uvs, seams, groups = reads
-    plans = rectify_plans(tools_command(), repair_workdir(), uvs, groups)
-    if not plans:
+    if not len(finished.faces):
         return
-    before_distortion = [
-        flatten_distortion(coords, faces, uvs, plan.group) for plan in plans
-    ]
-
-    # the unwrap splits charts by seam marks, not by the uv map
-    apply_seams(mesh, seams)
-    bm = new_bmesh(obj)
-    uvl = bm.loops.layers.uv.active
-    bm.faces.ensure_lookup_table()
-    for plan in plans:
-        for fi in plan.group:
-            for corner, loop in enumerate(bm.faces[fi].loops):
-                target = plan.targets.get((fi, corner))
-                if target is not None:
-                    loop[uvl].uv = target
-                    loop[uvl].pin_uv = plan.pinned
-    set_bmesh(bm, obj)
-
-    solver_faces = [fi for plan in plans if plan.pinned for fi in plan.group]
-    if solver_faces:
-        unwrap(obj, solver_faces, REPAIR_ITERATIONS, method="CONFORMAL")
-        unwrap(obj, solver_faces, REPAIR_ITERATIONS)
-
-    bm = new_bmesh(obj)
-    uvl = bm.loops.layers.uv.active
-    bm.faces.ensure_lookup_table()
-    for plan, before in zip(plans, before_distortion):
-        group = plan.group
-        total = sum(signed_area(uvs[fi]) for fi in group)
-        orientation = 1 if total >= 0 else -1
-        area_before = abs(total)
-        # the distortion measure skips faces at or under this floor
-        floor = FLIP_NOISE * area_before
-        area_after = 0.0
-        crushed = False
-        solved = {}
-        for fi in group:
-            pts = [tuple(loop[uvl].uv) for loop in bm.faces[fi].loops]
-            solved[fi] = pts
-            face = faces[fi]
-            for i in range(1, len(pts) - 1):
-                a = signed_area([pts[0], pts[i], pts[i + 1]]) * orientation
-                area_after += a
-                if a <= floor and _fan_triangle_has_area(coords, face, i):
-                    crushed = True
-        after = flatten_distortion(coords, faces, solved, group)
-        bad = (
-            crushed
-            or not RECTIFY_COLLAPSE * area_before
-            <= area_after
-            <= area_before / RECTIFY_COLLAPSE
-            or after > before + RECTIFY_DISTORTION
-        )
-        for fi in group:
-            for corner, loop in enumerate(bm.faces[fi].loops):
-                if bad:
-                    loop[uvl].uv = uvs[fi][corner]
-                loop[uvl].pin_uv = False
-    set_bmesh(bm, obj)
+    coords = loop_uvs(mesh)
+    coords[loop_starts(mesh)[finished.faces] + finished.corners] = finished.uvs
+    set_loop_uvs(mesh, coords)
 
 
 def island_copy(obj, group):

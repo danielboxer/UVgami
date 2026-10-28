@@ -19,6 +19,8 @@ SplitMoves = namedtuple(
 )
 # targets maps (face, corner) to its uv, a pinned plan has targets on its boundary only
 RectifyPlan = namedtuple("RectifyPlan", "group targets pinned")
+# one entry per corner the finish changed
+FinishedUVs = namedtuple("FinishedUVs", "faces corners uvs")
 
 
 def _integers(values):
@@ -39,12 +41,12 @@ def _groups(island):
 
 
 # ranges are (start, stop) faces, each one engine output with its own uv scale
-def split_moves(command, workdir, verts, faces, uvs, ranges):
+def _engine_output_arrays(verts, faces, uvs, ranges):
     sizes, flat_uvs = face_arrays(uvs)
     corners = numpy.fromiter(
         itertools.chain.from_iterable(faces), INTEGER, int(sizes.sum())
     )
-    arrays = [
+    return [
         _integers([len(verts), len(faces), len(ranges)]),
         numpy.asarray(verts, dtype=FLOAT),
         sizes,
@@ -53,6 +55,8 @@ def split_moves(command, workdir, verts, faces, uvs, ranges):
         _integers(ranges).reshape(-1),
     ]
 
+
+def split_moves(command, workdir, verts, faces, uvs, ranges):
     def read(data):
         take = packed_reader(data)
         move_count, cut_count = take(INTEGER, 2).tolist()
@@ -64,7 +68,23 @@ def split_moves(command, workdir, verts, faces, uvs, ranges):
         cuts = {(a, b) for a, b in pairs}
         return SplitMoves(moved_faces, moved_corners, moved_uvs, cuts, islands)
 
+    arrays = _engine_output_arrays(verts, faces, uvs, ranges)
     return poll_run(start_packed(command, workdir, "split-moves", arrays, read), None)
+
+
+# the split moves then each rectified island that keeps its area and distortion
+def finish_uvs(command, workdir, verts, faces, uvs, ranges):
+    def read(data):
+        take = packed_reader(data)
+        (count,) = take(INTEGER, 1).tolist()
+        changed_faces = take(INTEGER, count)
+        changed_corners = take(INTEGER, count)
+        return FinishedUVs(
+            changed_faces, changed_corners, take(FLOAT, 2 * count).reshape(-1, 2)
+        )
+
+    arrays = _engine_output_arrays(verts, faces, uvs, ranges)
+    return poll_run(start_packed(command, workdir, "finish", arrays, read), None)
 
 
 # groups lists every face once

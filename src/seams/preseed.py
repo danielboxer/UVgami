@@ -14,28 +14,28 @@ from .worker import remove_folder
 ENGINE_INPUT_STEM = "mesh"
 
 
-# compact copy of just these faces
-def submesh(verts, faces, subset):
-    vmap = {}
-    sub_verts = []
-    sub_faces = []
-    for f in subset:
-        face = []
-        for v in faces[f]:
-            idx = vmap.get(v)
-            if idx is None:
-                idx = vmap[v] = len(sub_verts)
-                sub_verts.append(verts[v])
-            face.append(idx)
-        sub_faces.append(tuple(face))
-    return sub_verts, sub_faces
+# # compact copy of just these faces
+# def submesh(verts, faces, subset):
+#     vmap = {}
+#     sub_verts = []
+#     sub_faces = []
+#     for f in subset:
+#         face = []
+#         for v in faces[f]:
+#             idx = vmap.get(v)
+#             if idx is None:
+#                 idx = vmap[v] = len(sub_verts)
+#                 sub_verts.append(verts[v])
+#             face.append(idx)
+#         sub_faces.append(tuple(face))
+#     return sub_verts, sub_faces
 
 
 SURFACE_MODE_CODES = {"ORGANIC": 1, "HARD": 2, "AUTO": 3}
 
 
 HARDSURFACE_SEAMS_NAME = "seams.txt"
-HARD_FACES_NAME = "hard_faces.txt"
+RESOLVED_MODES_NAME = "modes.txt"
 HARDSURFACE_UVS_NAME = "uvs.txt"
 HALVES_NAME = "halves"
 DONE_PREFIX = "done: "
@@ -72,13 +72,13 @@ def _read_nothing(run_folder, face_count):
     return None
 
 
-def _read_hard_faces(path, face_count):
-    flags = numpy.loadtxt(path, dtype=numpy.int64, ndmin=1)
-    if len(flags) != face_count:
+def _read_modes(path, face_count):
+    modes = numpy.loadtxt(path, dtype=numpy.int64, ndmin=1)
+    if len(modes) != face_count:
         raise EngineError(
-            f"hard surface engine classified {len(flags)} faces, expected {face_count}"
+            f"hard surface engine classified {len(modes)} faces, expected {face_count}"
         )
-    return flags != 0
+    return modes
 
 
 # each run keeps its output files in a folder of its own, removed once read
@@ -95,26 +95,29 @@ def _write_weights(path, weights):
         )
 
 
-def _write_modes(path, surface_modes):
+def write_modes(path, surface_modes):
     path.write_text(
         "".join(f"{mode}\n" for mode in numpy.asarray(surface_modes).tolist())
     )
 
 
-# a loose part takes its first face's mode, Auto parts get the classifier's pick
-def hard_faces(command, workdir, verts, faces, surface_modes, cancelled=None):
-    if (numpy.asarray(surface_modes) == SURFACE_MODE_CODES["ORGANIC"]).all():
-        return numpy.zeros(len(faces), dtype=bool)
+# Auto parts get the classifier's pick, a part whose first face is hard is hard throughout
+def resolved_surface_modes(
+    command, workdir, verts, faces, surface_modes, cancelled=None
+):
+    surface_modes = numpy.asarray(surface_modes, dtype=numpy.int64)
+    if (surface_modes == SURFACE_MODE_CODES["ORGANIC"]).all():
+        return surface_modes.copy()
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(dir=workdir))
     try:
         obj_path = folder / f"{ENGINE_INPUT_STEM}.obj"
         write_obj(obj_path, verts, faces)
-        _write_modes(folder / f"{ENGINE_INPUT_STEM}_modes", surface_modes)
-        flags_path = folder / HARD_FACES_NAME
-        args = [*command, "classify", obj_path, flags_path]
-        run = _start(folder, args, None, flags_path, len(faces), _read_hard_faces)
+        write_modes(folder / f"{ENGINE_INPUT_STEM}_modes", surface_modes)
+        modes_path = folder / RESOLVED_MODES_NAME
+        args = [*command, "classify", obj_path, modes_path]
+        run = _start(folder, args, None, modes_path, len(faces), _read_modes)
         return poll_run(run, cancelled)
     finally:
         remove_folder(folder)
@@ -151,7 +154,7 @@ def preseed_job(
             folder / f"{ENGINE_INPUT_STEM}_weights",
             restriction_weights(weights, exposure),
         )
-        _write_modes(folder / f"{ENGINE_INPUT_STEM}_modes", surface_modes)
+        write_modes(folder / f"{ENGINE_INPUT_STEM}_modes", surface_modes)
         plane_args = []
         if plane is not None:
             axis, partners = plane

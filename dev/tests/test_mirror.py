@@ -4,7 +4,7 @@ import pytest
 from seams import EngineError
 from seams.mirror import (
     mirror_partners,
-    mirrored_corner_sources,
+    mirrored_uvs,
     partner_map,
     symmetric_axis,
     symmetric_regions,
@@ -179,41 +179,52 @@ def test_mirror_partners_pairs_both_copies_of_a_split_vertex(partners_of, axis_o
     assert partner_map(found.partners) == partners
 
 
-def test_mirrored_corner_sources_maps_each_negative_corner_to_its_mirror_image(
-    tools, tmp_path
-):
-    # a quad on each side of x = 0 split along opposite diagonals, vertex 6 is a copy of vertex 1
-    coords = [
-        (-1.0, 0.0, 0.0),
-        (0.0, 0.0, 0.0),
-        (1.0, 0.0, 0.0),
-        (-1.0, 1.0, 0.0),
-        (0.0, 1.0, 0.0),
-        (1.0, 1.0, 0.0),
-        (0.0, 0.0, 0.0),
-    ]
-    positions, corners, totals = mesh_arrays(
-        coords, [[0, 1, 4], [0, 4, 3], [6, 2, 4], [2, 5, 4]]
+# a quad on each side of x = 0 split along opposite diagonals, vertex 6 is a copy of vertex 1
+SPLIT_QUADS_COORDS = [
+    (-1.0, 0.0, 0.0),
+    (0.0, 0.0, 0.0),
+    (1.0, 0.0, 0.0),
+    (-1.0, 1.0, 0.0),
+    (0.0, 1.0, 0.0),
+    (1.0, 1.0, 0.0),
+    (0.0, 0.0, 0.0),
+]
+SPLIT_QUADS_FACES = [[0, 1, 4], [0, 4, 3], [6, 2, 4], [2, 5, 4]]
+
+
+def test_mirrored_uvs_flip_the_positive_half_past_its_right_edge(tools, tmp_path):
+    positions, corners, totals = mesh_arrays(SPLIT_QUADS_COORDS, SPLIT_QUADS_FACES)
+    negative = numpy.arange(len(corners)) < 6
+    x, y = positions[corners, 0], positions[corners, 1]
+    # the negative half's own uvs are thrown away
+    uvs = numpy.where(negative[:, None], 9.0, numpy.stack([x + 2, y], axis=1))
+
+    mirrored = mirrored_uvs(
+        tools, tmp_path, positions, corners, totals, uvs, numpy.zeros(3), "X", TOLERANCE
     )
 
-    targets, sources = mirrored_corner_sources(
-        tools, tmp_path, positions, corners, totals, numpy.zeros(3), "X", TOLERANCE
-    )
-
-    assert targets.tolist() == [0, 1, 2, 3, 4, 5]
-    assert (sources >= 6).all()
-    mirrored = positions[corners[targets]] * [-1.0, 1.0, 1.0]
-    numpy.testing.assert_allclose(positions[corners[sources]], mirrored)
+    # the positive half spans u 2 to 3, its mirror image lands on 3 to 4
+    expected = numpy.where(negative[:, None], numpy.stack([4 + x, y], axis=1), uvs)
+    numpy.testing.assert_allclose(mirrored, (expected - [2.0, 0.0]) / 2.0)
 
 
-def test_mirrored_corner_sources_raises_when_a_vertex_has_no_mirror(tools, tmp_path):
+def test_mirrored_uvs_raise_when_a_vertex_has_no_mirror(tools, tmp_path):
     positions, corners, totals = mesh_arrays(
         [(-1, 0, 0), (-2, 0, 0), (-1, 1, 0), (1, 0, 0), (2, 0, 0), (1, 2, 0)],
         [(0, 2, 1), (3, 4, 5)],
     )
+    uvs = numpy.zeros((len(corners), 2))
     with pytest.raises(EngineError, match="doesn't mirror across X"):
-        mirrored_corner_sources(
-            tools, tmp_path, positions, corners, totals, numpy.zeros(3), "X", TOLERANCE
+        mirrored_uvs(
+            tools,
+            tmp_path,
+            positions,
+            corners,
+            totals,
+            uvs,
+            numpy.zeros(3),
+            "X",
+            TOLERANCE,
         )
 
 
@@ -250,12 +261,12 @@ def test_symmetric_regions_keeps_the_half_with_more_regions_then_shorter_borders
     coords, faces = quad_row(4)
 
     # only one half has a second region, its border length doesn't matter
-    assert mirror_regions(coords, faces, [1, 1, 1, 2])[0] == 1
-    assert mirror_regions(coords, faces, [2, 1, 1, 1])[0] == -1
+    assert mirror_regions(coords, faces, [1, 1, 1, 2]).kept_side == 1
+    assert mirror_regions(coords, faces, [2, 1, 1, 1]).kept_side == -1
 
     # both halves have two regions, the positive border has a step in it
     coords[7] = (0.6, 1.0, 0.0)
-    assert mirror_regions(coords, faces, [1, 2, 2, 3])[0] == -1
+    assert mirror_regions(coords, faces, [1, 2, 2, 3]).kept_side == -1
 
 
 def test_symmetric_regions_keeps_a_border_that_runs_across_the_plane(mirror_regions):
@@ -274,16 +285,19 @@ def test_symmetric_regions_keeps_a_border_that_runs_across_the_plane(mirror_regi
     ]
     rows = [1, 2] * 4
 
-    _, labels = mirror_regions(coords, faces, rows)
+    mirrored = mirror_regions(coords, faces, rows)
 
-    assert labels.tolist() == rows
+    assert mirrored.labels.tolist() == rows
+    # the border between the rows runs along y = 1 from x -1 to 1
+    assert mirrored.region_count == 2
+    assert mirrored.border_edges == [(1, 4), (4, 7), (7, 10), (10, 13)]
 
 
 def test_symmetric_regions_copies_one_sided_regions_with_new_labels(mirror_regions):
     # face 3 is a leg region on the positive half, face 0 is its mirror image
     coords, faces = quad_row(4)
 
-    side, labels = mirror_regions(coords, faces, [5, 1, 1, 2])
+    side, labels, _, _ = mirror_regions(coords, faces, [5, 1, 1, 2])
 
     assert side == 1
     assert labels[2:].tolist() == [1, 2]
@@ -298,7 +312,7 @@ def test_symmetric_regions_keeps_the_engine_border_where_the_regions_match(
     coords, faces = quad_row(40)
     labels = [3] * 9 + [4] * 11 + [1] * 10 + [2] * 10
 
-    side, mirrored = mirror_regions(coords, faces, labels)
+    side, mirrored, _, _ = mirror_regions(coords, faces, labels)
 
     assert side == 1
     assert mirrored[20:].tolist() == labels[20:]

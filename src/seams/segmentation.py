@@ -2,17 +2,27 @@ import tempfile
 from collections import namedtuple
 from pathlib import Path
 
-import numpy
+from .engine_run import (
+    INTEGER,
+    EngineRun,
+    launch,
+    packed_reader,
+    poll_run,
+    write_obj,
+)
+from .mesh import faces_from_arrays
+from .preseed import resolved_surface_modes, write_modes
 
-from .engine_run import EngineError, EngineRun, launch, poll_run, stdout_path, write_obj
-from .mesh import edge_keys, faces_from_arrays, following_corners
-from .preseed import SURFACE_MODE_CODES, hard_faces, submesh
-
+# from .engine_run import EngineError, stdout_path
+# from .mesh import edge_keys, following_corners
+# from .preseed import submesh
 # from .proxy_transfer import connected_labels
 
-INPUT_NAME = "segment.obj"
-LABELS_NAME = "labels.txt"
-DONE_PREFIX = "done: "
+INPUT_STEM = "segment"
+OUTPUT_NAME = "regions.bin"
+# INPUT_NAME = "segment.obj"
+# LABELS_NAME = "labels.txt"
+# DONE_PREFIX = "done: "
 # PIECE_PREFIX = "piece: "
 
 # labels number regions from one, zero outside them, border_edges are (low, high) pairs
@@ -26,16 +36,16 @@ SegmentRegions = namedtuple(
     ],
 )
 
-# (face, face, (low, high) vertex pair) per edge two faces share
-EdgeFacePairs = namedtuple(
-    "EdgeFacePairs",
-    [
-        "first",
-        "second",
-        # "lengths",
-        "edges",
-    ],
-)
+# # (face, face, (low, high) vertex pair) per edge two faces share
+# EdgeFacePairs = namedtuple(
+#     "EdgeFacePairs",
+#     [
+#         "first",
+#         "second",
+#         # "lengths",
+#         "edges",
+#     ],
+# )
 
 # SegmentOutput = namedtuple("SegmentOutput", ["labels", "region_count", "piece"])
 
@@ -43,62 +53,89 @@ EdgeFacePairs = namedtuple(
 # SplitRegion = namedtuple("SplitRegion", ["labels", "piece"])
 
 
-def _read_labels(path, face_count):
-    stdout = stdout_path(path.parent).read_text().splitlines()
-    done = [line for line in stdout if line.startswith(DONE_PREFIX)]
-    if len(done) != 1:
-        raise EngineError("segmentation engine printed no region count")
-    # region_count = int(done[0][len(DONE_PREFIX) :])
-    # piece_lines = [line for line in stdout if line.startswith(PIECE_PREFIX)]
-    # piece = int(piece_lines[0][len(PIECE_PREFIX) :]) if piece_lines else None
-    labels = numpy.loadtxt(path, dtype=numpy.int64, ndmin=1)
-    if len(labels) != face_count:
-        raise EngineError(
-            f"segmentation engine labelled {len(labels)} faces, expected {face_count}"
-        )
-    return labels
-    # return SegmentOutput(labels, region_count, piece)
-
-
-# # seed is a face whose piece becomes a region, step moves an earlier run's piece, loop_corner names an edge of the seed
-def start_segmentation(
-    segment_command,
-    workdir,
-    verts,
-    faces,
-    # seed=None,
-    # piece=None,
-    # step=None,
-    # loop_corner=None,
-):
-    workdir = Path(workdir)
-    workdir.mkdir(parents=True, exist_ok=True)
-    folder = Path(tempfile.mkdtemp(dir=workdir))
-    input_path = folder / INPUT_NAME
-    labels_path = folder / LABELS_NAME
-    write_obj(input_path, verts, faces)
-    args = [*(str(part) for part in segment_command), str(input_path), str(labels_path)]
-    # if seed is not None:
-    #     args += ["--seed", str(seed)]
-    # if step is not None:
-    #     args += ["--piece", str(piece), "--step", step]
-    # if loop_corner is not None:
-    #     args += ["--loop-corner", str(loop_corner)]
-    process = launch(folder, args, None)
-    return EngineRun(process, folder, labels_path, len(faces), _read_labels)
-
-
-# Auto faces get the classifier's pick
-def resolve_surface_modes(
-    hardsurface_command, workdir, verts, faces, surface_modes, cancelled
-):
-    hard = hard_faces(
-        hardsurface_command, workdir, verts, faces, surface_modes, cancelled
+def _read_regions(path, face_count):
+    take = packed_reader(path.read_bytes())
+    region_count, border_count = take(INTEGER, 2).tolist()
+    surface_modes = take(INTEGER, face_count)
+    labels = take(INTEGER, face_count)
+    edges = take(INTEGER, 2 * border_count).reshape(-1, 2).tolist()
+    return SegmentRegions(
+        surface_modes, [tuple(edge) for edge in edges], region_count, labels
     )
-    resolved = surface_modes.copy()
-    resolved[resolved == SURFACE_MODE_CODES["AUTO"]] = SURFACE_MODE_CODES["ORGANIC"]
-    resolved[hard] = SURFACE_MODE_CODES["HARD"]
-    return resolved
+
+
+# def _read_labels(path, face_count):
+#     stdout = stdout_path(path.parent).read_text().splitlines()
+#     done = [line for line in stdout if line.startswith(DONE_PREFIX)]
+#     if len(done) != 1:
+#         raise EngineError("segmentation engine printed no region count")
+#     # region_count = int(done[0][len(DONE_PREFIX) :])
+#     # piece_lines = [line for line in stdout if line.startswith(PIECE_PREFIX)]
+#     # piece = int(piece_lines[0][len(PIECE_PREFIX) :]) if piece_lines else None
+#     labels = numpy.loadtxt(path, dtype=numpy.int64, ndmin=1)
+#     if len(labels) != face_count:
+#         raise EngineError(
+#             f"segmentation engine labelled {len(labels)} faces, expected {face_count}"
+#         )
+#     return labels
+#     # return SegmentOutput(labels, region_count, piece)
+#
+#
+# # # seed is a face whose piece becomes a region, step moves an earlier run's piece, loop_corner names an edge of the seed
+# def start_segmentation(
+#     segment_command,
+#     workdir,
+#     verts,
+#     faces,
+#     # seed=None,
+#     # piece=None,
+#     # step=None,
+#     # loop_corner=None,
+# ):
+#     workdir = Path(workdir)
+#     workdir.mkdir(parents=True, exist_ok=True)
+#     folder = Path(tempfile.mkdtemp(dir=workdir))
+#     input_path = folder / INPUT_NAME
+#     labels_path = folder / LABELS_NAME
+#     write_obj(input_path, verts, faces)
+#     args = [*(str(part) for part in segment_command), str(input_path), str(labels_path)]
+#     # if seed is not None:
+#     #     args += ["--seed", str(seed)]
+#     # if step is not None:
+#     #     args += ["--piece", str(piece), "--step", step]
+#     # if loop_corner is not None:
+#     #     args += ["--loop-corner", str(loop_corner)]
+#     process = launch(folder, args, None)
+#     return EngineRun(process, folder, labels_path, len(faces), _read_labels)
+
+
+# def edge_face_pairs(
+#     # positions,
+#     corners,
+#     totals,
+# ):
+#     face_of_corner = numpy.repeat(numpy.arange(len(totals)), totals)
+#     next_corner = following_corners(totals)
+#     low = numpy.minimum(corners, corners[next_corner])
+#     high = numpy.maximum(corners, corners[next_corner])
+#     keys = edge_keys(corners, corners[next_corner])
+#     order = numpy.argsort(keys, kind="stable")
+#     shared = keys[order][:-1] == keys[order][1:]
+#     first = face_of_corner[order[:-1][shared]]
+#     second = face_of_corner[order[1:][shared]]
+#     distinct = first != second
+#     first, second = first[distinct], second[distinct]
+#     edge_corners = order[:-1][shared][distinct]
+#     edges = numpy.stack([low[edge_corners], high[edge_corners]], axis=1)
+#     # lengths = numpy.linalg.norm(positions[edges[:, 0]] - positions[edges[:, 1]], axis=1)
+#     return EdgeFacePairs(first, second, edges)
+#
+#
+# def border_edges(face_pairs, labels):
+#     differ = labels[face_pairs.first] != labels[face_pairs.second]
+#     # an edge with three or more faces is listed once per face pair
+#     edges = numpy.unique(face_pairs.edges[differ], axis=0)
+#     return [tuple(edge) for edge in edges.tolist()]
 
 
 def classify_job(
@@ -111,7 +148,7 @@ def classify_job(
     cancelled=None,
 ):
     faces = faces_from_arrays(corners, totals)
-    return resolve_surface_modes(
+    return resolved_surface_modes(
         hardsurface_command,
         workdir,
         positions.tolist(),
@@ -119,35 +156,6 @@ def classify_job(
         surface_modes,
         cancelled,
     )
-
-
-def edge_face_pairs(
-    # positions,
-    corners,
-    totals,
-):
-    face_of_corner = numpy.repeat(numpy.arange(len(totals)), totals)
-    next_corner = following_corners(totals)
-    low = numpy.minimum(corners, corners[next_corner])
-    high = numpy.maximum(corners, corners[next_corner])
-    keys = edge_keys(corners, corners[next_corner])
-    order = numpy.argsort(keys, kind="stable")
-    shared = keys[order][:-1] == keys[order][1:]
-    first = face_of_corner[order[:-1][shared]]
-    second = face_of_corner[order[1:][shared]]
-    distinct = first != second
-    first, second = first[distinct], second[distinct]
-    edge_corners = order[:-1][shared][distinct]
-    edges = numpy.stack([low[edge_corners], high[edge_corners]], axis=1)
-    # lengths = numpy.linalg.norm(positions[edges[:, 0]] - positions[edges[:, 1]], axis=1)
-    return EdgeFacePairs(first, second, edges)
-
-
-def border_edges(face_pairs, labels):
-    differ = labels[face_pairs.first] != labels[face_pairs.second]
-    # an edge with three or more faces is listed once per face pair
-    edges = numpy.unique(face_pairs.edges[differ], axis=0)
-    return [tuple(edge) for edge in edges.tolist()]
 
 
 # # the clicked region joins the neighbor it shares the longest border with
@@ -167,9 +175,9 @@ def border_edges(face_pairs, labels):
 #     return merged
 
 
+# kept faces keep their uvs, so like hard ones they get no region
 def segment_job(
     segment_command,
-    hardsurface_command,
     workdir,
     positions,
     corners,
@@ -179,28 +187,25 @@ def segment_job(
     # stored_labels=None,
     cancelled=None,
 ):
-    verts = positions.tolist()
     faces = faces_from_arrays(corners, totals)
-    resolved = resolve_surface_modes(
-        hardsurface_command, workdir, verts, faces, surface_modes, cancelled
-    )
-    segmented = (resolved == SURFACE_MODE_CODES["ORGANIC"]) & ~kept_faces
-    labels = numpy.zeros(len(faces), dtype=numpy.int64)
-    if not segmented.any():
-        return SegmentRegions(resolved, [], 0, labels)
-
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    folder = Path(tempfile.mkdtemp(dir=workdir))
+    input_path = folder / f"{INPUT_STEM}.obj"
+    write_obj(input_path, positions.tolist(), faces)
+    write_modes(folder / f"{INPUT_STEM}_modes", surface_modes)
+    if kept_faces.any():
+        (folder / f"{INPUT_STEM}_kept").write_text(
+            "".join(f"{int(kept)}\n" for kept in kept_faces.tolist())
+        )
     # if stored_labels is not None and stored_labels.any():
     #     labels[segmented] = stored_labels[segmented]
-    # else:
-    segmented_faces = numpy.flatnonzero(segmented)
-    sub_verts, sub_faces = submesh(verts, faces, segmented_faces.tolist())
-    run = start_segmentation(segment_command, workdir, sub_verts, sub_faces)
-    labels[segmented_faces] = poll_run(run, cancelled) + 1
-    region_count = len(numpy.unique(labels[labels > 0]))
-    face_pairs = edge_face_pairs(corners, totals)
-    return SegmentRegions(
-        resolved, border_edges(face_pairs, labels), region_count, labels
+    output_path = folder / OUTPUT_NAME
+    args = [str(part) for part in [*segment_command, input_path, output_path]]
+    run = EngineRun(
+        launch(folder, args, None), folder, output_path, len(faces), _read_regions
     )
+    return poll_run(run, cancelled)
 
 
 # # splits the region at a node of the engine's merge tree

@@ -5,10 +5,8 @@ import pytest
 
 from seams import SURFACE_MODE_CODES, EngineError
 from seams.segmentation import (
-    border_edges,
     # split_loop_job,
     # split_region_job,
-    edge_face_pairs,
     # merge_region,
     segment_job,
 )
@@ -16,8 +14,6 @@ from seams.worker import WorkerProcess
 
 # the dumbbell fixture's bulbs meet a straight neck of this radius around the x axis
 NECK_RADIUS = 0.3
-# an all organic mesh never starts the classifier
-NO_HARDSURFACE = ["no-such-hardsurface-engine.exe"]
 
 
 # (verts, faces, mode code, kept) per loose part, flattened into the worker's inputs
@@ -58,10 +54,8 @@ def test_dumbbell_splits_on_the_neck_and_skips_hard_and_kept_parts(
     )
     positions = inputs[0]
 
-    tools = [engine_binary("uvgami-tools")]
-    result = WorkerProcess(
-        segment_job, [*tools, "segment"], tools, tmp_path, *inputs
-    ).result()
+    segment = [engine_binary("uvgami-tools"), "segment"]
+    result = WorkerProcess(segment_job, segment, tmp_path, *inputs).result()
 
     assert SURFACE_MODE_CODES["AUTO"] not in result.surface_modes
     assert result.region_count >= 2
@@ -77,7 +71,7 @@ def test_a_missing_engine_raises(tmp_path, fixture_mesh):
     verts, faces = fixture_mesh("dumbbell")
     inputs = mesh_inputs([(verts, faces, "ORGANIC", False)])
     with pytest.raises(EngineError, match="failed to start"):
-        segment_job(["no-such-segment-engine.exe"], NO_HARDSURFACE, tmp_path, *inputs)
+        segment_job(["no-such-segment-engine.exe"], tmp_path, *inputs)
 
 
 def test_a_failing_engine_raises(tmp_path, fixture_mesh):
@@ -85,19 +79,21 @@ def test_a_failing_engine_raises(tmp_path, fixture_mesh):
     inputs = mesh_inputs([(verts, faces, "ORGANIC", False)])
     failing = [sys.executable, "-c", "import sys; sys.exit(2)"]
     with pytest.raises(EngineError, match="exited 2"):
-        segment_job(failing, NO_HARDSURFACE, tmp_path, *inputs)
+        segment_job(failing, tmp_path, *inputs)
 
 
 @pytest.mark.smoke
-def test_hard_and_kept_parts_never_start_the_engine(tmp_path, engine_binary, unit_cube):
+def test_hard_and_kept_parts_get_no_regions(tmp_path, engine_binary, unit_cube):
     inputs = mesh_inputs(
         [
             (*cube_at(unit_cube, 0.0), "HARD", False),
             (*cube_at(unit_cube, 5.0), "ORGANIC", True),
         ]
     )
-    tools = [engine_binary("uvgami-tools")]
-    result = segment_job(["no-such-segment-engine.exe"], tools, tmp_path, *inputs)
+    segment = [engine_binary("uvgami-tools"), "segment"]
+    result = segment_job(segment, tmp_path, *inputs)
+    assert result.region_count == 0
+    assert not result.labels.any()
     assert result.border_edges == []
     assert (
         result.surface_modes.tolist()
@@ -105,43 +101,27 @@ def test_hard_and_kept_parts_never_start_the_engine(tmp_path, engine_binary, uni
     )
 
 
-# four quads in a row, the second and third share a long edge, the others short ones
-STRIP_VERTS = [
-    (0.0, 0.0, 0.0),
-    (1.0, 0.0, 0.0),
-    (2.0, -1.0, 0.0),
-    (3.0, 0.0, 0.0),
-    (4.0, 0.0, 0.0),
-    (0.0, 1.0, 0.0),
-    (1.0, 1.0, 0.0),
-    (2.0, 2.0, 0.0),
-    (3.0, 1.0, 0.0),
-    (4.0, 1.0, 0.0),
-]
-STRIP_FACES = [(0, 1, 6, 5), (1, 2, 7, 6), (2, 3, 8, 7), (3, 4, 9, 8)]
+# # four quads in a row, the second and third share a long edge, the others short ones
+# STRIP_VERTS = [
+#     (0.0, 0.0, 0.0),
+#     (1.0, 0.0, 0.0),
+#     (2.0, -1.0, 0.0),
+#     (3.0, 0.0, 0.0),
+#     (4.0, 0.0, 0.0),
+#     (0.0, 1.0, 0.0),
+#     (1.0, 1.0, 0.0),
+#     (2.0, 2.0, 0.0),
+#     (3.0, 1.0, 0.0),
+#     (4.0, 1.0, 0.0),
+# ]
+# STRIP_FACES = [(0, 1, 6, 5), (1, 2, 7, 6), (2, 3, 8, 7), (3, 4, 9, 8)]
 
 
-def strip_arrays():
-    positions = numpy.array(STRIP_VERTS)
-    corners = numpy.array([v for face in STRIP_FACES for v in face], dtype=numpy.int64)
-    totals = numpy.array([4] * len(STRIP_FACES), dtype=numpy.int64)
-    return positions, corners, totals
-
-
-def test_edge_face_pairs_lists_each_shared_edge_once():
-    _, corners, totals = strip_arrays()
-    face_pairs = edge_face_pairs(corners, totals)
-    pairs = sorted(zip(face_pairs.first.tolist(), face_pairs.second.tolist()))
-    assert pairs == [(0, 1), (1, 2), (2, 3)]
-    # assert sorted(face_pairs.lengths.tolist()) == [1.0, 1.0, 3.0]
-    assert sorted(map(tuple, face_pairs.edges.tolist())) == [(1, 6), (2, 7), (3, 8)]
-
-
-def test_border_edges_lists_a_three_face_edge_once():
-    corners = numpy.array([0, 1, 2, 0, 1, 3, 0, 1, 4], dtype=numpy.int64)
-    totals = numpy.array([3, 3, 3], dtype=numpy.int64)
-    face_pairs = edge_face_pairs(corners, totals)
-    assert border_edges(face_pairs, numpy.array([1, 2, 3])) == [(0, 1)]
+# def strip_arrays():
+#     positions = numpy.array(STRIP_VERTS)
+#     corners = numpy.array([v for face in STRIP_FACES for v in face], dtype=numpy.int64)
+#     totals = numpy.array([4] * len(STRIP_FACES), dtype=numpy.int64)
+#     return positions, corners, totals
 
 
 # def test_merge_region_joins_the_neighbor_with_the_longest_border():

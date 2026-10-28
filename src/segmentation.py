@@ -15,7 +15,6 @@ from .utils.mesh import (
     vertex_position_array,
 )
 from .utils.paths import get_extension_dir_path
-from .utils.uvgami_tools import tools_command
 
 # # hand edited region numbers per face from one up, zero outside the regions
 # REGION_ATTRIBUTE = "uvgami_region"
@@ -47,7 +46,6 @@ def segment_work(mesh, positions, segment_command, unset_mode):
     return WorkerProcess(
         segment_job,
         segment_command,
-        tools_command(),
         get_extension_dir_path() / "segment",
         positions,
         *face_vertex_arrays(mesh),

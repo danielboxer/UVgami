@@ -15,6 +15,7 @@ from .ops.grid import add_grid, make_grid_img, make_grid_mat
 from .ops.uv import pack_objects, show_seams
 from .part_overrides import write_overrides
 from .progress_bar import progress_bar
+from .seams import face_edges
 from .seams.uv_transfer import AMBIGUOUS_GEOMETRY
 from .similar import write_twin_output
 from .utils.geometry import set_origin
@@ -24,6 +25,7 @@ from .utils.mesh import (
     check_collection,
     check_exists,
     edit_restore,
+    face_vertices,
     mark_not_unwrapped,
     move_to_collection,
 )
@@ -533,9 +535,10 @@ class UnwrapManager:
         pieces = unwrap.join_job.finished if unwrap.join_job is not None else [unwrap]
         if any(u.preseeded for u in pieces):
             # imported here: ops.island imports this module back
-            from .ops.island import finish_preseed, read_mesh, rectify_islands
+            from .ops.island import finish_hard_surface
 
-            ranges = None
+            face_count = len(output.data.polygons)
+            ranges = [(0, face_count)]
             if len(pieces) > 1:
                 ranges = []
                 start = 0
@@ -545,12 +548,11 @@ class UnwrapManager:
                     if u.preseeded:
                         ranges.append((start, stop))
                     start = stop
-                if start != len(output.data.polygons):
-                    ranges = None
-            reads = read_mesh(output.data)
-            reads = finish_preseed(output, reads, ranges)
-            rectify_islands(output, reads)
-            self._pack_topology[output] = (reads.faces, reads.edges)
+                if start != face_count:
+                    ranges = [(0, face_count)]
+            faces = face_vertices(output.data)
+            finish_hard_surface(output, faces, ranges)
+            self._pack_topology[output] = (faces, face_edges(faces))
 
         if props.pack_after_unwrap:
             self._pack_output_objects.append(output)

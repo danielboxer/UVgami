@@ -19,8 +19,8 @@ from .mesh import (
 from .preseed import (
     SURFACE_MODE_CODES,
     OptcutsRun,
-    hard_faces,
     preseed_job,
+    resolved_surface_modes,
 )
 from .rectify import FLIP_NOISE, flatten_distortion
 
@@ -33,7 +33,6 @@ __all__ = [
     "face_edges",
     "face_keys",
     "find",
-    "hard_faces",
     "island_groups",
     "island_layout",
     "islands_overlap",
@@ -42,6 +41,7 @@ __all__ = [
     "restriction_weights",
     "SURFACE_MODE_CODES",
     "preseed_job",
+    "resolved_surface_modes",
     "signed_area",
     "uv_area_fit",
     "uv_fit",
