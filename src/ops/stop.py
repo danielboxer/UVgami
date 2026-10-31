@@ -5,26 +5,35 @@ from ..manager import manager
 from ..objfile import merge_obj_files
 from ..utils.io import import_obj
 from ..utils.mesh import mark_not_unwrapped
-from ..utils.ui import tag_redraw
+from ..utils.ui import count_label, tag_redraw
 
 
-# pieces leave manager.active between the draw and the click
 def group_targets(job_id):
     return [
-        u
-        for u in manager.active
-        if u.join_job is not None and u.join_job.job_id == job_id
+        unwrap
+        for unwrap in manager.active
+        if unwrap.join_job is not None and unwrap.join_job.job_id == job_id
     ]
 
 
 def piece_target(stem):
-    return [u for u in manager.active if u.path.stem == stem]
+    return [unwrap for unwrap in manager.active if unwrap.path.stem == stem]
 
 
-def drop_unwrap(context, unwrap, invalid_label, result):
+def confirm_discard(operator, context, event, *, finished_count, title):
+    return context.window_manager.invoke_confirm(
+        operator,
+        event,
+        title=title,
+        message=f"{count_label(finished_count, 'finished piece')} will be discarded",
+        icon="WARNING",
+    )
+
+
+def drop_unwrap(unwrap, invalid_label, result):
     unwrap.cancel_solve()
     if invalid_label is not None and unwrap.path.is_file():
-        # the import must happen before record_result, which deletes the input file
+        # record_result deletes unwrap.path
         mark_not_unwrapped(import_obj(unwrap.path), invalid_label)
         manager.moved_to_invalid = True
     manager.record_result(unwrap, result)
@@ -35,36 +44,29 @@ class UVGAMI_OT_stop(bpy.types.Operator):
     bl_label = "Stop"
     bl_description = "Stop UV unwrap"
 
-    # a group button sets job_id, a piece button sets stem
     stem: bpy.props.StringProperty(options={"SKIP_SAVE"})
     job_id: bpy.props.IntProperty(options={"SKIP_SAVE"})
 
     def execute(self, context):
         unwraps = group_targets(self.job_id) if self.job_id else piece_target(self.stem)
 
-        # a group's cancelled pieces merge into one import
         to_cancel = []
         for unwrap in unwraps:
             if unwrap.is_solving and manager.engine.supports_early_stop:
-                # the flag re-sends each tick and arms the STOP_SECONDS force kill
                 unwrap.is_stopped = True
                 delivered = manager.engine.request_early_stop(unwrap.process)
-                # a process that exited since the last tick finishes on its own
                 if not delivered and unwrap.process.poll() is None:
                     self.report({"ERROR"}, "Could not stop unwrap")
             elif not unwrap.is_running:
-                # a queued mesh has no partial map yet
                 to_cancel.append(unwrap)
-            # a mesh with no early stop settles on its own
 
-        self._cancel_collected(context, to_cancel)
+        self._cancel_collected(to_cancel)
         if to_cancel:
             manager.exit_viewer = True
             tag_redraw()
         return {"FINISHED"}
 
-    def _cancel_collected(self, context, to_cancel):
-        # pieces of one separated mesh share a join_job
+    def _cancel_collected(self, to_cancel):
         groups = {}
         singles = []
         for unwrap in to_cancel:
@@ -77,16 +79,14 @@ class UVGAMI_OT_stop(bpy.types.Operator):
             if len(group) < 2:
                 singles.extend(group)
                 continue
-            self._import_merged_group(context, group)
-            # _import_merged_group already imported these
+            self._import_merged_group(group)
             for unwrap in group:
-                drop_unwrap(context, unwrap, None, Result.STOPPED)
+                drop_unwrap(unwrap, None, Result.STOPPED)
 
         for unwrap in singles:
-            drop_unwrap(context, unwrap, "Stopped", Result.STOPPED)
+            drop_unwrap(unwrap, "Stopped", Result.STOPPED)
 
-    def _import_merged_group(self, context, group):
-        # record_result deletes these input files
+    def _import_merged_group(self, group):
         paths = [unwrap.path for unwrap in group if unwrap.path.is_file()]
         if not paths:
             return
@@ -100,22 +100,18 @@ class UVGAMI_OT_cancel(bpy.types.Operator):
     bl_label = "Cancel"
     bl_description = "Cancel UV unwrap"
 
-    # a group button sets job_id, a piece button sets stem
     stem: bpy.props.StringProperty(options={"SKIP_SAVE"})
     job_id: bpy.props.IntProperty(options={"SKIP_SAVE"})
 
     def invoke(self, context, event):
-        # only a group cancel can discard finished pieces
         targets = group_targets(self.job_id) if self.job_id else []
         if targets and targets[0].join_job.finished:
-            count = len(targets[0].join_job.finished)
-            pieces = "piece" if count == 1 else "pieces"
-            return context.window_manager.invoke_confirm(
+            return confirm_discard(
                 self,
+                context,
                 event,
+                finished_count=len(targets[0].join_job.finished),
                 title="Cancel Unwrap",
-                message=f"{count} finished {pieces} will be discarded",
-                icon="WARNING",
             )
         return self.execute(context)
 
@@ -127,14 +123,13 @@ class UVGAMI_OT_cancel(bpy.types.Operator):
                     unwrap.join_job.discard = True
 
         for unwrap in unwraps:
-            # the joined result visibly misses a piece
             is_individual_from_group = (
                 not self.job_id
                 and unwrap.join_job is not None
                 and unwrap.join_job.expected > 1
             )
             label = "Cancelled (group)" if is_individual_from_group else None
-            drop_unwrap(context, unwrap, label, Result.CANCELLED)
+            drop_unwrap(unwrap, label, Result.CANCELLED)
 
         if unwraps:
             manager.exit_viewer = True
@@ -151,12 +146,20 @@ class UVGAMI_OT_cancel_background(bpy.types.Operator):
     name: bpy.props.StringProperty()
 
     def execute(self, context):
-        entry = next((p for p in manager.preparing if p.name == self.name), None)
+        entry = next(
+            (pending for pending in manager.preparing if pending.name == self.name),
+            None,
+        )
         if entry is not None:
             entry.cancel()
         else:
             transfer = next(
-                (t for t in manager.pending_transfers if t.name == self.name), None
+                (
+                    pending
+                    for pending in manager.pending_transfers
+                    if pending.name == self.name
+                ),
+                None,
             )
             if transfer is None:
                 return {"CANCELLED"}
@@ -172,16 +175,13 @@ class UVGAMI_OT_cancel_all(bpy.types.Operator):
     bl_description = "Cancel all active UV unwraps"
 
     def invoke(self, context, event):
-        jobs = {u.join_job for u in manager.active if u.join_job is not None}
+        jobs = {
+            unwrap.join_job for unwrap in manager.active if unwrap.join_job is not None
+        }
         count = sum(len(job.finished) for job in jobs)
         if count:
-            pieces = "piece" if count == 1 else "pieces"
-            return context.window_manager.invoke_confirm(
-                self,
-                event,
-                title="Cancel All",
-                message=f"{count} finished {pieces} will be discarded",
-                icon="WARNING",
+            return confirm_discard(
+                self, context, event, finished_count=count, title="Cancel All"
             )
         return self.execute(context)
 

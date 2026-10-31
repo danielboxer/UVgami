@@ -1,3 +1,4 @@
+import importlib
 import sys
 
 import bmesh
@@ -14,21 +15,22 @@ from blender_fixtures import (
     needs_engine,
     needs_tools,
     needs_xatlas,
+    uvs_inside_unit_square,
 )
 
-segmentation = addon.src.segmentation
+segmentation = importlib.import_module(addon.src.__name__ + ".segmentation")
 # segment_edit = addon.src.ops.segment_edit
 # auto_preview = addon.src.ops.auto_preview
-# merge_region = addon.src.seams.segmentation.merge_region
-SURFACE_MODE_CODES = addon.src.seams.SURFACE_MODE_CODES
+# merge_region = addon.src.no_bpy.segmentation.merge_region
+SURFACE_MODE_CODES = addon.src.no_bpy.SURFACE_MODE_CODES
 
 # the dumbbell fixture's bulbs meet a straight neck of this radius around the x axis
 NECK_RADIUS = 0.3
 OUTPUT = "Dumbbell_unwrapped"
 
 
-def axis_distance(co):
-    return (co.y**2 + co.z**2) ** 0.5
+def axis_distance(position):
+    return (position.y**2 + position.z**2) ** 0.5
 
 
 def corner_positions(mesh):
@@ -38,25 +40,25 @@ def corner_positions(mesh):
     ]
 
 
-# the x of one ring on the neck between the bulbs, and its edges
 def neck_ring(mesh):
+    # the x of one ring on the neck between the bulbs, and its edges
     neck = [v for v in mesh.vertices if abs(axis_distance(v.co) - NECK_RADIUS) < 1e-4]
     ring_x = min(v.co.x for v in neck if abs(v.co.x) < 1.0)
     on_ring = {v.index for v in neck if abs(v.co.x - ring_x) < 1e-5}
-    edges = [tuple(sorted(e.vertices)) for e in mesh.edges]
+    edges = [tuple(sorted(edge.vertices)) for edge in mesh.edges]
     return ring_x, [edge for edge in edges if set(edge) <= on_ring]
 
 
 def add_triangle_at(mesh, position):
-    bm = bmesh.new()
-    bm.from_mesh(mesh)
+    edited = bmesh.new()
+    edited.from_mesh(mesh)
     corners = [
-        bm.verts.new(position + mathutils.Vector(offset))
+        edited.verts.new(position + mathutils.Vector(offset))
         for offset in ((0, 0, 0), (0, 1, 0), (0, 0, 1))
     ]
-    bm.faces.new(corners)
-    bm.to_mesh(mesh)
-    bm.free()
+    edited.faces.new(corners)
+    edited.to_mesh(mesh)
+    edited.free()
 
 
 def test_the_split_keeps_face_order_and_the_weld_closes_it(load_obj):
@@ -100,12 +102,6 @@ def test_the_proxy_keeps_each_segment_mode(load_obj):
     assert "uvgami_resolved_surface_mode" not in mesh.attributes
 
 
-def uvs(mesh):
-    coords = numpy.empty(len(mesh.loops) * 2)
-    mesh.uv_layers.active.data.foreach_get("uv", coords)
-    return coords
-
-
 @needs_engine
 @needs_tools
 def test_the_dumbbell_splits_on_the_neck_and_welds_back(load_obj, unwrap, outputs):
@@ -135,9 +131,7 @@ def test_the_dumbbell_splits_on_the_neck_and_welds_back(load_obj, unwrap, output
     ]
     assert neck_seams
     # the pack after the unwrap fits every island in the unit square
-    coords = uvs(mesh)
-    assert coords.min() >= 0.0
-    assert coords.max() <= 1.0
+    assert uvs_inside_unit_square(mesh)
 
 
 # symmetry stays on for the uv mirror after the unwrap
@@ -191,7 +185,9 @@ def test_a_hard_surface_part_is_not_segmented(load_obj, unwrap, outputs):
 def test_cancel_stops_a_running_segmentation(load_obj, unwrap, outputs, monkeypatch):
     load_obj("dumbbell")
     # stands in for a segmentation that runs long
-    stalled = [sys.executable, "-c", "import time; time.sleep(120)"]
+    stalled = addon.src.no_bpy.engine_run.ToolsCommand(
+        [sys.executable, "-c", "import time; time.sleep(120)"], None
+    )
     monkeypatch.setattr(addon.src.ops.start, "tools_command", lambda: stalled)
     bpy.context.scene.uvgami.optcuts.mode = "ORGANIC"
     bpy.context.scene.uvgami.symmetry = False
@@ -212,7 +208,7 @@ def test_a_missing_segment_binary_stops_the_unwrap(
 ):
     load_obj("dumbbell")
     monkeypatch.setattr(
-        addon.src.utils.uvgami_tools, "get_local_engine_path", lambda name: None
+        addon.src.utils.uvgami_tools, "get_dev_build_path", lambda name: None
     )
     monkeypatch.setattr(addon.src.utils.uvgami_tools, "get_dir_path", lambda: tmp_path)
     with pytest.raises(RuntimeError, match="UVgami tools"):

@@ -50,7 +50,7 @@ from .src.ops.misc import (
     UVGAMI_OT_reset_setting,
     UVGAMI_OT_reset_settings,
 )
-from .src.ops.part_overrides import (
+from .src.ops.part_override_editing import (
     UVGAMI_OT_edit_part_overrides,
     UVGAMI_OT_exit_part_overrides,
     UVGAMI_PG_part_overrides,
@@ -87,7 +87,6 @@ from .src.ui.props import (
     UVGAMI_PG_properties,
 )
 
-# two engines can list the same operator
 engine_classes = tuple(
     dict.fromkeys(cls for engine in ENGINES.values() for cls in engine.classes)
 )

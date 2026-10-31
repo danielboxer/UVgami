@@ -6,13 +6,13 @@
 # from ..engines import active_engine
 # from ..engines.bundled import SEGMENT_ENGINE
 # from ..manager import manager
-# from ..seams.segmentation import (
+# from ..no_bpy.segmentation import (
 #     FlattenError,
 #     border_edges,
 #     edge_face_pairs,
 #     merge_region,
 # )
-# from ..seams.worker import WorkerError
+# from ..no_bpy.worker import WorkerError
 # from ..segmentation import (
 #     REGION_ATTRIBUTE,
 #     clear_region_labels,
@@ -24,7 +24,7 @@
 # )
 # from ..utils.mesh import (
 #     check_exists,
-#     face_vertex_arrays,
+#     loop_vertices_and_face_sizes,
 #     face_vertices,
 #     validate_obj,
 #     vertex_position_array,
@@ -70,7 +70,7 @@
 #         self.segment_command = segment_command
 #         mesh = obj.data
 #         self.positions = vertex_position_array(mesh)
-#         self.corners, self.totals = face_vertex_arrays(mesh)
+#         self.corners, self.totals = loop_vertices_and_face_sizes(mesh)
 #         self.face_starts = numpy.cumsum(self.totals) - self.totals
 #         self.face_pairs = edge_face_pairs(self.positions, self.corners, self.totals)
 #         self.bvh = BVHTree.FromPolygons(self.positions.tolist(), face_vertices(mesh))
@@ -215,7 +215,7 @@
 #             self.report({"ERROR"}, f"Split Into Regions: {error}")
 #             return {"CANCELLED"}
 
-#         _session = EditSession(obj, SEGMENT_ENGINE.command(segment_path))
+#         _session = EditSession(obj, SEGMENT_ENGINE.command_prefix(segment_path))
 #         if _session.labels.any():
 #             _session.draw()
 #         else:

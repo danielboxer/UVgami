@@ -1,11 +1,12 @@
+import collections
 import time
 
 import numpy
 import pytest
+from uvgami_cli._pytest_plugin import corners_and_totals, grid_uvs, quad_grid
 
-from seams.engine_run import POLL_INTERVAL
-from seams.mesh import connected_labels, uv_tears
-from seams.proxy_transfer import TransferRun, dense_subset
+from no_bpy.engine_run import POLL_INTERVAL
+from no_bpy.proxy_transfer import dense_subset, start_proxy_transfer
 
 IDENTITY = numpy.eye(4)
 GRID = 6
@@ -14,27 +15,12 @@ SHIFT = 10.0
 CUT_X = 2.5
 
 
-def quad_grid(size, spacing=1.0):
-    side = size + 1
-    verts = [(x * spacing, y * spacing, 0.0) for y in range(side) for x in range(side)]
-    faces = [
-        [y * side + x, y * side + x + 1, (y + 1) * side + x + 1, (y + 1) * side + x]
-        for y in range(size)
-        for x in range(size)
-    ]
-    return verts, faces
-
-
 def triangulated(faces):
     return [
-        f
+        triangle
         for quad in faces
-        for f in ([quad[0], quad[1], quad[2]], [quad[0], quad[2], quad[3]])
+        for triangle in ([quad[0], quad[1], quad[2]], [quad[0], quad[2], quad[3]])
     ]
-
-
-def grid_uvs(verts, faces):
-    return [[(verts[v][0], verts[v][1]) for v in face] for face in faces]
 
 
 # def grid_edges(faces):
@@ -42,12 +28,13 @@ def grid_uvs(verts, faces):
 
 
 def dense_arrays(verts, faces, matrix=IDENTITY):
+    corners, face_sizes = corners_and_totals(faces)
     return {
         "positions": verts,
         "normals": [(0.0, 0.0, 1.0)] * len(verts),
         "matrix": matrix,
-        "corners": numpy.array([v for face in faces for v in face], dtype=numpy.int64),
-        "face_sizes": numpy.array([len(face) for face in faces], dtype=numpy.int64),
+        "corners": corners,
+        "face_sizes": face_sizes,
     }
 
 
@@ -66,19 +53,36 @@ def split_proxy(right_corner_uv=None):
     ]
     faces = [[0, 1, 2], [0, 2, 3], [1, 4, 5], [1, 5, 2]]
     uvs = grid_uvs(verts, faces)
-    for f in (0, 1):
-        uvs[f] = [(u + SHIFT, v) for u, v in uvs[f]]
+    for face_index in (0, 1):
+        uvs[face_index] = [(u + SHIFT, v) for u, v in uvs[face_index]]
     if right_corner_uv is not None:
         uvs[1][2] = right_corner_uv
     return proxy_arrays(verts, faces, uvs)
 
 
-@pytest.fixture
-def start_transfer(engine_binary, tmp_path):
-    command = [engine_binary("uvgami-tools")]
+def loose_halves_proxy(gap):
+    # the halves share no vertex, like segments decimated apart, packed a short gap apart
+    verts = [
+        (0.0, 0.0, 0.0),
+        (CUT_X, 0.0, 0.0),
+        (CUT_X, GRID, 0.0),
+        (0.0, GRID, 0.0),
+        (CUT_X, 0.0, 0.0),
+        (GRID, 0.0, 0.0),
+        (GRID, GRID, 0.0),
+        (CUT_X, GRID, 0.0),
+    ]
+    faces = [[0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7]]
+    uvs = grid_uvs(verts, faces)
+    for face_index in (0, 1):
+        uvs[face_index] = [(u + gap, v) for u, v in uvs[face_index]]
+    return proxy_arrays(verts, faces, uvs)
 
+
+@pytest.fixture
+def start_transfer(tools, tmp_path):
     def start(dense, proxy):
-        return TransferRun(command, tmp_path, dense, proxy)
+        return start_proxy_transfer(tools, tmp_path, dense, proxy)
 
     return start
 
@@ -95,27 +99,6 @@ def transfer(start_transfer):
         return finished(start_transfer(dense, proxy)).result()
 
     return run
-
-
-def test_uv_tears_finds_only_the_torn_interior_edge():
-    verts, faces = quad_grid(2)
-    uvs = grid_uvs(verts, faces)
-    uvs[0] = [(u + SHIFT, v) for u, v in uvs[0]]
-    assert uv_tears(faces, uvs) == {(1, 4), (3, 4)}
-
-
-def test_uv_tears_skips_boundary_edges():
-    verts, faces = quad_grid(1)
-    uvs = grid_uvs(verts, faces)
-    assert uv_tears(faces, uvs) == set()
-
-
-def test_uv_tears_ignores_a_gap_under_the_tolerance():
-    verts, faces = quad_grid(2)
-    uvs = grid_uvs(verts, faces)
-    uvs[0] = [(u + 1e-7, v) for u, v in uvs[0]]
-    assert uv_tears(faces, uvs) == {(1, 4), (3, 4)}
-    assert uv_tears(faces, uvs, tolerance=1e-6) == set()
 
 
 def test_dense_subset_renumbers_the_kept_faces():
@@ -198,66 +181,43 @@ def test_transfer_reads_the_side_of_a_thin_wall_it_faces(transfer):
     assert numpy.allclose(uvs, expected)
 
 
+ColumnFaces = collections.namedtuple("ColumnFaces", "left straddling right")
+
+
 def torn_columns(faces, verts):
-    xs = numpy.array([[verts[v][0] for v in face] for face in faces])
-    left = numpy.flatnonzero(xs.max(axis=1) <= 2)
-    straddling = numpy.flatnonzero((xs.min(axis=1) == 2) & (xs.max(axis=1) == 3))
-    right = numpy.flatnonzero(xs.min(axis=1) >= 3)
-    return left, straddling, right
+    face_x = numpy.array([[verts[v][0] for v in face] for face in faces])
+    return ColumnFaces(
+        left=numpy.flatnonzero(face_x.max(axis=1) <= 2),
+        straddling=numpy.flatnonzero(
+            (face_x.min(axis=1) == 2) & (face_x.max(axis=1) == 3)
+        ),
+        right=numpy.flatnonzero(face_x.min(axis=1) >= 3),
+    )
 
 
-def test_transfer_tears_the_dense_mesh_along_the_proxy_cut(transfer):
+LOOSE_HALVES_GAP = 1.5
+
+
+@pytest.mark.parametrize(
+    "proxy, shift",
+    [(split_proxy(), SHIFT), (loose_halves_proxy(LOOSE_HALVES_GAP), LOOSE_HALVES_GAP)],
+    ids=["shared_cut", "loose_pieces"],
+)
+def test_transfer_tears_the_dense_mesh_along_the_proxy_cut(transfer, proxy, shift):
     verts, faces = quad_grid(GRID)
-    proxy = split_proxy()
     dense = dense_arrays(verts, faces)
 
     seams, uvs = transfer(dense, proxy)
 
     xy = numpy.array(verts)[dense["corners"]][:, :2]
     corner_face = numpy.repeat(numpy.arange(len(faces)), 4)
-    left, straddling, right = torn_columns(faces, verts)
+    columns = torn_columns(faces, verts)
     # a straddling face is drawn on its first corner's side, the shifted one
-    shifted = numpy.isin(corner_face, numpy.concatenate([left, straddling]))
-    assert numpy.allclose(uvs[shifted], xy[shifted] + (SHIFT, 0.0))
-    kept = numpy.isin(corner_face, right)
-    assert numpy.allclose(uvs[kept], xy[kept])
-    side = GRID + 1
-    assert seams == {(y * side + 3, (y + 1) * side + 3) for y in range(GRID)}
-
-
-# the halves share no vertex, like segments decimated apart, packed a short gap apart
-def loose_halves_proxy(gap):
-    verts = [
-        (0.0, 0.0, 0.0),
-        (CUT_X, 0.0, 0.0),
-        (CUT_X, GRID, 0.0),
-        (0.0, GRID, 0.0),
-        (CUT_X, 0.0, 0.0),
-        (GRID, 0.0, 0.0),
-        (GRID, GRID, 0.0),
-        (CUT_X, GRID, 0.0),
-    ]
-    faces = [[0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7]]
-    uvs = grid_uvs(verts, faces)
-    for f in (0, 1):
-        uvs[f] = [(u + gap, v) for u, v in uvs[f]]
-    return proxy_arrays(verts, faces, uvs)
-
-
-def test_transfer_tears_between_loose_proxy_pieces(transfer):
-    verts, faces = quad_grid(GRID)
-    gap = 1.5
-    proxy = loose_halves_proxy(gap)
-    dense = dense_arrays(verts, faces)
-
-    seams, uvs = transfer(dense, proxy)
-
-    xy = numpy.array(verts)[dense["corners"]][:, :2]
-    corner_face = numpy.repeat(numpy.arange(len(faces)), 4)
-    left, straddling, right = torn_columns(faces, verts)
-    shifted = numpy.isin(corner_face, numpy.concatenate([left, straddling]))
-    assert numpy.allclose(uvs[shifted], xy[shifted] + (gap, 0.0))
-    kept = numpy.isin(corner_face, right)
+    shifted = numpy.isin(
+        corner_face, numpy.concatenate([columns.left, columns.straddling])
+    )
+    assert numpy.allclose(uvs[shifted], xy[shifted] + (shift, 0.0))
+    kept = numpy.isin(corner_face, columns.right)
     assert numpy.allclose(uvs[kept], xy[kept])
     side = GRID + 1
     assert seams == {(y * side + 3, (y + 1) * side + 3) for y in range(GRID)}
@@ -272,11 +232,14 @@ def test_transfer_never_tears_between_linked_proxy_faces(transfer):
 
     side = GRID + 1
     assert seams == {(y * side + 3, (y + 1) * side + 3) for y in range(GRID)}
-    _, straddling, _ = torn_columns(faces, verts)
+    straddling = torn_columns(faces, verts).straddling
     corners = dense["corners"]
     for v in range(side + 3, GRID * side, side):
         on_straddlers = [
-            f * 4 + i for f in straddling for i in range(4) if corners[f * 4 + i] == v
+            face * 4 + corner
+            for face in straddling
+            for corner in range(4)
+            if corners[face * 4 + corner] == v
         ]
         assert len(on_straddlers) == 2
         assert numpy.array_equal(uvs[on_straddlers[0]], uvs[on_straddlers[1]])
@@ -326,8 +289,8 @@ def test_transfer_straightens_a_staircase_onto_the_diagonals(transfer):
     assert len(seams) - len(off_diagonal) >= GRID - 1
 
 
-# the face folded over the panel, z = 0.5 - x / 16
 def folded_proxy():
+    # the face folded over the panel, z = 0.5 - x / 16
     verts = [
         (0.0, 0.0, 0.0),
         (8.0, 0.0, 0.0),
@@ -347,12 +310,12 @@ def test_transfer_tears_between_faces_split_at_a_shared_vertex(transfer):
     verts = [(1.0 + x, y, 0.25) for y in rows for x in range(columns)]
     faces = [
         [
-            r * columns + x,
-            r * columns + x + 1,
-            (r + 1) * columns + x + 1,
-            (r + 1) * columns + x,
+            row * columns + x,
+            row * columns + x + 1,
+            (row + 1) * columns + x + 1,
+            (row + 1) * columns + x,
         ]
-        for r in range(len(rows) - 1)
+        for row in range(len(rows) - 1)
         for x in range(columns - 1)
     ]
     dense = dense_arrays(verts, faces)
@@ -364,18 +327,3 @@ def test_transfer_tears_between_faces_split_at_a_shared_vertex(transfer):
     face_u = uvs[:, 0].reshape(len(faces), 4)
     assert numpy.all(face_u.max(axis=1) - face_u.min(axis=1) < 2.0)
     assert seams == {(2 * columns + x, 2 * columns + x + 1) for x in range(columns - 1)}
-
-
-def test_connected_labels_separates_loose_parts():
-    edges = numpy.array(
-        [[0, 1], [1, 2], [3, 4], [5, 6], [6, 7], [5, 7]], dtype=numpy.int64
-    )
-    labels = connected_labels(9, edges)
-    assert labels.tolist() == [0, 0, 0, 3, 3, 5, 5, 5, 8]
-
-
-def test_connected_labels_joins_a_long_chain():
-    count = 1000
-    ends = numpy.arange(count - 1, dtype=numpy.int64)
-    edges = numpy.stack([ends, ends + 1], axis=1)
-    assert connected_labels(count, edges).tolist() == [0] * count

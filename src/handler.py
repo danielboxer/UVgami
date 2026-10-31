@@ -1,41 +1,27 @@
-import traceback
-
 import bpy
 
 from .logger import logger
 from .manager import manager
 from .utils.ui import popup
 
-MESSAGES = {
-    "START": "Error starting unwrap: ",
-    "MIDDLE": "Error during unwrap: ",
-}
 
-
-def handle_error(error, location, **kwargs):
-    msg = MESSAGES.get(location, "Error: ")
-    logger.add_data("errors", msg)
-
-    error_list = traceback.format_exc().split("\n")[:-1]
-    for line in error_list:
-        logger.add_data("errors", line)
-        print(line)
+def _log_and_show(error, heading):
+    error_lines = logger.log_traceback(heading)
     logger.update_time()
-    logger.change_status("Error")
+    logger.get_latest().status = "Error"
     logger.write_latest()
-
-    popup(error_list, msg + str(error), "ERROR")
-
-    cleanup(location, **kwargs)
+    popup(error_lines, heading + str(error), "ERROR")
 
 
-def cleanup(location, objects=frozenset()):
-    if location == "START":
-        # the delete below also removes a live session's objects
-        if manager.is_active:
-            return
-        # every object created since the operator started is temporary
-        for obj in set(bpy.data.objects).difference(objects):
-            bpy.data.objects.remove(obj, do_unlink=True)
+def handle_start_error(error, start_objects):
+    _log_and_show(error, "Error starting unwrap: ")
+    if manager.is_active:
+        return
+    for obj in set(bpy.data.objects).difference(start_objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+    manager.end_session()
 
+
+def handle_dispatch_error(error):
+    _log_and_show(error, "Error during unwrap: ")
     manager.end_session()

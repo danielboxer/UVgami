@@ -4,24 +4,30 @@ import bpy
 
 from ..utils.ui import tag_redraw
 
-# shared across engines, only one install task runs at a time
-task_state = {
-    "running": False,
-    "owner": "",
-    "error": None,
-    "phase": "",
-    "bytes_done": 0,
-    "bytes_total": None,
-}
+
+def idle_task_state():
+    return {
+        "running": False,
+        "owner": "",
+        "error": None,
+        "phase": "",
+        "bytes_done": 0,
+        "bytes_total": None,
+    }
 
 
-# the unwrap panels show what is installed
+task_state = idle_task_state()
+
+
 INSTALL_AREAS = ("PREFERENCES", "VIEW_3D", "IMAGE_EDITOR")
 
 DOWNLOADED_MESSAGE = "Engine downloaded"
 DELETED_MESSAGE = "Engine deleted"
 DELETE_DESCRIPTION = "Delete the engine"
 NOT_DOWNLOADED_ERROR = "Engine not downloaded. Download it in the add-on preferences"
+ENGINE_TOO_OLD_ERROR = (
+    "This update needs a newer engine. Download it in the add-on preferences"
+)
 
 
 def parse_version(version):
@@ -31,13 +37,12 @@ def parse_version(version):
     return tuple(int(part) for part in parts)
 
 
-# False when nothing is installed
 def version_below(version, bound):
     return version is not None and parse_version(version) < parse_version(bound)
 
 
-# Blender requires add-ons to check this before any download
 def offline_error():
+    # Blender requires add-ons to check this before any download
     if bpy.app.online_access:
         return None
     if bpy.app.online_access_override:
@@ -45,13 +50,11 @@ def offline_error():
     return "Turn on Allow Online Access in the preferences"
 
 
-# True when it drew, meaning no download can run yet
 def draw_online_access(layout):
     if bpy.app.online_access:
         return False
     row = layout.row()
     row.scale_y = 1.5
-    # the tooltip has the reason the button is greyed out in offline mode
     row.operator(
         "extensions.userpref_allow_online", text="Allow Online Access", icon="URL"
     )
@@ -83,10 +86,8 @@ class InstallTask:
         return None
 
     def execute(self, context):
-        # imported late, this module loads while the engines package is importing
         from ..manager import manager
 
-        # an install or delete replaces the binary a running unwrap uses
         if manager.is_active:
             self.report({"ERROR"}, "Finish or cancel the current unwrap first")
             return {"CANCELLED"}
@@ -98,13 +99,8 @@ class InstallTask:
             self.report({"ERROR"}, error)
             return {"CANCELLED"}
 
-        task_state["running"] = True
-        task_state["owner"] = self.owner
-        task_state["error"] = None
-        task_state["phase"] = ""
-        task_state["bytes_done"] = 0
-        task_state["bytes_total"] = None
-        # built here so the thread never reads operator properties
+        task_state.update(idle_task_state(), running=True, owner=self.owner)
+        # blender operator properties are unsafe to read from another thread
         threading.Thread(
             target=_run_task, args=(self.build_task(),), daemon=True
         ).start()
@@ -120,7 +116,6 @@ class InstallTask:
             tag_redraw(area_types=INSTALL_AREAS)
             return {"PASS_THROUGH"}
         context.window_manager.event_timer_remove(self._timer)
-        # imported late, the engines package imports this module while loading
         from . import invalidate_engine_caches
 
         invalidate_engine_caches()
@@ -136,7 +131,6 @@ UPDATE_ICON = "FILE_REFRESH"
 UPDATE_LABEL_SPLIT = 0.9
 
 
-# the download button is in the preferences, not here
 def draw_update_row(layout, owner, default_phase, text, required):
     if task_state["running"] and task_state["owner"] == owner:
         draw_progress(layout, default_phase)
@@ -148,12 +142,9 @@ def draw_update_row(layout, owner, default_phase, text, required):
     split.row().operator("uvgami.open_preferences", text="", icon="PREFERENCES")
 
 
-# the sidebar redraws constantly and the check reads the engine folders
 class CachedUpdateNotice:
-    # the task_state owner of the engine's install and delete
     install_owner = ""
     install_phase = ""
-    # (text, required), read again after invalidate_caches
     _update_notice = None
 
     def invalidate_caches(self):
@@ -171,10 +162,25 @@ class CachedUpdateNotice:
         )
 
 
-# only the first line, a label cannot wrap
+def draw_install_status(
+    layout, installed_version, target_version, too_old, update_pending
+):
+    change = f"v{installed_version} → v{target_version}"
+    if too_old:
+        text, icon = f"Engine update required: {change}", "ERROR"
+    elif update_pending:
+        text, icon = f"Engine update available: {change}", UPDATE_ICON
+    elif installed_version is None:
+        text, icon = "Not downloaded", "X"
+    else:
+        text, icon = f"Downloaded v{installed_version}", "CHECKMARK"
+    layout.row().label(text=text, icon=icon)
+
+
 def draw_error(layout, owner):
     if task_state["error"] is None or task_state["owner"] != owner:
         return
+    # labels don't wrap
     layout.row().label(text=task_state["error"].partition("\n")[0], icon="ERROR")
 
 

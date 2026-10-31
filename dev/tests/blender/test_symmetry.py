@@ -5,12 +5,16 @@ import mathutils
 import mathutils.kdtree
 import numpy
 import pytest
-from blender_fixtures import addon, manager, needs_engine, needs_xatlas
+from blender_fixtures import addon, manager, needs_engine, needs_xatlas, uv_islands
 
 
 def uvs_by_vertex(mesh, faces=None):
     layer = mesh.uv_layers.active
-    polygons = mesh.polygons if faces is None else [mesh.polygons[fi] for fi in faces]
+    polygons = (
+        mesh.polygons
+        if faces is None
+        else [mesh.polygons[face_index] for face_index in faces]
+    )
     result = {}
     for polygon in polygons:
         for loop_index in polygon.loop_indices:
@@ -28,38 +32,27 @@ def plane_vertices(mesh, axis):
     return [v.index for v in mesh.vertices if abs(v.co[axis] - center) <= tolerance]
 
 
-def symmetric_axis(mesh, center):
-    mesh_arrays = addon.src.utils.mesh
-    return addon.src.seams.mirror.symmetric_axis(
-        addon.src.utils.uvgami_tools.tools_command(),
-        addon.src.job.mirror_workdir(),
-        mesh_arrays.vertex_position_array(mesh),
-        *mesh_arrays.face_vertex_arrays(mesh),
-        center,
-        1e-6,
-    )
-
-
 def test_auto_takes_the_first_axis_the_mesh_mirrors_across():
+    symmetric_axis = addon.src.symmetry.mesh_symmetric_axis
     bpy.ops.mesh.primitive_cube_add()
     cube = bpy.context.active_object
     center = mathutils.Vector((0, 0, 0))
-    assert symmetric_axis(cube.data, center)[:2] == ("X", True)
+    assert symmetric_axis(cube.data, center, 1e-6)[:2] == ("X", True)
 
     # a mesh that only mirrors across Y
     cube.data.vertices[0].co.x += 0.1
     cube.data.vertices[2].co.x += 0.1
-    assert symmetric_axis(cube.data, center)[:2] == ("Y", True)
+    assert symmetric_axis(cube.data, center, 1e-6)[:2] == ("Y", True)
 
     cube.data.vertices[0].co.x += 0.1
-    assert symmetric_axis(cube.data, center) is None
+    assert symmetric_axis(cube.data, center, 1e-6) is None
 
 
 def auto_plan(mesh):
-    job = addon.src.job
-    center, diagonal = job.symmetry_center(mesh)
-    tolerance = addon.src.utils.geometry.PLANE_SNAP * diagonal
-    return job.mirror_plan(mesh, center, tolerance)
+    symmetry = addon.src.symmetry
+    center, diagonal = symmetry.bounding_box_center_and_diagonal(mesh)
+    tolerance = symmetry.PLANE_SNAP * diagonal
+    return symmetry.mirror_plan(mesh, center, tolerance)
 
 
 def test_auto_keeps_a_mesh_the_cut_would_add_edges_to_whole(load_obj):
@@ -73,7 +66,7 @@ def test_auto_keeps_a_mesh_the_cut_would_add_edges_to_whole(load_obj):
 def test_auto_keeps_a_drifted_mesh_whole(load_obj):
     (cylinder,) = load_obj("cylinder")
     mesh = cylinder.data
-    _, diagonal = addon.src.job.symmetry_center(mesh)
+    _, diagonal = addon.src.symmetry.bounding_box_center_and_diagonal(mesh)
     # on every axis, since an exact axis is taken before an approximate one
     mesh.vertices[0].co += mathutils.Vector((1, 1, 1)) * 0.001 * diagonal
     assert auto_plan(mesh)[:2] == ("X", True)
@@ -87,123 +80,6 @@ def test_auto_skips_a_mesh_with_part_overrides(load_obj):
     assert auto_plan(mesh) is None
 
 
-@needs_engine
-def test_symmetry_welds_the_uv_map_across_the_plane(load_obj, unwrap, outputs):
-    load_obj("cylinder")
-    props = bpy.context.scene.uvgami
-    # the pack moves islands apart, which hides how the halves meet
-    props.pack_after_unwrap = False
-    unwrap()
-
-    assert manager.error_messages == []
-    assert manager.summary_failed is False, manager.summary
-    assert_welded_across_x(outputs()["cylinder_unwrapped"].data)
-
-
-@needs_engine
-@needs_xatlas
-def test_xatlas_gives_the_negative_side_the_mirrored_uvs(load_obj, unwrap, outputs):
-    load_obj("cylinder")
-    props = bpy.context.scene.uvgami
-    props.pack_after_unwrap = False
-    unwrap("XATLAS")
-
-    assert manager.error_messages == []
-    assert manager.summary_failed is False, manager.summary
-    assert_negative_side_mirrored(outputs()["cylinder_unwrapped"].data)
-
-
-def assert_negative_side_mirrored(mesh):
-    layer = mesh.uv_layers.active
-    uvs = {}
-    for polygon in mesh.polygons:
-        side = polygon.center.x < 0
-        for loop_index in polygon.loop_indices:
-            co = mesh.vertices[mesh.loops[loop_index].vertex_index].co
-            key = (round(abs(co.x), 4), round(co.y, 4), round(co.z, 4))
-            uv = layer.data[loop_index].uv
-            uvs.setdefault(side, {}).setdefault(key, []).append((uv.x, uv.y))
-    negative, positive = uvs[True], uvs[False]
-    assert negative.keys() == positive.keys()
-    right = max(u for values in positive.values() for u, _ in values)
-    left = min(u for values in negative.values() for u, _ in values)
-    for key, values in negative.items():
-        mirrored = {(round(left + right - u, 4), round(v, 4)) for u, v in values}
-        assert mirrored == {(round(u, 4), round(v, 4)) for u, v in positive[key]}
-
-
-# mirrors across local X only, and after a 45 degree turn about Z on no world axis
-def turned_lopsided_cylinder(load_obj, scale):
-    (cylinder,) = load_obj("cylinder")
-    for vertex in cylinder.data.vertices:
-        if vertex.co.z > 0:
-            vertex.co.x *= 0.8
-            vertex.co.y *= 0.8
-        if vertex.co.y > 0:
-            vertex.co.y *= 1.5
-    cylinder.rotation_euler = (0, 0, math.radians(45))
-    cylinder.scale = scale
-    bpy.context.view_layer.update()
-    return cylinder
-
-
-# the output vertices are the source's moved by the object's rotation and scale
-def move_to_source_positions(mesh, source, matrix):
-    mesh.transform(matrix.to_3x3().inverted().to_4x4())
-    tree = mathutils.kdtree.KDTree(len(source.vertices))
-    for vertex in source.vertices:
-        tree.insert(vertex.co, vertex.index)
-    tree.balance()
-    for vertex in mesh.vertices:
-        position, _, distance = tree.find(vertex.co)
-        assert distance < 1e-4
-        vertex.co = position
-
-
-@needs_engine
-@pytest.mark.parametrize("scale", [(1, 1, 1), (1.5, 1, 0.7)])
-def test_a_turned_mesh_mirrors_across_its_own_plane(load_obj, unwrap, outputs, scale):
-    cylinder = turned_lopsided_cylinder(load_obj, scale)
-    props = bpy.context.scene.uvgami
-    props.pack_after_unwrap = False
-    engine = addon.src.engines.get_engine("OPTCUTS")
-    plan = addon.src.job.unwrap_plan(engine, props, cylinder.data, painted=False)
-    assert plan.symmetry[:2] == ("BISECT", "X")
-    unwrap()
-
-    assert manager.error_messages == []
-    assert manager.summary_failed is False, manager.summary
-    mesh = outputs()[f"{cylinder.name}_unwrapped"].data
-    move_to_source_positions(mesh, cylinder.data, cylinder.matrix_world)
-    assert_welded_across_x(mesh)
-    assert_negative_side_mirrored(mesh)
-
-
-@needs_engine
-@needs_xatlas
-def test_xatlas_mirrors_a_turned_and_stretched_mesh(load_obj, unwrap, outputs):
-    cylinder = turned_lopsided_cylinder(load_obj, (1.5, 1, 0.7))
-    props = bpy.context.scene.uvgami
-    props.pack_after_unwrap = False
-    engine = addon.src.engines.get_engine("XATLAS")
-    plan = addon.src.job.unwrap_plan(engine, props, cylinder.data, painted=False)
-    assert plan.symmetry[:2] == ("MIRROR_UVS", "X")
-    unwrap("XATLAS")
-
-    assert manager.error_messages == []
-    assert manager.summary_failed is False, manager.summary
-    mesh = outputs()[f"{cylinder.name}_unwrapped"].data
-    move_to_source_positions(mesh, cylinder.data, cylinder.matrix_world)
-    assert_negative_side_mirrored(mesh)
-
-
-def uv_islands(mesh):
-    faces = addon.src.utils.mesh.face_vertices(mesh)
-    uvs = addon.src.utils.mesh.face_uvs(mesh)
-    edges = addon.src.seams.face_edges(faces)
-    return addon.src.seams.uv_island_groups(faces, uvs, edges)
-
-
 def mirror_vertices_across_x(mesh):
     def key(x, y, z):
         return (round(x, 4), round(y, 4), round(z, 4))
@@ -212,11 +88,8 @@ def mirror_vertices_across_x(mesh):
     return {v.index: index_of[key(-v.co.x, v.co.y, v.co.z)] for v in mesh.vertices}
 
 
-# the island's mirror axis runs through the glued uvs and the midpoints of
-# mirrored vertex pairs, and every uv at a plane vertex reflects onto another
-# uv at that vertex. the hard surface passes re-solve some islands afterwards,
-# which rotates them and keeps the mirror only to about a percent
 def assert_island_mirrors_across_its_axis(by_vertex, plane, mirror_of):
+    # hard surface passes re-solve some islands, which keeps the mirror to about 1%
     glued = [v for v in plane if len(by_vertex.get(v, ())) == 1]
     points = [next(iter(by_vertex[v])) for v in glued]
     for v, uvs in by_vertex.items():
@@ -247,8 +120,8 @@ def assert_island_mirrors_across_its_axis(by_vertex, plane, mirror_of):
 
 
 def assert_welded_across_x(mesh):
-    xs = [v.co.x for v in mesh.vertices]
-    assert abs(min(xs) + max(xs)) < 1e-4
+    x_values = [v.co.x for v in mesh.vertices]
+    assert abs(min(x_values) + max(x_values)) < 1e-4
     plane = set(plane_vertices(mesh, 0))
     mirror_of = mirror_vertices_across_x(mesh)
     welded_islands = 0
@@ -264,46 +137,164 @@ def assert_welded_across_x(mesh):
     assert welded_islands
 
 
-# share of seam length with a seam within one edge length of its mirror image across x
-def mirrored_seam_share(mesh):
-    faces = addon.src.utils.mesh.face_vertices(mesh)
-    uvs = addon.src.utils.mesh.face_uvs(mesh)
-    seams = list(
-        {addon.src.seams.pair(a, b) for a, b in addon.src.seams.uv_tears(faces, uvs)}
+@needs_engine
+def test_symmetry_welds_the_uv_map_across_the_plane(load_obj, unwrap, outputs):
+    load_obj("cylinder")
+    props = bpy.context.scene.uvgami
+    # the pack moves islands apart, which hides how the halves meet
+    props.pack_after_unwrap = False
+    unwrap()
+
+    assert manager.error_messages == []
+    assert manager.summary_failed is False, manager.summary
+    assert_welded_across_x(outputs()["cylinder_unwrapped"].data)
+
+
+def assert_negative_side_mirrored(mesh):
+    layer = mesh.uv_layers.active
+    uvs = {}
+    for polygon in mesh.polygons:
+        side = polygon.center.x < 0
+        for loop_index in polygon.loop_indices:
+            position = mesh.vertices[mesh.loops[loop_index].vertex_index].co
+            key = (
+                round(abs(position.x), 4),
+                round(position.y, 4),
+                round(position.z, 4),
+            )
+            uv = layer.data[loop_index].uv
+            uvs.setdefault(side, {}).setdefault(key, []).append((uv.x, uv.y))
+    negative, positive = uvs[True], uvs[False]
+    assert negative.keys() == positive.keys()
+    right = max(u for values in positive.values() for u, _ in values)
+    left = min(u for values in negative.values() for u, _ in values)
+    for key, values in negative.items():
+        mirrored = {(round(left + right - u, 4), round(v, 4)) for u, v in values}
+        assert mirrored == {(round(u, 4), round(v, 4)) for u, v in positive[key]}
+
+
+@needs_engine
+@needs_xatlas
+def test_xatlas_gives_the_negative_side_the_mirrored_uvs(load_obj, unwrap, outputs):
+    load_obj("cylinder")
+    props = bpy.context.scene.uvgami
+    props.pack_after_unwrap = False
+    unwrap("XATLAS")
+
+    assert manager.error_messages == []
+    assert manager.summary_failed is False, manager.summary
+    assert_negative_side_mirrored(outputs()["cylinder_unwrapped"].data)
+
+
+def turned_lopsided_cylinder(load_obj, scale):
+    # mirrors across local X only, and after a 45 degree turn about Z on no world axis
+    (cylinder,) = load_obj("cylinder")
+    for vertex in cylinder.data.vertices:
+        if vertex.co.z > 0:
+            vertex.co.x *= 0.8
+            vertex.co.y *= 0.8
+        if vertex.co.y > 0:
+            vertex.co.y *= 1.5
+    cylinder.rotation_euler = (0, 0, math.radians(45))
+    cylinder.scale = scale
+    bpy.context.view_layer.update()
+    return cylinder
+
+
+def move_to_source_positions(mesh, source, matrix):
+    # the output vertices are the source's moved by the object's rotation and scale
+    mesh.transform(matrix.to_3x3().inverted().to_4x4())
+    tree = mathutils.kdtree.KDTree(len(source.vertices))
+    for vertex in source.vertices:
+        tree.insert(vertex.co, vertex.index)
+    tree.balance()
+    for vertex in mesh.vertices:
+        position, _, distance = tree.find(vertex.co)
+        assert distance < 1e-4
+        vertex.co = position
+
+
+@needs_engine
+@pytest.mark.parametrize("scale", [(1, 1, 1), (1.5, 1, 0.7)])
+def test_a_turned_mesh_mirrors_across_its_own_plane(load_obj, unwrap, outputs, scale):
+    cylinder = turned_lopsided_cylinder(load_obj, scale)
+    props = bpy.context.scene.uvgami
+    props.pack_after_unwrap = False
+    engine = addon.src.engines.ENGINES["OPTCUTS"]
+    symmetry = addon.src.job.unwrap_symmetry(
+        engine, props, cylinder.data, painted=False
     )
-    positions = numpy.array([v.co[:] for v in mesh.vertices])
-    center = (positions[:, 0].min() + positions[:, 0].max()) / 2
-    ends = positions[numpy.array(seams)]
+    assert symmetry[:2] == ("BISECT", "X")
+    unwrap()
+
+    assert manager.error_messages == []
+    assert manager.summary_failed is False, manager.summary
+    mesh = outputs()[f"{cylinder.name}_unwrapped"].data
+    move_to_source_positions(mesh, cylinder.data, cylinder.matrix_world)
+    assert_welded_across_x(mesh)
+    assert_negative_side_mirrored(mesh)
+
+
+@needs_engine
+@needs_xatlas
+def test_xatlas_mirrors_a_turned_and_stretched_mesh(load_obj, unwrap, outputs):
+    cylinder = turned_lopsided_cylinder(load_obj, (1.5, 1, 0.7))
+    props = bpy.context.scene.uvgami
+    props.pack_after_unwrap = False
+    engine = addon.src.engines.ENGINES["XATLAS"]
+    symmetry = addon.src.job.unwrap_symmetry(
+        engine, props, cylinder.data, painted=False
+    )
+    assert symmetry[:2] == ("MIRROR_UVS", "X")
+    unwrap("XATLAS")
+
+    assert manager.error_messages == []
+    assert manager.summary_failed is False, manager.summary
+    mesh = outputs()[f"{cylinder.name}_unwrapped"].data
+    move_to_source_positions(mesh, cylinder.data, cylinder.matrix_world)
+    assert_negative_side_mirrored(mesh)
+
+
+def torn_seams(mesh):
+    faces = addon.src.utils.mesh.face_vertices(mesh)
+    torn = addon.src.no_bpy.torn_interior_edges(
+        faces, addon.src.utils.mesh.face_uvs(mesh)
+    )
+    return {addon.src.no_bpy.sorted_pair(a, b) for a, b in torn}
+
+
+def center_x(positions):
+    return (positions[:, 0].min() + positions[:, 0].max()) / 2
+
+
+def mirrored_seam_share(mesh):
+    # share of seam length with a seam within one edge length of its mirror image
+    positions = addon.src.utils.mesh.vertex_position_array(mesh)
+    ends = positions[numpy.array(list(torn_seams(mesh)))]
     middles = ends.mean(axis=1)
     lengths = numpy.linalg.norm(ends[:, 0] - ends[:, 1], axis=1)
     mirrored = middles.copy()
-    mirrored[:, 0] = 2 * center - mirrored[:, 0]
+    mirrored[:, 0] = 2 * center_x(positions) - mirrored[:, 0]
     nearest = numpy.linalg.norm(mirrored[:, None, :] - middles[None, :, :], axis=2)
     reach = max(
-        (mesh.vertices[e.vertices[0]].co - mesh.vertices[e.vertices[1]].co).length
-        for e in mesh.edges
+        (mesh.vertices[edge.vertices[0]].co - mesh.vertices[edge.vertices[1]].co).length
+        for edge in mesh.edges
     )
     hit = nearest.min(axis=1) <= reach
     return float(lengths[hit].sum() / lengths.sum())
 
 
-# the plane loop is the edges between faces either side of the X plane
-def plane_loop_and_seams(mesh):
+def plane_loop_edges(mesh):
     faces = addon.src.utils.mesh.face_vertices(mesh)
-    torn = {
-        addon.src.seams.pair(a, b)
-        for a, b in addon.src.seams.uv_tears(faces, addon.src.utils.mesh.face_uvs(mesh))
-    }
-    positions = numpy.array([v.co[:] for v in mesh.vertices])
-    center = (positions[:, 0].min() + positions[:, 0].max()) / 2
+    positions = addon.src.utils.mesh.vertex_position_array(mesh)
+    center = center_x(positions)
     positive = [positions[face, 0].mean() >= center for face in faces]
-    edges = addon.src.seams.face_edges(faces)
-    plane_loop = {
+    edges = addon.src.no_bpy.faces_by_edge(faces)
+    return {
         key
         for key, owners in edges.items()
         if len(owners) == 2 and positive[owners[0]] != positive[owners[1]]
     }
-    return plane_loop, torn
 
 
 @needs_engine
@@ -328,7 +319,7 @@ def test_hard_surface_mirrors_the_placed_seams_on_a_whole_mesh(
 def test_organic_mirrors_the_half_run_cuts_on_a_whole_mesh(load_obj, unwrap, outputs):
     (cylinder,) = load_obj("cylinder")
     source = cylinder.data
-    _, diagonal = addon.src.job.symmetry_center(source)
+    _, diagonal = addon.src.symmetry.bounding_box_center_and_diagonal(source)
     # drifted off exact, so the mesh ships whole with the half run's cuts mirrored
     source.vertices[0].co += mathutils.Vector((1, 1, 1)) * 0.001 * diagonal
     props = bpy.context.scene.uvgami
@@ -342,8 +333,7 @@ def test_organic_mirrors_the_half_run_cuts_on_a_whole_mesh(load_obj, unwrap, out
     assert len(mesh.vertices) == len(source.vertices)
     assert mirrored_seam_share(mesh) > 0.9
     # the plain engine unwrap mirrors well on a cylinder too, but leaves the plane uncut
-    plane_loop, torn = plane_loop_and_seams(mesh)
-    assert plane_loop <= torn
+    assert plane_loop_edges(mesh) <= torn_seams(mesh)
 
 
 @needs_engine
@@ -354,7 +344,7 @@ def test_a_proxied_mesh_mirrors_the_half_run_cuts(load_obj, unwrap, outputs):
     bpy.ops.mesh.select_all(action="SELECT")
     bpy.ops.mesh.subdivide(number_cuts=3)
     bpy.ops.object.mode_set(mode="OBJECT")
-    _, diagonal = addon.src.job.symmetry_center(cylinder.data)
+    _, diagonal = addon.src.symmetry.bounding_box_center_and_diagonal(cylinder.data)
     # mostly symmetrical, whose mirror map the decimate would leave stale
     cylinder.data.vertices[0].co += mathutils.Vector((1, 1, 1)) * 0.001 * diagonal
     props = bpy.context.scene.uvgami

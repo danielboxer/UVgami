@@ -29,16 +29,14 @@ OPTCUTS = EngineRelease(
 class UVGAMI_OT_install_optcuts(InstallEngineTask, bpy.types.Operator):
     bl_idname = "uvgami.install_optcuts"
     bl_label = "Download Optcuts Engine"
-    owner = "optcuts"
     release = OPTCUTS
 
 
-# the flags here need this binary or the bundled uvgami-tools binary
 class OptcutsInstall(BinaryEngine):
     release = OPTCUTS
     supports_keep_quads = True
     supports_hard_surface = True
-    supports_plane_glue = True
+    keeps_plane_vertices_on_u_zero = True
     supports_regions = True
     supports_symmetry = True
     classes = (UVGAMI_OT_install_optcuts, UVGAMI_OT_delete_engine)

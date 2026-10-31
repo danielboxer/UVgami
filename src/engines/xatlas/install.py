@@ -29,11 +29,9 @@ XATLAS = EngineRelease(
 class UVGAMI_OT_install_xatlas(InstallEngineTask, bpy.types.Operator):
     bl_idname = "uvgami.install_xatlas"
     bl_label = "Download xatlas Engine"
-    owner = "xatlas"
     release = XATLAS
 
 
-# regions and symmetry need the bundled uvgami-tools binary
 class XatlasInstall(BinaryEngine):
     release = XATLAS
     supports_regions = True

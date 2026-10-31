@@ -7,23 +7,25 @@ from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
 
 from ..engines import active_engine
-from ..job import mirror_segmentation, paints_seams, unwrap_plan
-from ..manager import Settings, manager
+from ..job import unwrap_symmetry
+from ..manager import SettingsCopy, manager
+from ..no_bpy import SURFACE_MODE_CODES, EngineError
+from ..no_bpy.mesh import face_starts
+from ..no_bpy.preseed import SegmentRegions, classify_job
+from ..no_bpy.worker import WorkerError, WorkerProcess
 from ..part_overrides import KEEP_ATTRIBUTE, face_values, surface_modes
 from ..proxy import part_triangles
-from ..seams import SURFACE_MODE_CODES, EngineError
-from ..seams.segmentation import SegmentRegions, classify_job
-from ..seams.worker import WorkerError, WorkerProcess
-from ..segmentation import segment_work
-from ..utils.geometry import applied_matrix
+from ..symmetry import mirror_segmentation, paints_seams
 from ..utils.mesh import (
-    face_vertex_arrays,
+    applied_matrix,
     lifted_triangles,
+    loop_vertices_and_face_sizes,
+    mesh_arrays,
     vertex_position_array,
     world_positions,
 )
 from ..utils.paths import get_extension_dir_path
-from ..utils.ui import tag_redraw
+from ..utils.ui import count_label, tag_redraw
 from ..utils.uvgami_tools import tools_command
 
 ORGANIC_COLOR = (0.25, 0.75, 0.35, 0.4)
@@ -35,7 +37,6 @@ AXIS_COLORS = {
     "Z": (0.16, 0.56, 0.9),
 }
 
-# positions are in world space, nudge is the share of the camera distance it is drawn closer by
 Shape = namedtuple("Shape", ["kind", "positions", "indices", "color", "nudge"])
 Preview = namedtuple("Preview", ["shapes", "lines"])
 _preview = None
@@ -46,23 +47,25 @@ _line_shader = None
 
 
 class PreviewRun:
-    def __init__(self, obj, engine, props, segment_command):
+    def __init__(self, obj, engine, props):
         self.name = obj.name
         self.engine = engine
         self.props = props
         self.mesh = evaluated_mesh(obj)
-        self.plan = unwrap_plan(
+        self.symmetry = unwrap_symmetry(
             engine, props, self.mesh, painted=paints_seams(obj, engine, props)
         )
-        self.worker = self._start_worker(segment_command, applied_matrix(obj))
+        try:
+            self.worker = self._start_worker(applied_matrix(obj))
+        except EngineError:
+            bpy.data.meshes.remove(self.mesh)
+            raise
         self.plane = None
-        # the plan's plane is in local space
         self.local_positions = vertex_position_array(self.mesh)
-        if self.plan.symmetry is not None:
+        if self.symmetry is not None:
             self.plane = plane_corners(
-                self.plan.symmetry, self.local_positions, obj.matrix_world
+                self.symmetry, self.local_positions, obj.matrix_world
             )
-        # the overlay draws in world space
         self.mesh.transform(obj.matrix_world)
         self.cancelled = False
 
@@ -78,7 +81,7 @@ class PreviewRun:
                 self.mesh,
                 self.engine,
                 self.props,
-                self.plan,
+                self.symmetry,
                 self.plane,
                 self._segments(),
             )
@@ -86,18 +89,18 @@ class PreviewRun:
             _preview = Preview([], [self.name, f"Failed, {error}"])
         finally:
             bpy.data.meshes.remove(self.mesh)
-            # any other error would leave the Preview button disabled
             end_run()
         return None
 
-    # None when the engine has no surface modes and no regions to show
-    def _start_worker(self, segment_command, matrix):
+    def _start_worker(self, matrix):
         unset_mode = self.engine.unset_surface_mode(self.props)
-        if self.plan.splits_regions:
+        if self.engine.splits_regions(self.props):
+            from ..segmentation import segment_work
+
             return segment_work(
                 self.mesh,
                 world_positions(self.mesh, matrix),
-                segment_command,
+                tools_command(),
                 unset_mode,
             )
         if not self.engine.supports_hard_surface:
@@ -106,31 +109,28 @@ class PreviewRun:
             classify_job,
             tools_command(),
             get_extension_dir_path() / "segment",
-            vertex_position_array(self.mesh),
-            *face_vertex_arrays(self.mesh),
+            *mesh_arrays(self.mesh),
             surface_modes(self.mesh, unset_mode),
         )
 
-    # the classifier's modes in the shape of a segmentation with no regions
     def _segments(self):
         if self.worker is None:
             return None
         result = self.worker.result()
-        if self.plan.splits_regions:
-            # the regions the unwrap splits on
+        if self.engine.splits_regions(self.props):
             _, segments = mirror_segmentation(
                 self.local_positions,
-                *face_vertex_arrays(self.mesh),
+                *loop_vertices_and_face_sizes(self.mesh),
                 result,
-                self.plan.symmetry,
+                self.symmetry,
             )
             return segments
         return SegmentRegions(
             result, [], 0, numpy.zeros(len(result), dtype=numpy.int64)
         )
 
-    # the timer drops itself on its next tick
     def cancel(self):
+        # bpy.app.timers unregisters a callback that returns None
         self.cancelled = True
         if self.worker is not None:
             self.worker.close()
@@ -158,22 +158,29 @@ def evaluated_mesh(obj):
     return bpy.data.meshes.new_from_object(obj.evaluated_get(depsgraph))
 
 
-# segments is None for an engine with no surface modes and no regions
-def build_preview(name, mesh, engine, props, plan, plane, segments):
+FILL_NUDGE = 1e-3
+LINE_NUDGE = 1e-2
+PLANE_TRIANGLES = ((0, 1, 2), (0, 2, 3))
+PLANE_OUTLINE = ((0, 1), (1, 2), (2, 3), (3, 0))
+
+
+def build_preview(name, mesh, engine, props, symmetry, plane, segments):
     positions = vertex_position_array(mesh)
     shapes = []
     lines = [name]
-    labels, part_labels, counts = part_triangles(mesh)
+    part_counts = part_triangles(mesh)
     decimated = 0
     if engine.uses_proxy(props):
-        decimated = int((counts > props.proxy_faces).sum())
+        decimated = int((part_counts.triangle_counts > props.proxy_faces).sum())
     kept = face_values(mesh, KEEP_ATTRIBUTE) != 0
-    part_count = len(part_labels)
-    parts = f"{part_count} part" if part_count == 1 else f"{part_count} parts"
+    part_count = len(part_counts.part_labels)
+    parts = count_label(part_count, "part")
 
     if engine.supports_hard_surface:
         hard = segments.surface_modes == SURFACE_MODE_CODES["HARD"]
-        parts += f": {mode_counts(mesh, labels, part_count, kept, hard)}"
+        parts += (
+            f": {mode_counts(mesh, part_counts.vertex_labels, part_count, kept, hard)}"
+        )
         mesh.calc_loop_triangles()
         corners, triangle_faces = lifted_triangles(mesh, positions, 0.0)
         for faces, color in (
@@ -194,7 +201,6 @@ def build_preview(name, mesh, engine, props, plan, plane, segments):
                 Shape("LINES", positions[edges.ravel()], None, BORDER_COLOR, LINE_NUDGE)
             )
 
-    symmetry = plan.symmetry
     if symmetry is not None:
         color = AXIS_COLORS[symmetry.axis]
         shapes.append(Shape("TRIS", plane, PLANE_TRIANGLES, (*color, 0.25), 0.0))
@@ -213,10 +219,9 @@ def build_preview(name, mesh, engine, props, plan, plane, segments):
     return Preview(shapes, lines)
 
 
-# every face of a loose part has the same mode
 def mode_counts(mesh, labels, part_count, kept, hard):
-    corners, totals = face_vertex_arrays(mesh)
-    face_labels = labels[corners[numpy.cumsum(totals) - totals]]
+    corners, totals = loop_vertices_and_face_sizes(mesh)
+    face_labels = labels[corners[face_starts(totals)]]
     hard_count = len(numpy.unique(face_labels[hard]))
     kept_count = len(numpy.unique(face_labels[kept]))
     organic_count = part_count - hard_count - kept_count
@@ -224,12 +229,6 @@ def mode_counts(mesh, labels, part_count, kept, hard):
     if kept_count:
         counts.append(f"{kept_count} keep UVs")
     return ", ".join(counts)
-
-
-# a point moved along its view ray stays put on screen and only gets closer
-FILL_NUDGE = 1e-3
-# the lines have to clear the fill too
-LINE_NUDGE = 1e-2
 
 
 def _toward_camera(nudge):
@@ -240,18 +239,12 @@ def _toward_camera(nudge):
     return Matrix.Translation((0, 0, nudge * region_data.view_distance))
 
 
-PLANE_TRIANGLES = ((0, 1, 2), (0, 2, 3))
-PLANE_OUTLINE = ((0, 1), (1, 2), (2, 3), (3, 0))
-
-
-# past the bounding box, so the plane shows outside a rounded surface
+# planes no bigger than the bounding box are hidden under a rounded surface
 PLANE_MARGIN = 1.2
 
 
-# the plan's plane is in the mesh's local space, matrix moves it into the overlay's
 def plane_corners(symmetry, positions, matrix):
     half_extent = numpy.ptp(positions, axis=0) / 2
-    # floored so a flat mesh still shows its plane
     floor = 0.1 * max(half_extent)
     half = Vector(PLANE_MARGIN * max(value, floor) for value in half_extent)
     if symmetry.axis == "X":
@@ -270,7 +263,7 @@ def _shape_shader(shape):
 
 
 def _shape_batch(shape):
-    # a float64 buffer goes into the vertex buffer as raw float32 bytes
+    # float64 buffers go into the vertex buffer as raw float32 bytes
     positions = numpy.ascontiguousarray(shape.positions, dtype=numpy.float32)
     shader = _shape_shader(shape)
     if shape.indices is None:
@@ -298,16 +291,14 @@ def _draw():
     _line_shader.uniform_float("lineWidth", LINE_WIDTH)
     _line_shader.uniform_bool("lineSmooth", True)
     if _batches is None:
-        _batches = [
-            (_shape_batch(shape), _shape_shader(shape), shape.color, shape.nudge)
-            for shape in _preview.shapes
-        ]
+        _batches = [(shape, _shape_batch(shape)) for shape in _preview.shapes]
     view = gpu.matrix.get_model_view_matrix()
-    for batch, shader, color, nudge in _batches:
+    for shape, batch in _batches:
+        shader = _shape_shader(shape)
         shader.bind()
-        shader.uniform_float("color", color)
+        shader.uniform_float("color", shape.color)
         with gpu.matrix.push_pop():
-            gpu.matrix.load_matrix(_toward_camera(nudge) @ view)
+            gpu.matrix.load_matrix(_toward_camera(shape.nudge) @ view)
             batch.draw(shader)
     gpu.state.depth_test_set("NONE")
     gpu.state.blend_set("NONE")
@@ -352,19 +343,15 @@ class UVGAMI_OT_preview_auto_settings(bpy.types.Operator):
         global _run, _preview, _batches
         props = context.scene.uvgami
         engine = active_engine(props.engine)
-        segment_command = None
-        if engine.splits_regions(props):
-            try:
-                segment_command = [*tools_command(), "segment"]
-            except RuntimeError as error:
-                self.report({"ERROR"}, str(error))
-                return {"CANCELLED"}
+        try:
+            run = PreviewRun(context.active_object, engine, SettingsCopy(props))
+        except EngineError as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
         _ensure_draw_handler()
         _preview = None
         _batches = None
-        _run = PreviewRun(
-            context.active_object, engine, Settings(props), segment_command
-        )
+        _run = run
         bpy.app.timers.register(_run.tick)
         tag_redraw()
         return {"FINISHED"}

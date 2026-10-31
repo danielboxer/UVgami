@@ -3,10 +3,11 @@ import zipfile
 
 import bpy
 
+from ..no_bpy.engine_run import EngineError
 from ..utils.download import download_file, verify_sha256
 from ..utils.engine_binaries import (
+    get_dev_build_path,
     get_engine_binary_name,
-    get_local_engine_path,
     get_platform_tag,
 )
 from ..utils.paths import get_extension_dir_path
@@ -15,11 +16,13 @@ from .install_task import (
     DELETE_DESCRIPTION,
     DELETED_MESSAGE,
     DOWNLOADED_MESSAGE,
+    ENGINE_TOO_OLD_ERROR,
     NOT_DOWNLOADED_ERROR,
     UPDATE_ICON,
     CachedUpdateNotice,
     InstallTask,
     draw_error,
+    draw_install_status,
     draw_online_access,
     draw_progress,
     offline_error,
@@ -40,16 +43,6 @@ def engine_install_root(name):
     return get_extension_dir_path() / name
 
 
-# the engine zips nest the licenses at different depths
-def license_target(install_dir, member):
-    parts = member.split("/")
-    if parts[-1] == LICENSE_FILE:
-        return install_dir / LICENSE_FILE
-    if LICENSES_FOLDER in parts[:-1] and parts[-1]:
-        return install_dir / LICENSES_FOLDER / parts[-1]
-    return None
-
-
 class EngineRelease:
     def __init__(
         self, name, label, version, minimum_version, download_size, archive_sha256s
@@ -63,24 +56,22 @@ class EngineRelease:
         self.install_op = f"uvgami.install_{name}"
 
     def install_dir(self):
-        # named by version, installed_version reads it back
         return engine_install_root(self.name) / self.version
 
-    # true when a download exists, even while a local build is the one that runs
     def is_downloaded(self):
         root = engine_install_root(self.name)
-        return root.is_dir() and any(d.is_dir() for d in root.iterdir())
+        return root.is_dir() and any(folder.is_dir() for folder in root.iterdir())
 
-    # a dead download leaves the version folder without a binary
     def installed_version(self):
         root = engine_install_root(self.name)
         if not root.is_dir():
             return None
         binary_name = get_engine_binary_name(self.name)
         names = [
-            d.name
-            for d in root.iterdir()
-            if parse_version(d.name) is not None and (d / binary_name).is_file()
+            folder.name
+            for folder in root.iterdir()
+            if parse_version(folder.name) is not None
+            and (folder / binary_name).is_file()
         ]
         return max(names, key=parse_version, default=None)
 
@@ -101,6 +92,9 @@ class EngineRelease:
     def update_available(self):
         return self.installed_below(self.version)
 
+    def install_action(self):
+        return "Update" if self.update_available() else "Download"
+
     def install(self):
         if self.installed_version() == self.version:
             return
@@ -109,11 +103,10 @@ class EngineRelease:
         try:
             self.fetch_binary(install_dir)
         except Exception:
-            # an empty version dir counts as downloaded
+            # leftover empty version folders show the engine as downloaded
             shutil.rmtree(install_dir, ignore_errors=True)
             raise
 
-        # drop engines left behind by older addon versions
         for old in install_dir.parent.iterdir():
             if old.is_dir() and old != install_dir:
                 shutil.rmtree(old)
@@ -129,7 +122,7 @@ class EngineRelease:
 
         binary = install_dir / get_engine_binary_name(self.name)
         with zipfile.ZipFile(archive_path) as archive:
-            # the cpack zip nests the binary in a package folder
+            # cpack zips nest the binary in a package folder
             member = next(
                 (
                     name
@@ -140,15 +133,20 @@ class EngineRelease:
             )
             if member is None:
                 raise RuntimeError(f"{asset} has no {binary.name}")
-            with archive.open(member) as src, open(binary, "wb") as dst:
-                shutil.copyfileobj(src, dst)
+            with archive.open(member) as source, open(binary, "wb") as destination:
+                shutil.copyfileobj(source, destination)
             for name in archive.namelist():
-                target = license_target(install_dir, name)
-                if target is None:
+                # optcuts and xatlas zips nest the licenses at different depths
+                parts = name.split("/")
+                if parts[-1] == LICENSE_FILE:
+                    target = install_dir / LICENSE_FILE
+                elif LICENSES_FOLDER in parts[:-1] and parts[-1]:
+                    target = install_dir / LICENSES_FOLDER / parts[-1]
+                else:
                     continue
                 target.parent.mkdir(exist_ok=True)
-                with archive.open(name) as src, open(target, "wb") as dst:
-                    shutil.copyfileobj(src, dst)
+                with archive.open(name) as source, open(target, "wb") as destination:
+                    shutil.copyfileobj(source, destination)
         archive_path.unlink()
         binary.chmod(0o755)
 
@@ -161,13 +159,11 @@ class UVGAMI_OT_delete_engine(InstallTask, bpy.types.Operator):
 
     engine_id: bpy.props.StringProperty(options={"HIDDEN"})
 
-    # the preferences match the progress and errors to the release name
     @property
     def owner(self):
-        # imported late, the engines package imports this module while loading
-        from . import get_engine
+        from . import ENGINES
 
-        return get_engine(self.engine_id).release.name
+        return ENGINES[self.engine_id].release.name
 
     def invoke(self, context, event):
         return context.window_manager.invoke_confirm(self, event)
@@ -186,10 +182,13 @@ class InstallEngineTask(InstallTask):
     done_message = DOWNLOADED_MESSAGE
     release = None
 
+    @property
+    def owner(self):
+        return self.release.name
+
     @classmethod
     def description(cls, context, properties):
-        action = "Update" if cls.release.update_available() else "Download"
-        return f"{action} the engine"
+        return f"{cls.release.install_action()} the engine"
 
     def precheck(self):
         if get_platform_tag() is None:
@@ -197,7 +196,7 @@ class InstallEngineTask(InstallTask):
         return offline_error()
 
     def invoke(self, context, event):
-        action = "Update" if self.release.update_available() else "Download"
+        action = self.release.install_action()
         return context.window_manager.invoke_confirm(
             self,
             event,
@@ -220,33 +219,27 @@ class BinaryEngine(CachedUpdateNotice, Engine):
     def install_owner(self):
         return self.release.name
 
-    def validate(self, prefs):
+    def validate(self):
         release = self.release
-        path = get_local_engine_path(release.name) or release.installed_path()
+        path = get_dev_build_path(release.name) or release.installed_path()
         if path is not None:
-            return path, None
+            return path
         if release.install_too_old():
-            return (
-                None,
-                "This update needs a newer engine."
-                " Download it in the add-on preferences",
-            )
-        return None, NOT_DOWNLOADED_ERROR
+            raise EngineError(ENGINE_TOO_OLD_ERROR)
+        raise EngineError(NOT_DOWNLOADED_ERROR)
 
     def install_too_old(self):
         return self.release.install_too_old()
 
     def describe(self):
-        if get_local_engine_path(self.release.name) is not None:
+        if get_dev_build_path(self.release.name) is not None:
             return f"{self.label} v{self.release.version} (local build)"
         version = self.release.installed_version() or self.release.version
         return f"{self.label} v{version}"
 
     def update_pending(self):
         release = self.release
-        return (
-            get_local_engine_path(release.name) is None and release.update_available()
-        )
+        return get_dev_build_path(release.name) is None and release.update_available()
 
     def draw_not_installed(self, layout, waiting_for=None):
         box = layout.box()
@@ -264,7 +257,6 @@ class BinaryEngine(CachedUpdateNotice, Engine):
             return
         row = box.row()
         row.scale_y = 1.5
-        # skip the confirmation, this is the only way to get an engine
         row.operator_context = "EXEC_DEFAULT"
         row.operator(
             self.release.install_op,
@@ -272,29 +264,25 @@ class BinaryEngine(CachedUpdateNotice, Engine):
             icon=UPDATE_ICON if outdated else "IMPORT",
         )
 
-    def draw_prefs(self, layout, prefs):
+    def draw_prefs(self, layout):
         release = self.release
         if task_state["running"] and task_state["owner"] == release.name:
             draw_progress(layout, DOWNLOAD_PHASE)
             return
 
-        _, error = self.validate(prefs)
-        needs_download = error is not None
+        needs_download = not self.is_installed()
         update_pending = self.update_pending()
-        installed = release.installed_version()
-        change = f"v{installed} → v{release.version}"
-        if self.install_too_old():
-            status = (f"Engine update required: {change}", "ERROR")
-        elif update_pending:
-            status = (f"Engine update available: {change}", "FILE_REFRESH")
-        elif needs_download:
-            status = ("Not downloaded", "X")
-        elif get_local_engine_path(release.name) is not None:
-            status = ("Local build", "CHECKMARK")
+        too_old = self.install_too_old()
+        if not too_old and get_dev_build_path(release.name) is not None:
+            layout.row().label(text="Local build", icon="CHECKMARK")
         else:
-            status = (f"Downloaded v{installed}", "CHECKMARK")
-
-        layout.row().label(text=status[0], icon=status[1])
+            draw_install_status(
+                layout,
+                release.installed_version(),
+                release.version,
+                too_old=too_old,
+                update_pending=update_pending,
+            )
 
         wants_download = needs_download or update_pending
         if wants_download or release.is_downloaded():

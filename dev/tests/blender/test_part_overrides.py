@@ -2,22 +2,19 @@ import bmesh
 import bpy
 import pytest
 from blender_fixtures import (
+    EXPECTED,
     addon,
+    is_second_cube,
     island_count,
     manager,
     needs_engine,
     seam_count,
+    side_uvs,
     two_loose_cubes,
 )
-from test_settings import EXPECTED
 
 part_overrides = addon.src.part_overrides
 SURFACE_MODE_CODES = part_overrides.SURFACE_MODE_CODES
-
-
-# the second cube of two_loose_cubes sits past x = 2
-def is_second_cube(mesh, face):
-    return mesh.vertices[face.vertices[0]].co.x > 2
 
 
 def set_override(obj, name, value, faces=None):
@@ -28,17 +25,6 @@ def set_override(obj, name, value, faces=None):
     for face in mesh.polygons:
         if faces is None or faces(mesh, face):
             attribute.data[face.index].value = value
-
-
-def side_uvs(obj, second):
-    mesh = obj.data
-    layer = mesh.uv_layers.active.data
-    return {
-        tuple(round(c, 5) for c in layer[loop].uv)
-        for face in mesh.polygons
-        if is_second_cube(mesh, face) == second
-        for loop in face.loop_indices
-    }
 
 
 # def side_uv_area(obj, second):
@@ -68,7 +54,7 @@ def test_kept_part_skips_the_engine_and_keeps_its_uvs(unwrap, outputs):
     unwrap()
 
     assert manager.summary == ["UV unwrap complete"]
-    assert [u.keeps_uvs for u, _ in manager.results].count(True) == 1
+    assert [piece.keeps_uvs for piece, _ in manager.results].count(True) == 1
     output = outputs()[f"{joined.name}_unwrapped"]
     assert side_uvs(output, second=True) == kept_before
     assert side_uvs(output, second=False) != side_uvs(joined, second=False)
@@ -136,12 +122,12 @@ def test_part_mode_overrides_the_panel_mode(
 def test_panel_writes_the_whole_part_of_a_selected_face():
     joined = two_loose_cubes()
     bpy.ops.object.mode_set(mode="EDIT")
-    bm = bmesh.from_edit_mesh(joined.data)
-    for face in bm.faces:
+    edit_mesh = bmesh.from_edit_mesh(joined.data)
+    for face in edit_mesh.faces:
         face.select_set(False)
-    face = next(f for f in bm.faces if f.verts[0].co.x > 2)
+    face = next(face for face in edit_mesh.faces if face.verts[0].co.x > 2)
     face.select_set(True)
-    bm.faces.active = face
+    edit_mesh.faces.active = face
     bmesh.update_edit_mesh(joined.data)
 
     overrides = bpy.context.scene.uvgami_part_overrides

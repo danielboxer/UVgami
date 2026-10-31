@@ -11,32 +11,32 @@ addon = importlib.import_module(background_blender.ADDON_MODULE)
 manager = addon.src.manager.manager
 logger = addon.src.logger.logger
 get_preferences = addon.src.utils.paths.get_preferences
+face_uvs = addon.src.utils.mesh.face_uvs
 
 # the machine is often busy with a bench run
 UNWRAP_SECONDS = 600
 OUTPUT_SUFFIX = "_unwrapped"
-INVALID_COLLECTION = "UVgami Not Unwrapped"
 
 needs_engine = pytest.mark.skipif(
-    addon.src.utils.engine_binaries.get_local_engine_path("optcuts") is None,
+    addon.src.utils.engine_binaries.get_dev_build_path("optcuts") is None,
     reason="no local optcuts binary, and downloading one would need the network",
 )
 needs_tools = pytest.mark.skipif(
-    addon.src.utils.engine_binaries.get_local_engine_path("uvgami-tools") is None,
+    addon.src.utils.engine_binaries.get_dev_build_path("uvgami-tools") is None,
     reason="no local uvgami-tools binary, and no release exists to download",
 )
 needs_xatlas = pytest.mark.skipif(
-    addon.src.utils.engine_binaries.get_local_engine_path("xatlas") is None,
+    addon.src.utils.engine_binaries.get_dev_build_path("xatlas") is None,
     reason="no local xatlas binary, and downloading one would need the network",
 )
 
 
 def _partuv_installed():
-    engine = addon.src.engines.get_engine("PARTUV")
-    ctx, error = engine.validate(get_preferences())
-    if error is not None:
+    partuv = addon.src.engines.partuv
+    if not partuv.ENGINE.is_installed():
         return False
-    venv = ctx.path / ".venv" if ctx.mode == "dev" else ctx.path
+    repo = partuv.find_partuv_dev_repo()
+    venv = partuv.paths.get_partuv_venv_path() if repo is None else repo / ".venv"
     return any(
         next(venv.glob(pattern), None) is not None
         for pattern in ("*/site-packages/partuv-*", "*/*/site-packages/partuv-*")
@@ -48,27 +48,48 @@ needs_partuv = pytest.mark.skipif(
 )
 
 
-def island_count(obj):
-    mesh = obj.data
+PROXY_FACES_MINIMUM = addon.src.ui.props.UVGAMI_PG_properties.bl_rna.properties[
+    "proxy_faces"
+].hard_min
+# (islands, seams) on the balanced unwrap, recorded 2026-08-22 at optcuts 1.20,
+# the hard surface rows 2026-10-24 on the placed seams route
+EXPECTED = {
+    ("cylinder", "ORGANIC"): (1, 30),
+    ("cylinder", "HARD"): (3, 97),
+    ("cube-bevel2", "ORGANIC"): (1, 12),
+    ("cube-bevel2", "HARD"): (6, 37),
+}
+
+
+def uv_islands(mesh):
     faces = addon.src.utils.mesh.face_vertices(mesh)
     uvs = addon.src.utils.mesh.face_uvs(mesh)
-    edges = addon.src.seams.face_edges(faces)
-    return len(addon.src.seams.uv_island_groups(faces, uvs, edges))
+    edges = addon.src.no_bpy.faces_by_edge(faces)
+    return addon.src.no_bpy.islands_from_uvs(faces, uvs, edges)
+
+
+def island_count(obj):
+    return len(uv_islands(obj.data))
 
 
 def seam_count(obj):
     return sum(1 for edge in obj.data.edges if edge.use_seam)
 
 
-# a map crushed to points has corners off zero but no area
+def uvs_inside_unit_square(mesh):
+    uvs = addon.src.utils.mesh.loop_uvs(mesh)
+    return bool(((uvs >= 0) & (uvs <= 1)).all())
+
+
 def has_uvs(obj, faces=None):
     mesh = obj.data
     if mesh.uv_layers.active is None:
         return False
+    # a map crushed to points has corners off zero but no area
     uvs = addon.src.utils.mesh.face_uvs(mesh)
     if faces is not None:
         uvs = [uvs[face.index] for face in faces]
-    return not addon.src.seams.uvs_collapsed(uvs)
+    return not addon.src.no_bpy.uvs_collapsed_to_points(uvs)
 
 
 def add_primitive(name, add, **kwargs):
@@ -80,6 +101,22 @@ def add_primitive(name, add, **kwargs):
 
 def add_cube(name, **kwargs):
     return add_primitive(name, bpy.ops.mesh.primitive_cube_add, **kwargs)
+
+
+def add_sphere(name):
+    return add_primitive(
+        name, bpy.ops.mesh.primitive_uv_sphere_add, segments=32, ring_count=16
+    )
+
+
+def add_dense_sphere(name, location=(0, 0, 0)):
+    return add_primitive(
+        name,
+        bpy.ops.mesh.primitive_uv_sphere_add,
+        segments=64,
+        ring_count=32,
+        location=location,
+    )
 
 
 def select(objects):
@@ -99,6 +136,22 @@ def two_loose_cubes():
     return join([add_cube("a"), add_cube("b", location=(5, 0, 0))])
 
 
+def is_second_cube(mesh, face):
+    # the second cube of two_loose_cubes sits past x = 2
+    return mesh.vertices[face.vertices[0]].co.x > 2
+
+
+def side_uvs(obj, second):
+    mesh = obj.data
+    layer = mesh.uv_layers.active.data
+    return {
+        tuple(round(coordinate, 5) for coordinate in layer[loop].uv)
+        for face in mesh.polygons
+        if is_second_cube(mesh, face) == second
+        for loop in face.loop_indices
+    }
+
+
 @pytest.fixture(autouse=True)
 def empty_scene():
     bpy.ops.wm.read_homefile(use_empty=True)
@@ -111,10 +164,7 @@ def load_obj():
         before = set(bpy.data.objects)
         bpy.ops.wm.obj_import(filepath=str(path))
         imported = [obj for obj in bpy.data.objects if obj not in before]
-        bpy.ops.object.select_all(action="DESELECT")
-        for obj in imported:
-            obj.select_set(True)
-        bpy.context.view_layer.objects.active = imported[0]
+        select(imported)
         return imported
 
     return load
@@ -130,10 +180,10 @@ SESSION_PREFERENCES = {
 
 @pytest.fixture
 def session():
-    prefs = get_preferences()
-    saved = {name: getattr(prefs, name) for name in SESSION_PREFERENCES}
+    preferences = get_preferences()
+    saved = {name: getattr(preferences, name) for name in SESSION_PREFERENCES}
     for name, value in SESSION_PREFERENCES.items():
-        setattr(prefs, name, value)
+        setattr(preferences, name, value)
     try:
         with timer_pump.pump_timers() as pump:
 
@@ -146,7 +196,7 @@ def session():
             yield run
     finally:
         for name, value in saved.items():
-            setattr(prefs, name, value)
+            setattr(preferences, name, value)
 
 
 @pytest.fixture
@@ -173,7 +223,9 @@ def outputs():
 @pytest.fixture
 def invalid_objects():
     def read():
-        collection = bpy.data.collections.get(INVALID_COLLECTION)
+        collection = bpy.data.collections.get(
+            addon.src.utils.mesh.NOT_UNWRAPPED_COLLECTION
+        )
         if collection is None:
             return {}
         return {obj.name: obj for obj in collection.objects}
@@ -198,21 +250,6 @@ def make_mesh():
         return obj
 
     return build
-
-
-@pytest.fixture
-def face_uvs():
-    def read(obj, digits=6):
-        layer = obj.data.uv_layers.active.data
-        return [
-            [
-                tuple(round(v, digits) for v in layer[loop].uv)
-                for loop in face.loop_indices
-            ]
-            for face in obj.data.polygons
-        ]
-
-    return read
 
 
 @pytest.fixture

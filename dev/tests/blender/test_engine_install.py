@@ -1,4 +1,5 @@
 import hashlib
+import importlib
 import io
 import zipfile
 
@@ -41,6 +42,15 @@ def test_parse_version_rejects_a_name_that_is_not_a_version():
 
 def test_version_order_is_numeric():
     assert parse_version("1.9.0") < parse_version("1.20.0")
+
+
+@pytest.mark.parametrize("engine", ["optcuts", "xatlas", "partuv"])
+def test_minimum_version_is_not_above_the_pinned_version(engine):
+    # a minimum above the pinned version refuses every download
+    install = importlib.import_module(f"{addon.src.engines.__name__}.{engine}.install")
+    pinned = getattr(install, f"{engine.upper()}_VERSION")
+    minimum = getattr(install, f"{engine.upper()}_MINIMUM_VERSION")
+    assert parse_version(minimum) <= parse_version(pinned)
 
 
 def test_nothing_downloaded(release):
@@ -100,10 +110,10 @@ def test_local_build_never_asks_for_an_update(release, install, monkeypatch):
     install("1.20.1")
     engine = BinaryEngine()
     engine.release = release
-    monkeypatch.setattr(binary_engine, "get_local_engine_path", lambda name: None)
+    monkeypatch.setattr(binary_engine, "get_dev_build_path", lambda name: None)
     assert engine.update_pending()
     # this checkout has its own build
-    monkeypatch.setattr(binary_engine, "get_local_engine_path", lambda name: "engine")
+    monkeypatch.setattr(binary_engine, "get_dev_build_path", lambda name: "engine")
     assert not engine.update_pending()
 
 

@@ -1,44 +1,60 @@
+import collections
+
 import bmesh
 import bpy
 import numpy
 from mathutils import Matrix, Vector
 
 # from mathutils.kdtree import KDTree
-from .seams.mesh import connected_labels
-from .utils.geometry import cut_on_axis
+from .hard_surface import apply_seams
+from .job import Transfer, apply_island_uvs_and_seams, island_edges_on_mesh
+from .no_bpy import fit_uvs_keeping_area
+from .no_bpy.mesh import face_starts, lowest_index_part_labels
+from .no_bpy.proxy_transfer import dense_subset, start_proxy_transfer
+from .symmetry import cut_on_axis
 from .utils.mesh import (
+    check_exists,
     corner_uvs,
-    face_vertex_arrays,
+    edge_vertex_pairs,
     face_vertices,
+    loop_vertices_and_face_sizes,
     new_bmesh,
     set_bmesh,
+    set_loop_uvs,
+    triangulate_mesh,
     vertex_position_array,
 )
+from .utils.paths import get_extension_dir_path
+from .utils.uvgami_tools import tools_command
 
 
-# every face fans into loop_total - 2 triangles
 def triangle_count(obj):
     return len(obj.data.loops) - 2 * len(obj.data.polygons)
 
 
+PartTriangles = collections.namedtuple(
+    "PartTriangles", "vertex_labels part_labels triangle_counts"
+)
+
+
 def part_triangles(data):
-    labels = connected_labels(len(data.vertices), _edge_array(data))
-    corners, totals = face_vertex_arrays(data)
-    starts = numpy.concatenate(([0], numpy.cumsum(totals)[:-1]))
-    part_labels, face_part = numpy.unique(labels[corners[starts]], return_inverse=True)
+    labels = lowest_index_part_labels(len(data.vertices), edge_vertex_pairs(data))
+    corners, totals = loop_vertices_and_face_sizes(data)
+    part_labels, face_part = numpy.unique(
+        labels[corners[face_starts(totals)]], return_inverse=True
+    )
     counts = numpy.bincount(face_part, weights=totals - 2).astype(numpy.int64)
-    return labels, part_labels, counts
+    return PartTriangles(labels, part_labels, counts)
 
 
-# the budget is per loose part, parts is the part_triangles a caller already has
 def needs_proxy(obj, target_faces, parts=None):
     if triangle_count(obj) <= target_faces:
         return False
-    _, _, counts = part_triangles(obj.data) if parts is None else parts
-    return int(counts.max()) > target_faces
+    if parts is None:
+        parts = part_triangles(obj.data)
+    return int(parts.triangle_counts.max()) > target_faces
 
 
-# the bake also applies the object's other modifiers
 def make_proxy(obj, target_faces, parts=None):
     if parts is None:
         parts = part_triangles(obj.data)
@@ -50,7 +66,7 @@ def make_proxy(obj, target_faces, parts=None):
 
     modifiers = []
     groups = []
-    # a ratio is a fraction of the previous modifier's output
+    # each decimate ratio is a fraction of the previous modifier's output
     remaining = triangles
     for part in over:
         target = remaining - (int(counts[part]) - target_faces)
@@ -60,12 +76,12 @@ def make_proxy(obj, target_faces, parts=None):
         modifiers.append(modifier)
         if len(part_labels) > 1:
             group = obj.vertex_groups.new(name="UVgami Proxy")
-            part_verts = numpy.flatnonzero(labels == part_labels[part])
-            group.add(part_verts.tolist(), 1.0, "REPLACE")
+            part_vertices = numpy.flatnonzero(labels == part_labels[part])
+            group.add(part_vertices.tolist(), 1.0, "REPLACE")
             modifier.vertex_group = group.name
             groups.append(group)
     depsgraph = bpy.context.evaluated_depsgraph_get()
-    # preserve_all_data_layers would run the decimate a second time
+    # preserve_all_data_layers runs the decimate a second time
     baked = bpy.data.meshes.new_from_object(obj.evaluated_get(depsgraph))
 
     for modifier in modifiers:
@@ -78,54 +94,62 @@ def make_proxy(obj, target_faces, parts=None):
     bpy.data.meshes.remove(stale)
 
     if triangle_count(obj) == triangles:
-        # a hidden object is left out of the depsgraph
+        # hidden objects are left out of the depsgraph
         raise RuntimeError(f"{obj.name} was not decimated, it has to be visible")
 
     clean_proxy(obj)
     return True
 
 
+def values_carried_through(obj, attribute_name, values, operation):
+    obj.data.attributes.new(attribute_name, "INT", "FACE").data.foreach_set(
+        "value", values
+    )
+    operation()
+    attribute = obj.data.attributes[attribute_name]
+    carried = numpy.empty(len(obj.data.polygons), dtype=numpy.int32)
+    attribute.data.foreach_get("value", carried)
+    obj.data.attributes.remove(attribute)
+    return carried
+
+
 SOURCE_FACE_ATTRIBUTE = "uvgami_proxy_source_face"
 
 
-def mirror_proxy(obj, axis, center, tolerance, kept_side):
-    obj.data.attributes.new(SOURCE_FACE_ATTRIBUTE, "INT", "FACE").data.foreach_set(
-        "value", numpy.arange(len(obj.data.polygons), dtype=numpy.int32)
-    )
-    cut_on_axis(obj, center, axis, tolerance, kept_side)
-    bm = new_bmesh(obj)
-    bmesh.ops.mirror(
-        bm,
-        geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
-        matrix=Matrix.Translation(-Vector(center)),
-        merge_dist=tolerance,
-        axis=axis,
-    )
-    set_bmesh(bm, obj)
-    attribute = obj.data.attributes[SOURCE_FACE_ATTRIBUTE]
-    source_faces = numpy.empty(len(obj.data.polygons), dtype=numpy.int32)
-    attribute.data.foreach_get("value", source_faces)
-    obj.data.attributes.remove(attribute)
-    return source_faces
+def mirror_proxy(obj, symmetry):
+    center = Vector(symmetry.center)
+
+    def mirror():
+        cut_on_axis(obj, center, symmetry.axis, symmetry.tolerance, symmetry.kept_side)
+        bm = new_bmesh(obj)
+        bmesh.ops.mirror(
+            bm,
+            geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
+            matrix=Matrix.Translation(-center),
+            merge_dist=symmetry.tolerance,
+            axis=symmetry.axis,
+        )
+        set_bmesh(bm, obj)
+
+    source_faces = numpy.arange(len(obj.data.polygons), dtype=numpy.int32)
+    return values_carried_through(obj, SOURCE_FACE_ATTRIBUTE, source_faces, mirror)
 
 
-# neighbour normals this far apart are a triangle folded over the other
 FOLD_DOT = -0.8
-# a flip can fold another triangle
+# flips can fold another triangle
 UNFOLD_ROUNDS = 5
 
 
-# collapsing leaves loose vertices and folded triangles behind
 def clean_proxy(obj):
     bm = new_bmesh(obj)
-    loose = [v for v in bm.verts if not v.link_faces]
+    # collapse decimation leaves loose vertices and folded triangles
+    loose = [vertex for vertex in bm.verts if not vertex.link_faces]
     if loose:
         bmesh.ops.delete(bm, geom=loose, context="VERTS")
     unfold(bm)
     set_bmesh(bm, obj)
 
 
-# a collapse drags a vertex past its opposite edge and inverts the triangle
 def unfold(bm):
     for _ in range(UNFOLD_ROUNDS):
         bm.normal_update()
@@ -133,12 +157,11 @@ def unfold(bm):
         if not inverted:
             return
         for face in inverted:
-            # a flip next to it may have removed the face already
+            # earlier flips next to the face can remove it
             if face.is_valid:
                 _flip(max(face.edges, key=lambda edge: edge.calc_length()))
 
 
-# bmesh.ops.rotate_edges leaves a folded edge as it is
 def _flip(edge):
     if len(edge.link_faces) != 2:
         return
@@ -146,16 +169,15 @@ def _flip(edge):
         next(vert for vert in face.verts if vert not in edge.verts)
         for face in edge.link_faces
     ]
-    # a doubled triangle has one apex
     if apexes[0] is apexes[1]:
         return
     if any(other.other_vert(apexes[0]) is apexes[1] for other in apexes[0].link_edges):
         return
+    # bmesh.ops.rotate_edges leaves a folded edge as it is
     quad = bmesh.utils.face_join(edge.link_faces)
     bmesh.utils.face_split(quad, apexes[0], apexes[1])
 
 
-# the vertex normals come from the properly oriented neighbours around the fold
 def _inverted(face):
     folded = any(
         len(edge.link_faces) == 2
@@ -180,12 +202,6 @@ def _vertex_normals(data):
     flat = numpy.empty(len(data.vertices) * 3)
     data.vertices.foreach_get("normal", flat)
     return flat.reshape(-1, 3)
-
-
-def _edge_array(data):
-    pairs = numpy.empty(len(data.edges) * 2, dtype=numpy.int64)
-    data.edges.foreach_get("vertices", pairs)
-    return pairs.reshape(-1, 2)
 
 
 # # candidates to pick a facing match from when snapping a cut vertex
@@ -266,10 +282,9 @@ def _edge_array(data):
 #     return proxy_transfer.snap_cuts(verts, _edge_array(data), mapped, cuts)
 
 
-# the (dense, proxy) arrays the transfer pipeline reads
 def transfer_inputs(input_mesh, output):
     data = input_mesh.data
-    corners, totals = face_vertex_arrays(data)
+    corners, totals = loop_vertices_and_face_sizes(data)
     dense = {
         "positions": vertex_position_array(data),
         "normals": _vertex_normals(data),
@@ -277,11 +292,83 @@ def transfer_inputs(input_mesh, output):
         "corners": corners,
         "face_sizes": totals,
     }
-    out_data = output.data
+    output_data = output.data
     proxy = {
-        "positions": vertex_position_array(out_data),
+        "positions": vertex_position_array(output_data),
         "matrix": numpy.array(output.matrix_world, dtype=numpy.float64),
-        "faces": face_vertices(out_data),
-        "corner_uvs": corner_uvs(out_data),
+        "faces": face_vertices(output_data),
+        "corner_uvs": corner_uvs(output_data),
     }
     return dense, proxy
+
+
+class ProxyUVs(Transfer):
+    allows_missing_pieces = False
+
+    def _extract(self, target, output):
+        return transfer_inputs(target, output)
+
+    def _begin(self, inputs):
+        self.task = start_proxy_transfer(
+            tools_command(), get_extension_dir_path() / "proxy", *inputs
+        )
+
+    def _apply(self, target, result):
+        seams, uvs = result
+        data = target.data
+        apply_seams(data, seams)
+        if not data.uv_layers:
+            data.uv_layers.new()
+        set_loop_uvs(data, uvs)
+        return 0
+
+
+class ProxyCopyUVs(ProxyUVs):
+    repack_input = False
+
+    def _target(self, input_mesh):
+        target = input_mesh.copy()
+        target.data = input_mesh.data.copy()
+        triangulate_mesh(target.data)
+        return target
+
+    def _show(self):
+        self.input_mesh.hide_set(True)
+        self.target.name = f"{self.input_mesh.name}_unwrapped"
+        self.replacement = self.target
+
+    def _discard_start_extras(self):
+        if check_exists(self.target):
+            bpy.data.objects.remove(self.target, do_unlink=True)
+
+
+class ProxyIslandUVs(ProxyUVs):
+    repack_input = False
+
+    def __init__(self, input_mesh, faces, bbox, area):
+        super().__init__(input_mesh)
+        self.faces = faces
+        self.bbox = bbox
+        self.area = area
+        self.original_vertices = []
+
+    def _extract(self, target, output):
+        dense, proxy = transfer_inputs(target, output)
+        dense, self.original_vertices = dense_subset(dense, self.faces)
+        return dense, proxy
+
+    def _apply(self, target, result):
+        seams, uvs = result
+        data = target.data
+        sizes = [data.polygons[face].loop_total for face in self.faces]
+        polygons = [
+            part.tolist() for part in numpy.split(uvs, numpy.cumsum(sizes)[:-1])
+        ]
+        move = fit_uvs_keeping_area(polygons, self.area, self.bbox)
+        apply_island_uvs_and_seams(
+            data,
+            self.faces,
+            numpy.array([move(uv) for points in polygons for uv in points]),
+            island_edges_on_mesh(self.original_vertices.tolist(), seams),
+        )
+        return 0

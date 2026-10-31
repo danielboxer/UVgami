@@ -1,10 +1,11 @@
 import numpy
 import pytest
+from uvgami_cli._pytest_plugin import corners_and_totals
 
-from seams import EngineError
-from seams.mirror import (
-    mirror_partners,
+from no_bpy import EngineError
+from no_bpy.mirror import (
     mirrored_uvs,
+    mutual_mirror_partners,
     partner_map,
     symmetric_axis,
     symmetric_regions,
@@ -17,16 +18,9 @@ SYMMETRY_SHARE = 0.95
 TOLERANCE = 1e-6
 
 
-@pytest.fixture
-def tools(engine_binary):
-    return [engine_binary("uvgami-tools")]
-
-
 def mesh_arrays(coords, faces):
     positions = numpy.array(coords, dtype=numpy.float64).reshape(-1, 3)
-    corners = numpy.array([v for face in faces for v in face], dtype=numpy.int64)
-    totals = numpy.array([len(face) for face in faces], dtype=numpy.int64)
-    return positions, corners, totals
+    return positions, *corners_and_totals(faces)
 
 
 @pytest.fixture
@@ -43,7 +37,7 @@ def axis_of(tools, tmp_path):
 def partners_of(tools, tmp_path):
     def find(coords, center, axis):
         positions = numpy.array(coords, dtype=numpy.float64)
-        return mirror_partners(tools, tmp_path, positions, center, axis)
+        return mutual_mirror_partners(tools, tmp_path, positions, center, axis)
 
     return find
 
@@ -53,7 +47,7 @@ WING_COORDS = [(1, 0, 0), (2, 0, 0), (1, 1, 0), (-1, 0, 0), (-2, 0, 0), (-1, 1, 
 
 def test_mirror_partners_snaps_drift_and_drops_the_asymmetric_vertex(partners_of):
     # one wing tip drifted within tolerance, plus a vertex with no counterpart
-    coords = [co for co in WING_COORDS] + [(0.5, 2.0, 0.0)]
+    coords = list(WING_COORDS) + [(0.5, 2.0, 0.0)]
     coords[4] = (-2.002, 0, 0)
 
     partners = partners_of(coords, (0, 0, 0), "X")
@@ -85,8 +79,8 @@ def test_mirror_partners_is_empty_when_nothing_matches(partners_of):
 
 
 def symmetric_cloud(count, seed=1):
-    rng = numpy.random.default_rng(seed)
-    half = rng.random((count, 3)) * [1.0, 2.0, 3.0] + [0.05, 0.0, 0.0]
+    generator = numpy.random.default_rng(seed)
+    half = generator.random((count, 3)) * [1.0, 2.0, 3.0] + [0.05, 0.0, 0.0]
     return numpy.concatenate([half, half * [-1.0, 1.0, 1.0]])
 
 
@@ -110,8 +104,7 @@ def test_symmetric_axis_skips_an_axis_the_mesh_is_flat_along(axis_of):
 def test_symmetric_axis_flags_a_face_across_the_plane(axis_of):
     quad = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
     assert axis_of(quad, [(0, 1, 2, 3)], (0, 0, 0)).crosses
-    wings = [(1, 0, 0), (2, 0, 0), (1, 1, 0), (-1, 0, 0), (-2, 0, 0), (-1, 1, 0)]
-    assert not axis_of(wings, [(0, 1, 2), (3, 5, 4)], (0, 0, 0)).crosses
+    assert not axis_of(WING_COORDS, [(0, 1, 2), (3, 5, 4)], (0, 0, 0)).crosses
 
 
 def test_symmetric_axis_matches_a_dense_cloud_exactly(axis_of):
@@ -152,8 +145,8 @@ def test_symmetric_axis_accepts_drift_within_the_match_cell(axis_of):
     center = (coords.min(axis=0) + coords.max(axis=0)) / 2
     diagonal = numpy.linalg.norm(coords.max(axis=0) - coords.min(axis=0))
     # a quarter cell per coordinate on both partners keeps each pair inside a cell
-    rng = numpy.random.default_rng(3)
-    coords += rng.uniform(-0.25, 0.25, coords.shape) * MATCH_CELL * diagonal
+    generator = numpy.random.default_rng(3)
+    coords += generator.uniform(-0.25, 0.25, coords.shape) * MATCH_CELL * diagonal
     assert axis_of(coords, [], center)[:2] == ("X", True)
 
 
@@ -228,10 +221,10 @@ def test_mirrored_uvs_raise_when_a_vertex_has_no_mirror(tools, tmp_path):
         )
 
 
-# a row of quads along x from -1 to 1, face k spans columns k and k + 1
 def quad_row(face_count):
-    xs = numpy.linspace(-1.0, 1.0, face_count + 1)
-    coords = [(x, y, 0.0) for x in xs for y in (0.0, 1.0)]
+    # quads along x from -1 to 1, face k spans columns k and k + 1
+    column_x = numpy.linspace(-1.0, 1.0, face_count + 1)
+    coords = [(x, y, 0.0) for x in column_x for y in (0.0, 1.0)]
     faces = [(2 * k, 2 * k + 2, 2 * k + 3, 2 * k + 1) for k in range(face_count)]
     return coords, faces
 
@@ -271,8 +264,8 @@ def test_symmetric_regions_keeps_the_half_with_more_regions_then_shorter_borders
 
 def test_symmetric_regions_keeps_a_border_that_runs_across_the_plane(mirror_regions):
     # two rows of four quads, each row one region crossing x = 0
-    xs = (-1.0, -0.5, 0.0, 0.5, 1.0)
-    coords = [(x, y, 0.0) for x in xs for y in (0.0, 1.0, 2.0)]
+    column_x = (-1.0, -0.5, 0.0, 0.5, 1.0)
+    coords = [(x, y, 0.0) for x in column_x for y in (0.0, 1.0, 2.0)]
     faces = [
         (
             column * 3 + row,

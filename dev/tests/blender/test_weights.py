@@ -1,27 +1,13 @@
 import bpy
 import pytest
-from blender_fixtures import add_primitive, addon, needs_engine, select
-
-# from bl_ext.user_default.UVgami.src.seams.rectify import flatten_distortion
-# from bl_ext.user_default.UVgami.src.utils.mesh import face_uvs, face_vertices
+from blender_fixtures import add_sphere, addon, needs_engine, select
 
 pytestmark = [needs_engine, pytest.mark.smoke]
 
 SEAM_RESTRICTIONS_GROUP = addon.src.ops.guides.SEAM_RESTRICTIONS_GROUP
 vertex_positions = addon.src.utils.mesh.vertex_positions
 
-# a sphere cannot flatten without stretch
-SEGMENTS = 32
-RINGS = 16
 OUTPUT_NAME = "sphere_unwrapped"
-
-
-def add_sphere(name="sphere"):
-    obj = add_primitive(
-        name, bpy.ops.mesh.primitive_uv_sphere_add, segments=SEGMENTS, ring_count=RINGS
-    )
-    select([obj])
-    return obj
 
 
 def paint_top_half(obj):
@@ -35,21 +21,6 @@ def unwrap_again(sphere, unwrap, outputs):
     select([sphere])
     unwrap()
     return outputs()[OUTPUT_NAME]
-
-
-# def region_distortion(obj):
-#     mesh = obj.data
-#     verts = vertex_positions(mesh)
-#     faces = face_vertices(mesh)
-#     uvs = face_uvs(mesh)
-#     top, bottom = [], []
-#     for index, face in enumerate(faces):
-#         height = sum(verts[v][2] for v in face) / len(face)
-#         (top if height > 0 else bottom).append(index)
-#     return (
-#         flatten_distortion(verts, faces, uvs, top),
-#         flatten_distortion(verts, faces, uvs, bottom),
-#     )
 
 
 def top_half_seams(obj):
@@ -71,27 +42,11 @@ def top_half_seams(obj):
 #     return weights
 
 
-# def test_reduce_stretching_lowers_the_painted_region_distortion(unwrap, outputs):
-#     props = bpy.context.scene.uvgami
-#     sphere = add_sphere()
-#     unwrap()
-#     plain_top, _ = region_distortion(outputs()[OUTPUT_NAME])
-
-#     paint_top_half(sphere)
-#     props.use_weights = True
-#     props.weight_mode = "STRETCH"
-#     painted_top, painted_bottom = region_distortion(
-#         unwrap_again(sphere, unwrap, outputs)
-#     )
-
-#     assert painted_top < plain_top
-#     # the unpainted half pays for it
-#     assert painted_top < painted_bottom
-
-
 def test_avoid_seams_moves_the_seams_off_the_painted_region(unwrap, outputs):
     props = bpy.context.scene.uvgami
-    sphere = add_sphere()
+    # a sphere cannot flatten without stretch
+    sphere = add_sphere("sphere")
+    select([sphere])
     unwrap()
     plain = top_half_seams(outputs()[OUTPUT_NAME])
 

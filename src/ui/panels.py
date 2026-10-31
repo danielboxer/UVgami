@@ -1,142 +1,24 @@
 import bpy
 
-from ..engines import ENGINES, active_engine, get_engine, installed_engines
+from ..engines import ENGINES, active_engine, installed_engines
 from ..job import Result
 from ..logger import logger
 from ..manager import manager
 from ..ops.auto_preview import draw_auto_preview
-from ..ops.part_overrides import is_editing, selected_part_count
+from ..ops.part_override_editing import is_editing, selected_part_count
 
 # from ..ops.segment_edit import draw_segment_edit
-from ..utils.paths import get_addon_name
-from ..utils.ui import (
-    draw_active,
-    header_icon_limit,
-    is_non_default,
-    only_active,
-)
-from .props import PRIORITY_LABELS
+from ..utils.paths import read_manifest
+from ..utils.ui import count_label, draw_active
+from .props import SETTING_ICONS_AND_LABELS, fix_settings, unwrap_settings
 
 
-# a sub-setting of something already listed is left out
-def unwrap_settings(props):
-    engine = active_engine(props.engine)
-    return engine.active_settings(props) + only_active(
-        (
-            (
-                "SOLO_OFF",
-                PRIORITY_LABELS[props.priority],
-                "priority",
-                is_non_default(props, "priority"),
-            ),
-            (
-                "MOD_EXPLODE",
-                "Segmentation",
-                "split_regions",
-                engine.supports_regions and is_non_default(props, "split_regions"),
-            ),
-            (
-                "IMPORT",
-                "Import UVs",
-                "import_uvs",
-                engine.supports_import_uvs
-                and not engine.import_uvs_ignored(props)
-                and is_non_default(props, "import_uvs"),
-            ),
-            (
-                "MOD_VERTEX_WEIGHT",
-                "Weights",
-                "use_weights",
-                engine.supports_guided and is_non_default(props, "use_weights"),
-            ),
-            (
-                "MOD_DECIM",
-                "Proxy",
-                "use_proxy",
-                engine.supports_proxy and is_non_default(props, "use_proxy"),
-            ),
-            (
-                "LINKED",
-                "Stack Similar",
-                "stack_similar",
-                is_non_default(props, "stack_similar"),
-            ),
-            (
-                "MOD_MIRROR",
-                "Symmetry",
-                "symmetry",
-                is_non_default(props, "symmetry"),
-            ),
-            (
-                "TIME",
-                "Timeout",
-                "unwrap_timeout",
-                is_non_default(props, "unwrap_timeout"),
-            ),
-            (
-                "MOD_TRIANGULATE",
-                "Keep Quads",
-                "keep_quads",
-                engine.supports_keep_quads and is_non_default(props, "keep_quads"),
-            ),
-            (
-                "MOD_DATA_TRANSFER",
-                "Transfer UVs",
-                "transfer_uvs",
-                is_non_default(props, "transfer_uvs"),
-            ),
-        )
-    )
-
-
-# the number behind a setting the icon strip can only show as on or off
-SETTING_VALUES = {
-    "unwrap_timeout": lambda props: f"{props.unwrap_timeout} min",
-    "use_proxy": lambda props: f"{props.proxy_faces} tris",
-}
-
-
-def describe_settings(props, settings):
-    parts = []
-    for _, label, path in settings:
-        value = SETTING_VALUES.get(path)
-        parts.append(f"{label} {value(props)}" if value else label)
-    return ", ".join(parts)
-
-
-# the uv editor operators always run optcuts
-def fix_settings(props):
-    return only_active(
-        (
-            (
-                "SOLO_OFF",
-                PRIORITY_LABELS[props.priority],
-                "priority",
-                is_non_default(props, "priority"),
-            ),
-            ("MOD_DECIM", "Proxy", "use_proxy", is_non_default(props, "use_proxy")),
-            (
-                "TIME",
-                "Timeout",
-                "unwrap_timeout",
-                is_non_default(props, "unwrap_timeout"),
-            ),
-        )
-    )
-
-
-# the enum getter clamps to an installed engine, so active_engine can't be None
 class EnginePanel:
     @classmethod
     def poll(cls, context):
         return bool(installed_engines())
 
 
-def optcuts_installed():
-    return get_engine("OPTCUTS") in installed_engines()
-
-
-# a wide button with a small icon button beside it
 ICON_BUTTON_SPLIT = 0.85
 
 
@@ -148,7 +30,6 @@ def draw_summary(layout):
     if not manager.summary:
         return
     box = layout.box()
-    # a label sizes to its text and leaves the x stranded at the end of a row
     split = box.split(factor=0.9)
     split.operator(
         "uvgami.clear_summary",
@@ -166,35 +47,37 @@ def draw_summary(layout):
         row.label(text=note)
 
 
-def _clock_text(seconds):
-    minutes, seconds = divmod(seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f"{hours}:{minutes:02}:{seconds:02}"
-    return f"{minutes}:{seconds:02}"
-
-
 def draw_queue(box):
     active_unwraps = manager.active
     if not active_unwraps and not manager.preparing and not manager.pending_transfers:
         return
     row = box.box().row()
     row.alignment = "CENTER"
-    row.label(text=f"UV unwrap in progress {_clock_text(manager.elapsed_seconds)}")
+    minutes, seconds = divmod(manager.elapsed_seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    clock = f"{hours}:{minutes:02}:{seconds:02}" if hours else f"{minutes}:{seconds:02}"
+    row.label(text=f"UV unwrap in progress {clock}")
 
     if manager.is_viewer_active:
         viewer_ui = box.box().row()
         viewer_ui.alignment = "CENTER"
         viewer_ui.label(text="Press ESC to exit viewer")
 
-    groups, active_groups = _build_unwrap_groups(active_unwraps)
-    rows = len(groups) + len(manager.preparing) + len(manager.pending_transfers)
+    jobs, singles = _jobs_and_singles(active_unwraps)
+    rows = (
+        len(jobs)
+        + len(singles)
+        + len(manager.preparing)
+        + len(manager.pending_transfers)
+    )
     if rows > 1:
         box.row().operator("uvgami.cancel_all", icon="CANCEL")
 
-    _draw_unwrap_groups(box, groups, active_groups)
+    for job, members in jobs.items():
+        _draw_job_row(box, job, members)
+    for unwrap in singles:
+        _draw_single_row(box, unwrap)
 
-    # preseeding objects have no pieces yet
     for entry in manager.preparing:
         _draw_background_row(box, entry.name, entry.name)
 
@@ -210,74 +93,57 @@ def _draw_background_row(box, label, name):
     row.operator("uvgami.cancel_background", text="", icon="CANCEL").name = name
 
 
-# the key type separates a join job from a lone piece when drawing
-def _build_unwrap_groups(active_unwraps):
-    groups = {}
-    active_groups = []
-    for unwrap_idx, unwrap in enumerate(active_unwraps):
-        job = unwrap.join_job
-        if job is None:
-            groups[unwrap_idx] = [unwrap]
-            continue
-        groups.setdefault(job, []).append(unwrap)
-        if unwrap.is_running and job not in active_groups:
-            active_groups.append(job)
-    return groups, active_groups
-
-
-def _draw_unwrap_groups(box, groups, active_groups):
-    for group_id, group in groups.items():
-        display_box = box.box()
-        row = display_box.row()
-        expand_layout = not isinstance(group_id, int)
-
-        if expand_layout:
-            expand_row = row.row(align=True)
-            expand_row.operator(
-                "uvgami.expand",
-                text="",
-                icon=f"DISCLOSURE_TRI_{'DOWN' if group_id.is_expanded else 'RIGHT'}",
-                emboss=False,
-            ).job_id = group_id.job_id
-            label_text = group[0].input_name
-            is_active = group_id in active_groups
+def _jobs_and_singles(active_unwraps):
+    jobs = {}
+    singles = []
+    for unwrap in active_unwraps:
+        if unwrap.join_job is None:
+            singles.append(unwrap)
         else:
-            label_text = group[0].name
-            is_active = group[0].is_running
-        # on the header too, a collapsed group hides its piece rows
-        if any(u.is_stalled for u in group):
-            label_text += " (stalled)"
-        status_icon = f"RADIOBUT_{'ON' if is_active else 'OFF'}"
-        if expand_layout:
-            expand_row.operator(
-                "uvgami.expand", text=label_text, icon=status_icon, emboss=False
-            ).job_id = group_id.job_id
-        else:
-            row.label(text=label_text, icon=status_icon)
-
-        if expand_layout:
-            if manager.engine.supports_viewer:
-                # opens the viewer on the first piece of the group still running
-                _icon_button(
-                    row,
-                    any(_is_viewable(u) for u in group),
-                    "uvgami.view_unwrap",
-                    "HIDE_OFF",
-                ).job_id = group_id.job_id
-            if manager.engine.supports_early_stop:
-                _icon_button(
-                    row, any(u.is_stoppable for u in group), "uvgami.stop", "SNAP_FACE"
-                ).job_id = group_id.job_id
-            row.operator(
-                "uvgami.cancel", text="", icon="CANCEL"
-            ).job_id = group_id.job_id
-            if group_id.is_expanded:
-                _draw_group_pieces(display_box, group_id)
-        else:
-            _draw_piece_buttons(row, group[0])
+            jobs.setdefault(unwrap.join_job, []).append(unwrap)
+    return jobs, singles
 
 
-# a group over this size only lists its running pieces
+def _running_icon(is_running):
+    return f"RADIOBUT_{'ON' if is_running else 'OFF'}"
+
+
+def _draw_job_row(box, job, members):
+    job_box = box.box()
+    row = job_box.row()
+    expand_row = row.row(align=True)
+    expand_row.operator(
+        "uvgami.expand",
+        text="",
+        icon=f"DISCLOSURE_TRI_{'DOWN' if job.is_expanded else 'RIGHT'}",
+        emboss=False,
+    ).job_id = job.job_id
+    label = members[0].input_name
+    if any(unwrap.is_stalled for unwrap in members):
+        label += " (stalled)"
+    expand_row.operator(
+        "uvgami.expand",
+        text=label,
+        icon=_running_icon(any(unwrap.is_running for unwrap in members)),
+        emboss=False,
+    ).job_id = job.job_id
+    _draw_target_buttons(
+        row,
+        viewable=any(_is_viewable(unwrap) for unwrap in members),
+        stoppable=any(unwrap.is_stoppable for unwrap in members),
+        job_id=job.job_id,
+    )
+    if job.is_expanded:
+        _draw_group_pieces(job_box, job)
+
+
+def _draw_single_row(box, unwrap):
+    row = box.box().row()
+    label = unwrap.name + (" (stalled)" if unwrap.is_stalled else "")
+    row.label(text=label, icon=_running_icon(unwrap.is_running))
+    _draw_piece_buttons(row, unwrap)
+
+
 PIECE_ROW_LIMIT = 10
 
 _RESULT_ICONS = {
@@ -288,7 +154,6 @@ _RESULT_ICONS = {
 }
 
 
-# settled pieces keep their rows until the whole group finishes
 def _draw_group_pieces(box, job):
     small = job.expected <= PIECE_ROW_LIMIT
     for item in job.members:
@@ -308,29 +173,40 @@ def _draw_group_pieces(box, job):
         box.row().label(text=f"{job.reported} of {job.expected} done", icon="INFO")
 
 
-# only one viewer at a time, cycling inside it reaches the rest
 def _is_viewable(item):
     return item.is_viewable and not manager.is_viewer_active
 
 
-# greyed out rather than left out, so the row keeps its shape
 def _icon_button(row, enabled, operator, icon):
-    sub = row.row()
-    sub.enabled = enabled
-    return sub.operator(operator, text="", icon=icon)
+    button_row = row.row()
+    button_row.enabled = enabled
+    return button_row.operator(operator, text="", icon=icon)
+
+
+def _draw_target_buttons(row, *, viewable, stoppable, **target):
+    buttons = []
+    if manager.engine.supports_viewer:
+        buttons.append(_icon_button(row, viewable, "uvgami.view_unwrap", "HIDE_OFF"))
+    if manager.engine.supports_early_stop:
+        buttons.append(_icon_button(row, stoppable, "uvgami.stop", "SNAP_FACE"))
+    buttons.append(row.operator("uvgami.cancel", text="", icon="CANCEL"))
+    for button in buttons:
+        for field, value in target.items():
+            setattr(button, field, value)
 
 
 def _draw_piece_buttons(row, item):
-    if manager.engine.supports_viewer:
-        _icon_button(
-            row, _is_viewable(item), "uvgami.view_unwrap", "HIDE_OFF"
-        ).stem = item.path.stem
-    if manager.engine.supports_early_stop:
-        _icon_button(
-            row, item.is_stoppable, "uvgami.stop", "SNAP_FACE"
-        ).stem = item.path.stem
-    cancel_op = row.operator("uvgami.cancel", text="", icon="CANCEL")
-    cancel_op.stem = item.path.stem
+    _draw_target_buttons(
+        row,
+        viewable=_is_viewable(item),
+        stoppable=item.is_stoppable,
+        stem=item.path.stem,
+    )
+
+
+def _setting_label(layout, path):
+    icon, label = SETTING_ICONS_AND_LABELS[path]
+    layout.label(icon=icon, text=label)
 
 
 class UVGAMI_PT_main(bpy.types.Panel):
@@ -342,17 +218,16 @@ class UVGAMI_PT_main(bpy.types.Panel):
 
     def draw_header(self, context):
         props = context.scene.uvgami
-        self.layout.label(text=get_addon_name())
+        self.layout.label(text=read_manifest()["name"])
         if active_engine(props.engine) is None:
             return
-        draw_active(self.layout, unwrap_settings(props), header_icon_limit(context))
+        draw_active(self.layout, unwrap_settings(props), context)
 
     def draw(self, context):
         props = context.scene.uvgami
         engine = active_engine(props.engine)
         if engine is None:
-            # the button always downloads optcuts
-            get_engine("OPTCUTS").draw_not_installed(self.layout)
+            ENGINES["OPTCUTS"].draw_not_installed(self.layout)
             return
 
         box = self.layout.box()
@@ -376,18 +251,17 @@ class UVGAMI_PT_main(bpy.types.Panel):
 
         engine.draw_settings(box, props)
         row = box.row()
-        row.label(icon="SOLO_OFF", text="Priority")
+        _setting_label(row, "priority")
         row.prop(props, "priority", text="")
 
         if engine.supports_keep_quads:
             split = box.split(factor=0.7)
-            split.label(icon="MOD_TRIANGULATE", text="Keep Quads")
+            _setting_label(split, "keep_quads")
             split.prop(props, "keep_quads")
 
 
 def draw_concurrent(layout, props, engine):
     row = layout.row()
-    # ai mode batches every mesh into one process
     row.active = not engine.batches_queue(props)
     row.label(icon="MOD_ARRAY", text="Concurrent")
     row.prop(props, "max_cores", slider=True)
@@ -396,7 +270,7 @@ def draw_concurrent(layout, props, engine):
 def draw_proxy(layout, props):
     container = layout.box() if props.use_proxy else layout
     split = container.split(factor=0.7)
-    split.label(text="Proxy", icon="MOD_DECIM")
+    _setting_label(split, "use_proxy")
     split.prop(props, "use_proxy")
     if not props.use_proxy:
         return
@@ -407,7 +281,7 @@ def draw_proxy(layout, props):
 
 def draw_timeout(layout, props):
     row = layout.row()
-    row.label(text="Timeout", icon="TIME")
+    _setting_label(row, "unwrap_timeout")
     row.prop(props, "unwrap_timeout")
 
 
@@ -431,9 +305,8 @@ class UVGAMI_PT_speed(EnginePanel, bpy.types.Panel):
             draw_proxy(box, props)
 
         split = box.split(factor=0.7)
-        # the proxy finish packs the whole mesh fresh
         split.active = not engine.uses_proxy(props)
-        split.label(icon="LINKED", text="Stack Similar")
+        _setting_label(split, "stack_similar")
         split.prop(props, "stack_similar")
 
         draw_timeout(box, props)
@@ -444,12 +317,9 @@ def draw_part_overrides(layout, context, engine):
     overrides = context.scene.uvgami_part_overrides
 
     count = selected_part_count()
-    if count == 0:
-        selection = "Click a part to edit it"
-    elif count == 1:
-        selection = "1 part selected"
-    else:
-        selection = f"{count} parts selected"
+    selection = (
+        f"{count_label(count, 'part')} selected" if count else "Click a part to edit it"
+    )
     row = layout.row()
     row.scale_y = 1.5
     row.operator("uvgami.exit_part_overrides", icon="PANEL_CLOSE")
@@ -501,7 +371,6 @@ class UVGAMI_PT_weights(bpy.types.Panel):
         # # proxy mode never unwraps the original
         # engine = active_engine(props.engine)
         # stretch_ignored = engine.uses_proxy(props) and props.reduce_stretching
-        # active, not enabled: painting turns the checkbox on itself
         layout.active = props.use_weights
         # layout.active = props.use_weights and not stretch_ignored
         box = layout.box()
@@ -516,7 +385,7 @@ class UVGAMI_PT_weights(bpy.types.Panel):
         row.operator("uvgami.exit_draw", icon="PANEL_CLOSE")
 
         row = box.row()
-        # the engine only reads the strength for seam avoidance (-s)
+        # weight_value only sets optcuts' -s seam avoidance flag
         row.active = props.avoid_seams
         row.label(text="Strength", icon="MOD_VERTEX_WEIGHT")
         row.prop(props, "weight_value", slider=True)
@@ -549,23 +418,34 @@ class UVGAMI_PT_advanced(EnginePanel, bpy.types.Panel):
         if engine.supports_import_uvs:
             split = box.split(factor=0.7)
             split.active = not engine.import_uvs_ignored(props)
-            split.label(icon="IMPORT", text="Import UVs")
+            _setting_label(split, "import_uvs")
             split.prop(props, "import_uvs")
 
         split = box.split(factor=0.7)
-        split.label(icon="MOD_DATA_TRANSFER", text="Transfer UVs")
+        _setting_label(split, "transfer_uvs")
         split.prop(props, "transfer_uvs")
 
         if engine.supports_regions:
             split = box.split(factor=0.7)
             split.active = not engine.uses_import_uvs(props)
-            split.label(icon="MOD_EXPLODE", text="Segmentation")
+            _setting_label(split, "split_regions")
             split.prop(props, "split_regions")
         # if engine.splits_regions(props):
         #     draw_segment_edit(box, context)
 
         if engine.supports_symmetry:
-            draw_symmetry(box, engine, props)
+            split = box.split(factor=0.7)
+            split.active = not engine.uses_import_uvs(props)
+            _setting_label(split, "symmetry")
+            split.prop(props, "symmetry", text="")
+            # if props.symmetry == "AXES":
+            #     box.row().prop(props, "sym_axes")
+            # overlap = row.row()
+            # overlap.active = engine.uses_symmetry(props)
+            # overlap.prop(props, "sym_overlap")
+            # weld = box.row()
+            # weld.active = engine.uses_symmetry(props) and engine.supports_plane_glue
+            # weld.prop(props, "sym_weld")
         draw_auto_preview(box)
 
         if is_editing() and context.mode == "EDIT_MESH":
@@ -574,21 +454,6 @@ class UVGAMI_PT_advanced(EnginePanel, bpy.types.Panel):
             row = box.row()
             row.scale_y = 1.5
             row.operator("uvgami.edit_part_overrides", icon="EDITMODE_HLT")
-
-
-def draw_symmetry(layout, engine, props):
-    split = layout.split(factor=0.7)
-    split.active = not engine.uses_import_uvs(props)
-    split.label(icon="MOD_MIRROR", text="Symmetry")
-    split.prop(props, "symmetry", text="")
-    # if props.symmetry == "AXES":
-    #     layout.row().prop(props, "sym_axes")
-    # overlap = row.row()
-    # overlap.active = engine.uses_symmetry(props)
-    # overlap.prop(props, "sym_overlap")
-    # weld = layout.row()
-    # weld.active = engine.uses_symmetry(props) and engine.supports_plane_glue
-    # weld.prop(props, "sym_weld")
 
 
 class UVGAMI_PT_grid(EnginePanel, bpy.types.Panel):
@@ -618,6 +483,10 @@ class UVGAMI_PT_grid(EnginePanel, bpy.types.Panel):
         box.prop(props, "auto_grid")
 
 
+def optcuts_installed():
+    return ENGINES["OPTCUTS"] in installed_engines()
+
+
 class UVGAMI_PT_island_uv(bpy.types.Panel):
     bl_label = ""
     bl_space_type = "IMAGE_EDITOR"
@@ -625,42 +494,38 @@ class UVGAMI_PT_island_uv(bpy.types.Panel):
     bl_category = "UVgami"
 
     def draw_header(self, context):
-        self.layout.label(text=get_addon_name())
+        self.layout.label(text=read_manifest()["name"])
         if not optcuts_installed():
             return
-        draw_active(
-            self.layout,
-            fix_settings(context.scene.uvgami),
-            header_icon_limit(context),
-        )
+        draw_active(self.layout, fix_settings(context.scene.uvgami), context)
 
     def draw(self, context):
         props = context.scene.uvgami
         if not optcuts_installed():
-            get_engine("OPTCUTS").draw_not_installed(self.layout, waiting_for="optcuts")
+            ENGINES["OPTCUTS"].draw_not_installed(self.layout, waiting_for="optcuts")
             return
 
         box = self.layout.box()
-        get_engine("OPTCUTS").draw_update_notice(box)
+        ENGINES["OPTCUTS"].draw_update_notice(box)
 
         island = box.box()
         row = island.row()
         row.alignment = "CENTER"
         row.label(text="Island Operators", icon="GROUP_UVS")
-        col = island.column()
-        col.scale_y = 1.5
-        col.operator("uvgami.unwrap_island", icon="UV")
-        col.operator("uvgami.relax_island", icon="UV_VERTEXSEL")
-        col.operator("uvgami.combine_islands", icon="UV_ISLANDSEL")
+        column = island.column()
+        column.scale_y = 1.5
+        column.operator("uvgami.unwrap_island", icon="UV")
+        column.operator("uvgami.relax_island", icon="UV_VERTEXSEL")
+        column.operator("uvgami.combine_islands", icon="UV_ISLANDSEL")
 
         area = box.box()
         row = area.row()
         row.alignment = "CENTER"
         row.label(text="Area Operators", icon="FACESEL")
-        col = area.column()
-        col.scale_y = 1.5
-        col.operator("uvgami.unwrap_area", icon="UV_FACESEL")
-        col.operator("uvgami.relax_area", icon="UV_VERTEXSEL")
+        column = area.column()
+        column.scale_y = 1.5
+        column.operator("uvgami.unwrap_area", icon="UV_FACESEL")
+        column.operator("uvgami.relax_area", icon="UV_VERTEXSEL")
         row = area.row()
         row.label(icon="PROP_ON", text="Expand Area")
         row.prop(props, "area_expand", text="")
@@ -687,11 +552,10 @@ class UVGAMI_PT_island_settings(bpy.types.Panel):
         box = self.layout.box()
 
         row = box.row()
-        row.label(icon="SOLO_OFF", text="Priority")
+        _setting_label(row, "priority")
         row.prop(props, "priority", text="")
 
-        # these operators always run optcuts
-        engine = get_engine("OPTCUTS")
+        engine = ENGINES["OPTCUTS"]
         draw_concurrent(box, props, engine)
         draw_proxy(box, props)
         draw_timeout(box, props)

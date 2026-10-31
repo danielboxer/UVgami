@@ -2,13 +2,12 @@ from pathlib import Path
 
 import pytest
 from uvgami_cli import xatlas
-from uvgami_cli.common import UnwrapError, find_engine
+from uvgami_cli._pytest_plugin import ONE_TRIANGLE_OBJ
+from uvgami_cli.common import UnwrapError
 
 
 class FakeProcess:
-    def __init__(
-        self, argv, returncode=0, output_text="v 0 0 0\nvt 0 0\nf 1/1 1/1 1/1\n"
-    ):
+    def __init__(self, argv, returncode=0, output_text=ONE_TRIANGLE_OBJ):
         self.argv = argv
         self.returncode = returncode
         self.output_text = output_text
@@ -66,12 +65,6 @@ def test_run_output_missing_uvs(triangle, tmp_path, fake_engine, popen_recorder)
     assert error.value.exit_code == 5
     # a rejected result must not land on the requested output
     assert not output.exists()
-
-
-def test_find_engine_explicit_path_missing(tmp_path):
-    with pytest.raises(UnwrapError) as error:
-        find_engine("xatlas", "xatlas", tmp_path / "nope.exe")
-    assert error.value.exit_code == 3
 
 
 @pytest.mark.smoke

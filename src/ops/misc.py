@@ -1,7 +1,7 @@
 import bpy
 
-from ..utils.paths import get_addon_id, get_addon_name
-from ..utils.ui import tag_redraw
+from ..utils.paths import get_addon_id, read_manifest
+from ..utils.ui import setting_group_and_name, tag_redraw
 from .stop import group_targets
 
 
@@ -33,7 +33,7 @@ class UVGAMI_OT_expand(bpy.types.Operator):
         if targets:
             job = targets[0].join_job
             job.is_expanded = not job.is_expanded
-            # the arrow only flips on the next dispatch tick otherwise
+            # without tag_redraw the arrow flips on the next dispatch tick
             tag_redraw()
         return {"FINISHED"}
 
@@ -51,12 +51,7 @@ class UVGAMI_OT_reset_setting(bpy.types.Operator):
         return f"{properties.label}. Click to reset to default"
 
     def execute(self, context):
-        group = context.scene.uvgami
-        path = self.path
-        if "." in path:
-            name, path = path.split(".", 1)
-            group = getattr(group, name)
-        reset_prop(group, path)
+        reset_prop(*setting_group_and_name(context.scene.uvgami, self.path))
         # unset skips the notifier a normal click sends
         tag_redraw()
         return {"FINISHED"}
@@ -81,6 +76,6 @@ class UVGAMI_OT_open_preferences(bpy.types.Operator):
     def execute(self, context):
         bpy.ops.screen.userpref_show()
         context.preferences.active_section = "ADDONS"
-        context.window_manager.addon_search = get_addon_name()
+        context.window_manager.addon_search = read_manifest()["name"]
         bpy.ops.preferences.addon_show(module=get_addon_id())
         return {"FINISHED"}

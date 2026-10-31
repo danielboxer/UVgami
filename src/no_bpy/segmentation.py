@@ -1,18 +1,15 @@
-import tempfile
-from collections import namedtuple
-from pathlib import Path
-
 from .engine_run import (
     INTEGER,
-    EngineRun,
-    launch,
+    new_run_folder,
     packed_reader,
     poll_run,
+    start_run,
     write_obj,
 )
 from .mesh import faces_from_arrays
-from .preseed import resolved_surface_modes, write_modes
+from .preseed import SegmentRegions, write_modes
 
+# from collections import namedtuple
 # from .engine_run import EngineError, stdout_path
 # from .mesh import edge_keys, following_corners
 # from .preseed import submesh
@@ -24,17 +21,6 @@ OUTPUT_NAME = "regions.bin"
 # LABELS_NAME = "labels.txt"
 # DONE_PREFIX = "done: "
 # PIECE_PREFIX = "piece: "
-
-# labels number regions from one, zero outside them, border_edges are (low, high) pairs
-SegmentRegions = namedtuple(
-    "SegmentRegions",
-    [
-        "surface_modes",
-        "border_edges",
-        "region_count",
-        "labels",
-    ],
-)
 
 # # (face, face, (low, high) vertex pair) per edge two faces share
 # EdgeFacePairs = namedtuple(
@@ -138,26 +124,6 @@ def _read_regions(path, face_count):
 #     return [tuple(edge) for edge in edges.tolist()]
 
 
-def classify_job(
-    hardsurface_command,
-    workdir,
-    positions,
-    corners,
-    totals,
-    surface_modes,
-    cancelled=None,
-):
-    faces = faces_from_arrays(corners, totals)
-    return resolved_surface_modes(
-        hardsurface_command,
-        workdir,
-        positions.tolist(),
-        faces,
-        surface_modes,
-        cancelled,
-    )
-
-
 # # the clicked region joins the neighbor it shares the longest border with
 # def merge_region(labels, face_pairs, region):
 #     inside = labels == region
@@ -175,9 +141,8 @@ def classify_job(
 #     return merged
 
 
-# kept faces keep their uvs, so like hard ones they get no region
 def segment_job(
-    segment_command,
+    command,
     workdir,
     positions,
     corners,
@@ -188,9 +153,7 @@ def segment_job(
     cancelled=None,
 ):
     faces = faces_from_arrays(corners, totals)
-    workdir = Path(workdir)
-    workdir.mkdir(parents=True, exist_ok=True)
-    folder = Path(tempfile.mkdtemp(dir=workdir))
+    folder = new_run_folder(workdir)
     input_path = folder / f"{INPUT_STEM}.obj"
     write_obj(input_path, positions.tolist(), faces)
     write_modes(folder / f"{INPUT_STEM}_modes", surface_modes)
@@ -201,9 +164,13 @@ def segment_job(
     # if stored_labels is not None and stored_labels.any():
     #     labels[segmented] = stored_labels[segmented]
     output_path = folder / OUTPUT_NAME
-    args = [str(part) for part in [*segment_command, input_path, output_path]]
-    run = EngineRun(
-        launch(folder, args, None), folder, output_path, len(faces), _read_regions
+    run = start_run(
+        folder,
+        [*command.args, "segment", input_path, output_path],
+        command.env,
+        output_path,
+        len(faces),
+        _read_regions,
     )
     return poll_run(run, cancelled)
 

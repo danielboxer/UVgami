@@ -4,21 +4,20 @@ TORCH_VERSION = "2.3.0"
 TORCH_CUDA_INDEX = "https://download.pytorch.org/whl/cu121"
 # without this page torch-scatter builds from source
 TORCH_SCATTER_FIND_LINKS = f"https://data.pyg.org/whl/torch-{TORCH_VERSION}+cu121.html"
-# independent of blender's python version
 VENV_PYTHON = "3.11"
 
 
-# a user's uv.toml can pin an index or an exclude-newer cutoff
 def _uv(uv, *args):
+    # uv.toml in a user's config can pin an index or an exclude-newer cutoff
     return [uv, "--no-config", *args]
 
 
-def build_install_commands(uv, venv_python, venv_path, wheel_url, ai, create_venv):
+def build_install_commands(uv, venv_python, venv_path, wheel_url, *, ai, create_venv):
     commands = []
     if create_venv:
         commands.append(_uv(uv, "venv", "--python", VENV_PYTHON, venv_path))
     if ai:
-        # uv keeps this over the extra's cpu pin
+        # cuda torch from this index takes precedence over the ai extra's cpu pin
         commands.append(
             _uv(
                 uv,

@@ -1,18 +1,17 @@
 import bpy
 
 from ... import part_overrides
-from ...hard_surface import preseed_work, seam_flags, seam_restrictions
-from ...seams import SURFACE_MODE_CODES, uvs_collapsed
+from ...hard_surface import preseed_work, seam_flags
+from ...no_bpy import SURFACE_MODE_CODES, uvs_collapsed_to_points
+from ...ops.guides import painted_weight_by_vertex
 from ...utils.io import print_stdin
 from ...utils.mesh import corner_uvs
 from ...utils.ui import is_non_default, only_active
-from .flags import bound_and_weight_args
+from .. import EngineFailure
+from .flags import SPLIT_TARGETS, bound_and_weight_args
 from .install import OptcutsInstall
 
-# degrees a region border must turn to stay a seam, a duller border is merged away
-HARD_SURFACE_ANGLES = {"LESS_STRETCH": 45, "BALANCED": 66, "FEWER_SEAMS": 75}
-# the preseed's length cap target per priority, texture use a strip may drag down to
-SPLIT_TARGETS = {"LESS_STRETCH": 0.6, "BALANCED": 0.5, "FEWER_SEAMS": 0.4}
+SEAM_BORDER_TURN_DEGREES = {"LESS_STRETCH": 45, "BALANCED": 66, "FEWER_SEAMS": 75}
 
 
 SURFACE_MODES = [
@@ -76,7 +75,6 @@ class OptcutsEngine(OptcutsInstall):
             )
         )
 
-    # the preseed uvs replace the imported ones
     def import_uvs_ignored(self, props):
         return self.supports_hard_surface and props.optcuts.mode == "HARD"
 
@@ -85,7 +83,6 @@ class OptcutsEngine(OptcutsInstall):
             return "ORGANIC"
         return props.optcuts.mode
 
-    # a plane mirrors the seams of every face, organic ones included
     def preseed_work(self, obj, props, plane, surface_modes):
         if not self.supports_hard_surface:
             return None
@@ -95,28 +92,34 @@ class OptcutsEngine(OptcutsInstall):
             )
         if plane is None and (surface_modes == SURFACE_MODE_CODES["ORGANIC"]).all():
             return None
+        restrictions = None
+        if props.avoid_seams:
+            # optcuts puts fewer seams on vertices with a higher weight in this group
+            painted = painted_weight_by_vertex(obj).items()
+            restrictions = {
+                vertex: weight for vertex, weight in painted if weight
+            } or None
         return preseed_work(
             obj,
-            HARD_SURFACE_ANGLES[props.priority],
-            SPLIT_TARGETS[props.priority],
-            bound_and_weight_args(props.priority, props.weight_value),
-            seam_restrictions(obj) if props.avoid_seams else None,
-            surface_modes,
-            plane,
+            angle=SEAM_BORDER_TURN_DEGREES[props.priority],
+            split_target=SPLIT_TARGETS[props.priority],
+            engine_args=bound_and_weight_args(props.priority, props.weight_value),
+            weights=restrictions,
+            surface_modes=surface_modes,
+            plane=plane,
         )
 
     def piece_uses_uvs(self, obj, props, has_uvs):
-        # a piece the preseed skipped has no seams and goes to the engine bare
         if not self.uses_import_uvs(props):
             has_uvs = has_uvs and bool(seam_flags(obj.data).any())
         if not has_uvs or obj.data.uv_layers.active is None:
             return has_uvs
-        # a collapsed flatten goes bare too, the engine can fail re-cutting it
-        return not uvs_collapsed(corner_uvs(obj.data))
+        # optcuts can fail re-cutting a flatten collapsed to points
+        return not uvs_collapsed_to_points(corner_uvs(obj.data))
 
-    # under the loose bound a broken patch already counts as feasible
     def _loose_bound_pinned(self, input_path, props):
         pinned = (input_path.parent / f"{input_path.stem}_fixed").is_file()
+        # under the loose bound a broken patch already counts as feasible
         return pinned and props.priority == "FEWER_SEAMS"
 
     def build_args(self, ctx, input_path, props):
@@ -124,47 +127,47 @@ class OptcutsEngine(OptcutsInstall):
         if self._loose_bound_pinned(input_path, props):
             priority = "BALANCED"
         return [
-            *self.command(ctx),
+            *self.command_prefix(ctx),
             "-i",
             str(input_path),
             *bound_and_weight_args(priority, props.weight_value),
         ]
 
     def build_shared_args(self, ctx, input_path, props, threads):
-        # the bound is fixed per process
+        # optcuts takes the bound only as a startup flag
         if self._loose_bound_pinned(input_path, props):
             return None
         cap = ["-t", str(threads)] if threads else []
         return [
-            *self.command(ctx),
+            *self.command_prefix(ctx),
             *bound_and_weight_args(props.priority, props.weight_value),
             *cap,
         ]
 
     def describe_failure(self, code):
         return {
-            -1: ("Mesh needs cleanup", True),
-            101: ("Non Manifold Edges", True),
-            102: ("Non Manifold Vertices", True),
-            103: ("Failed To Load Mesh", True),
-            104: ("Unknown Mesh Format", True),
-            105: ("Invalid Geometry", True),
-            106: ("Mesh Not Triangulated", True),
-            107: ("Invalid UV Input", True),
-            108: ("Unsupported Mesh Topology", True),
-            109: ("Initial Cut Failed", True),
-            110: ("Area UVs Too Broken To Pin", True),
-            112: ("Flatten Failed", True),
-            113: ("Invalid Coordinates", True),
-            114: ("Island UVs Too Broken To Relax", True),
-            115: ("Inconsistent Face Orientation", True),
-            116: ("Zero Area Faces", True),
-            117: ("Symmetry Plane Needs UVs", True),
-            118: ("Output Could Not Be Saved", False),
-            120: ("Mesh needs cleanup", True),
-            121: ("Invalid Quality Bound", False),
-            122: ("Degenerate UV Boundary", True),
-            # 90 is the terminate handler, unmapped so stderr's fatal line surfaces
+            -1: EngineFailure("Mesh needs cleanup", moves_to_invalid=True),
+            101: EngineFailure("Non Manifold Edges", moves_to_invalid=True),
+            102: EngineFailure("Non Manifold Vertices", moves_to_invalid=True),
+            103: EngineFailure("Failed To Load Mesh", moves_to_invalid=True),
+            104: EngineFailure("Unknown Mesh Format", moves_to_invalid=True),
+            105: EngineFailure("Invalid Geometry", moves_to_invalid=True),
+            106: EngineFailure("Mesh Not Triangulated", moves_to_invalid=True),
+            107: EngineFailure("Invalid UV Input", moves_to_invalid=True),
+            108: EngineFailure("Unsupported Mesh Topology", moves_to_invalid=True),
+            109: EngineFailure("Initial Cut Failed", moves_to_invalid=True),
+            110: EngineFailure("Area UVs Too Broken To Pin", moves_to_invalid=True),
+            112: EngineFailure("Flatten Failed", moves_to_invalid=True),
+            113: EngineFailure("Invalid Coordinates", moves_to_invalid=True),
+            114: EngineFailure("Island UVs Too Broken To Relax", moves_to_invalid=True),
+            115: EngineFailure("Inconsistent Face Orientation", moves_to_invalid=True),
+            116: EngineFailure("Zero Area Faces", moves_to_invalid=True),
+            117: EngineFailure("Symmetry Plane Needs UVs", moves_to_invalid=True),
+            118: EngineFailure("Output Could Not Be Saved", moves_to_invalid=False),
+            120: EngineFailure("Mesh needs cleanup", moves_to_invalid=True),
+            121: EngineFailure("Invalid Quality Bound", moves_to_invalid=False),
+            122: EngineFailure("Degenerate UV Boundary", moves_to_invalid=True),
+            # optcuts exits 90 from its terminate handler with the cause in stderr
         }.get(code) or super().describe_failure(code)
 
     def request_early_stop(self, process):

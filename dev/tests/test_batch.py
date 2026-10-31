@@ -4,10 +4,7 @@ from collections import deque
 from pathlib import Path
 
 import pytest
-from uvgami_cli.common import load_addon_module
-
-addon_batch = load_addon_module("src/batch.py")
-
+from addon_src import batch as addon_batch
 
 started_processes = []
 
@@ -20,10 +17,10 @@ def start(script, sinks=None):
     return batch_process
 
 
-# an open process leaves its log folder in the temp dir
 @pytest.fixture(autouse=True)
 def close_started_processes():
     yield
+    # an open process leaves its log folder in the temp dir
     for batch_process in started_processes:
         batch_process.process.kill()
         batch_process.close()
@@ -46,14 +43,28 @@ def feed(lines, sink=None):
     return sink
 
 
-def wait_result(batch_process, stem, timeout=10):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        code = batch_process.poll_result(stem)
-        if code is not None:
-            return code
+def wait_until(condition, failure):
+    deadline = time.monotonic() + 10
+    while not condition():
+        assert time.monotonic() < deadline, failure
         time.sleep(0.05)
-    raise AssertionError(f"no result for {stem}")
+
+
+def wait_result(batch_process, stem):
+    wait_until(
+        lambda: batch_process.poll_result(stem) is not None, f"no result for {stem}"
+    )
+    return batch_process.poll_result(stem)
+
+
+def wait_dead(batch_process):
+    wait_until(lambda: batch_process.process.poll() is not None, "process did not exit")
+
+
+def wait_started(batch_process, stem):
+    wait_until(
+        lambda: stem in batch_process.started_stems(), "start marker never arrived"
+    )
 
 
 SHARED_ENGINE = (
@@ -66,22 +77,13 @@ SHARED_ENGINE = (
 )
 
 
-def wait_idle(batch_process, timeout=10):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if batch_process.is_idle:
-            return
-        time.sleep(0.05)
-    raise AssertionError("process never went idle")
-
-
 def test_sent_meshes_run_in_turn():
     sinks = {"a": Sink(), "b": Sink()}
     batch_process = start(SHARED_ENGINE)
-    assert batch_process.is_idle
+    assert batch_process.is_idle()
     batch_process.send(Path("in/a.obj"), sinks["a"])
     assert wait_result(batch_process, "a") == 0
-    wait_idle(batch_process)
+    wait_until(batch_process.is_idle, "process never went idle")
     batch_process.send(Path("in/b.obj"), sinks["b"])
     assert wait_result(batch_process, "b") == 0
     assert sinks["a"].progress_data.popleft() == "0.5 0 0.5\n"
@@ -96,51 +98,38 @@ def test_shared_process_busy_until_done():
         "import sys,time;sys.stdin.readline();"
         "print('start: a',flush=True);time.sleep(30)"
     )
-    try:
-        batch_process.send(Path("a.obj"), Sink())
-        deadline = time.monotonic() + 10
-        while "a" not in batch_process.started:
-            assert time.monotonic() < deadline, "start marker never arrived"
-            time.sleep(0.05)
-        assert not batch_process.is_idle
-    finally:
-        batch_process.process.kill()
+    batch_process.send(Path("a.obj"), Sink())
+    wait_started(batch_process, "a")
+    assert not batch_process.is_idle()
 
 
 def test_send_to_dead_process_reports_its_exit_code():
     batch_process = start("import sys;print('start: a');print('done: a');sys.exit(3)")
     wait_dead(batch_process)
     batch_process.send(Path("b.obj"), Sink())
-    assert not batch_process.is_idle
+    assert not batch_process.is_idle()
     assert wait_result(batch_process, "b") == 3
 
 
-def test_stderr_lines_do_not_wait_on_a_live_process():
+def test_stderr_tail_does_not_wait_on_a_live_process():
     batch_process = start(
         "import sys,time;print('start: a',flush=True);"
         "print('bad mesh',file=sys.stderr,flush=True);"
         "print('failed: a 101',flush=True);time.sleep(30)"
     )
-    try:
-        assert wait_result(batch_process, "a") == 101
-        deadline = time.monotonic() + 10
-        while not batch_process.stderr_lines():
-            assert time.monotonic() < deadline, "stderr line never arrived"
-            time.sleep(0.05)
-        assert addon_batch.last_meaningful_line(batch_process.stderr_lines()) == (
-            "bad mesh"
-        )
-        # a read that waited for the exit would find the sleeping process gone
-        assert batch_process.process.poll() is None
-    finally:
-        batch_process.process.kill()
+    assert wait_result(batch_process, "a") == 101
+    wait_until(batch_process.engine_process.stderr_tail, "stderr line never arrived")
+    tail = batch_process.engine_process.stderr_tail()
+    assert addon_batch.last_meaningful_line(tail) == "bad mesh"
+    # a read that waited for the exit would find the sleeping process gone
+    assert batch_process.process.poll() is None
 
 
 def test_markers_reported():
     batch_process = start("print('start: a');print('done: a');print('failed: b -2')")
     assert wait_result(batch_process, "a") == 0
     assert wait_result(batch_process, "b") == -2
-    assert "a" in batch_process.started
+    assert "a" in batch_process.started_stems()
 
 
 def test_unknown_lines_ignored():
@@ -156,23 +145,8 @@ def test_missing_marker_fails_after_exit():
 
 def test_pending_while_running():
     batch_process = start("import time;print('start: a',flush=True);time.sleep(30)")
-    try:
-        deadline = time.monotonic() + 10
-        while "a" not in batch_process.started:
-            assert time.monotonic() < deadline, "start marker never arrived"
-            time.sleep(0.05)
-        assert batch_process.poll_result("a") is None
-    finally:
-        batch_process.process.kill()
-
-
-def wait_dead(batch_process, timeout=10):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if batch_process.process.poll() is not None:
-            return
-        time.sleep(0.05)
-    raise AssertionError("process did not exit")
+    wait_started(batch_process, "a")
+    assert batch_process.poll_result("a") is None
 
 
 def test_should_retry_when_never_started_and_others_did():
@@ -195,18 +169,12 @@ def test_should_not_retry_when_stem_started():
 
 def test_should_not_retry_while_running():
     batch_process = start("import time;print('start: a',flush=True);time.sleep(30)")
-    try:
-        deadline = time.monotonic() + 10
-        while "a" not in batch_process.started:
-            assert time.monotonic() < deadline, "start marker never arrived"
-            time.sleep(0.05)
-        assert not batch_process.should_retry("b")
-    finally:
-        batch_process.process.kill()
+    wait_started(batch_process, "a")
+    assert not batch_process.should_retry("b")
 
 
-# b reported a result without a start marker, so only the result keeps it from a retry
 def test_should_not_retry_when_result_exists():
+    # b reports a result without a start marker, only the result keeps it from a retry
     batch_process = start("print('start: a');print('failed: b 101')")
     wait_dead(batch_process)
     assert not batch_process.should_retry("b")
@@ -250,7 +218,7 @@ def test_stderr_tail_captured_on_failure():
         "sys.exit(1)"
     )
     assert wait_result(batch_process, "a") != 0
-    tail = list(batch_process.stderr_lines())
+    tail = list(batch_process.engine_process.stderr_tail())
     assert addon_batch.last_meaningful_line(tail) == "No module named partuv.__main__"
 
 

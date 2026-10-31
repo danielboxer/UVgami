@@ -1,4 +1,3 @@
-# bpy-free, the dev cli loads this file by path
 import os
 import pathlib
 import platform
@@ -6,7 +5,6 @@ import platform
 ENGINE_DIR_ENV_VAR = "UVGAMI_ENGINE_DIR"
 
 
-# the same tag names the engine-builds folder and the release asset
 def get_platform_tag():
     system = platform.system()
     if system == "Windows":
@@ -33,8 +31,7 @@ def local_engine_dirs():
         yield pathlib.Path(__file__).parents[2] / "engine-builds" / tag
 
 
-# no engines ship with the addon, this only finds a dev build
-def get_local_engine_path(name):
+def get_dev_build_path(name):
     binary_name = get_engine_binary_name(name)
     for directory in local_engine_dirs():
         engine_path = directory / binary_name

@@ -1,23 +1,25 @@
 import subprocess
 import tempfile
-import time
 from pathlib import Path
 
-STDERR_TAIL_LINES = 10
+from .no_bpy.worker import (
+    DONE_PREFIX,
+    FAILED_PREFIX,
+    PROGRESS_PREFIX,
+    START_PREFIX,
+    STDERR_NAME,
+    STDERR_TAIL_LINES,
+    STDOUT_NAME,
+    remove_folder,
+)
 
-# a killed engine keeps its log files locked a few milliseconds past its exit
-LOG_UNLOCK_SECONDS = 0.1
-LOG_UNLOCK_POLL_SECONDS = 0.001
 
-
-# the engine is blocked once an unread stdout buffer is full
 class EngineProcess:
     def __init__(self, args, env=None):
-        self._log_dir = tempfile.TemporaryDirectory(
-            prefix="uvgami-engine-", ignore_cleanup_errors=True
-        )
-        stdout_path = Path(self._log_dir.name) / "stdout"
-        self._stderr_path = Path(self._log_dir.name) / "stderr"
+        self._log_dir = Path(tempfile.mkdtemp(prefix="uvgami-engine-"))
+        # partuv stops once its unread stdout buffer is full
+        stdout_path = self._log_dir / STDOUT_NAME
+        self._stderr_path = self._log_dir / STDERR_NAME
         with stdout_path.open("wb") as stdout, self._stderr_path.open("wb") as stderr:
             self.process = subprocess.Popen(
                 args,
@@ -30,7 +32,6 @@ class EngineProcess:
         self._stdout = stdout_path.open("rb")
         self._unfinished_line = b""
 
-    # every whole stdout line written since the last call
     def read_lines(self):
         data = self._unfinished_line + self._stdout.read()
         *lines, self._unfinished_line = data.split(b"\n")
@@ -40,19 +41,14 @@ class EngineProcess:
         text = self._stderr_path.read_text(errors="replace")
         return text.splitlines()[-STDERR_TAIL_LINES:]
 
-    # windows can't delete a file that is still open in the engine
     def close(self):
         self._stdout.close()
-        deadline = time.monotonic() + LOG_UNLOCK_SECONDS
-        self._log_dir.cleanup()
-        while Path(self._log_dir.name).exists() and time.monotonic() < deadline:
-            time.sleep(LOG_UNLOCK_POLL_SECONDS)
-            self._log_dir.cleanup()
+        remove_folder(self._log_dir)
 
 
-# tqdm and torch write carriage-return progress bars to stderr
 def last_meaningful_line(tail):
     for line in reversed(tail):
+        # tqdm and torch write carriage-return progress bars to stderr
         stripped = line.strip()
         if stripped:
             return stripped
@@ -68,8 +64,8 @@ class EngineOutput:
         sink = self.sink
         if sink is None:
             return
-        if line.startswith("progress: "):
-            sink.progress_data.append(line[10:])
+        if line.startswith(PROGRESS_PREFIX):
+            sink.progress_data.append(line.removeprefix(PROGRESS_PREFIX))
         elif line == "visual_begin:\n":
             sink.uv_co.clear()
             sink.uv_indices.clear()
@@ -80,12 +76,12 @@ class EngineOutput:
             self._in_visual = False
         elif self._in_visual:
             if line.startswith("vt"):
-                uv_co = line[3:].split()
-                sink.uv_co.append((float(uv_co[0]), float(uv_co[1])))
+                numbers = line[3:].split()
+                sink.uv_co.append((float(numbers[0]), float(numbers[1])))
             elif line.startswith("f"):
-                uv_indices = line[2:].split()
+                numbers = line[2:].split()
                 sink.uv_indices.append(
-                    (int(uv_indices[0]), int(uv_indices[1]), int(uv_indices[2]))
+                    (int(numbers[0]), int(numbers[1]), int(numbers[2]))
                 )
 
 
@@ -93,87 +89,77 @@ class BatchProcess:
     def __init__(self, args, env=None, sinks=None):
         self.args = args
         self.sinks = sinks or {}
-        self._engine_process = EngineProcess(args, env)
-        self.process = self._engine_process.process
+        self.engine_process = EngineProcess(args, env)
+        self.process = self.engine_process.process
         self._started = set()
         self._results = {}
-        # None for an argv batch
         self._sent = None
         self._parser = EngineOutput()
 
-    @property
-    def started(self):
+    def started_stems(self):
         self.read_output()
         return self._started
 
     def read_output(self):
         parser = self._parser
-        for line in self._engine_process.read_lines():
-            if line.startswith("start: "):
-                stem = line[7:].strip()
+        for line in self.engine_process.read_lines():
+            if line.startswith(START_PREFIX):
+                stem = line.removeprefix(START_PREFIX).strip()
                 self._started.add(stem)
                 parser.sink = self.sinks.get(stem)
-            elif line.startswith("done: "):
-                self._results[line[6:].strip()] = 0
+            elif line.startswith(DONE_PREFIX):
+                self._results[line.removeprefix(DONE_PREFIX).strip()] = 0
                 parser.sink = None
-            elif line.startswith("failed: "):
-                stem, _, code = line[8:].strip().rpartition(" ")
-                try:
-                    self._results[stem] = int(code)
-                except ValueError:
-                    pass
+            elif line.startswith(FAILED_PREFIX):
+                stem, _, code = line.removeprefix(FAILED_PREFIX).strip().rpartition(" ")
+                self._results[stem] = int(code)
                 parser.sink = None
             else:
                 parser.feed(line)
 
-    # the exit code reports a write to a dead process
     def send(self, path, sink):
         self.sinks[path.stem] = sink
         self._sent = path.stem
         try:
             print(f"unwrap {path}", file=self.process.stdin, flush=True)
         except OSError:
+            # writes to an exited engine fail
             pass
 
-    @property
     def is_idle(self):
         if self.process.poll() is not None:
             return False
         self.read_output()
         return self._sent is None or self._sent in self._results
 
-    # a closed stdin is the process's signal to exit
     def close(self):
         try:
+            # partuv exits when its stdin closes
             self.process.stdin.close()
         except OSError:
             # flushing a dead engine's stdin in close raises
             pass
         self.process.wait()
-        self._engine_process.close()
+        self.engine_process.close()
 
-    # one tail shared by every mesh in the batch
-    def stderr_lines(self):
-        return self._engine_process.stderr_tail()
-
-    # a startup crash is requeued forever without the len(started) check
     def should_retry(self, stem):
+        exited = self.process.poll() is not None
+        started = self.started_stems()
         return (
-            self.process.poll() is not None
-            and stem not in self.started
+            exited
+            and stem not in started
             and stem not in self._results
-            and len(self.started) > 0
+            # without len(started) a startup crash is requeued forever
+            and len(started) > 0
         )
 
-    # None while pending, 0 when unwrapped, nonzero exit code on failure
     def poll_result(self, stem):
-        # a poll after the read can miss a dead process's last markers
-        ret = self.process.poll()
+        # polling after the read drops the last markers of a process that just exited
+        exit_code = self.process.poll()
         self.read_output()
         code = self._results.get(stem)
         if code is not None:
             return code
-        if ret is None:
+        if exit_code is None:
             return None
-        # the process ended without reporting this mesh
-        return ret if ret != 0 else 1
+        return exit_code if exit_code != 0 else 1

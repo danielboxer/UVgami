@@ -8,8 +8,8 @@ def find_twins(objects):
     return addon.src.similar.find_twins(objects)
 
 
-# transform_apply with a negative scale reverses the face loops on 5.2 only
 def mirrored_cube(location):
+    # transform_apply with a negative scale reverses the face loops on 5.2 only
     obj = add_cube("mirrored", location=location)
     for vertex in obj.data.vertices:
         vertex.co.x *= -1

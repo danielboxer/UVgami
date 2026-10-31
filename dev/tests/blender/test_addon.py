@@ -3,12 +3,12 @@ import pathlib
 import bpy
 import pytest
 from background_blender import ADDON_MODULE
-from blender_fixtures import addon
+from blender_fixtures import addon, face_uvs
 
 pack_objects = addon.src.ops.uv.pack_objects
 show_seams = addon.src.ops.uv.show_seams
 edit_restore = addon.src.utils.mesh.edit_restore
-islands_overlap = addon.src.seams.islands_overlap
+boxes_overlap = addon.src.no_bpy.boxes_overlap
 fix_inconsistent_winding = addon.src.ops.start.fix_inconsistent_winding
 has_inconsistent_winding = addon.src.ops.start.has_inconsistent_winding
 Unwrap = addon.src.unwrap.Unwrap
@@ -58,38 +58,38 @@ def test_addon_survives_a_disable_enable_round_trip():
     assert bpy.context.scene.uvgami.margin is not None
 
 
-def test_pack_moves_islands_into_the_unit_square(make_mesh, face_uvs):
+def test_pack_moves_islands_into_the_unit_square(make_mesh):
     obj = two_quads(make_mesh, [(2, 2), (3, 2), (3, 3), (2, 3)])
     pack_objects([obj], bpy.context.scene.uvgami)
-    corners = [uv for face in face_uvs(obj) for uv in face]
+    corners = [uv for face in face_uvs(obj.data) for uv in face]
     assert min(u for u, _ in corners) >= 0
     assert max(u for u, _ in corners) <= 1
     assert max(v for _, v in corners) <= 1
 
 
-def test_pack_keeps_stacked_duplicates_exactly_together(make_mesh, face_uvs):
+def test_pack_keeps_stacked_duplicates_exactly_together(make_mesh):
     obj = two_quads(make_mesh, SQUARE)
     pack_objects([obj], bpy.context.scene.uvgami)
-    kept, duplicate = face_uvs(obj)
+    kept, duplicate = face_uvs(obj.data)
     assert kept == duplicate
     assert kept != SQUARE
 
 
-def test_pack_separates_islands_that_are_not_duplicates(make_mesh, face_uvs):
+def test_pack_separates_islands_that_are_not_duplicates(make_mesh):
     obj = two_quads(make_mesh, [(0, 0), (2, 0), (2, 1), (0, 1)])
     pack_objects([obj], bpy.context.scene.uvgami)
     # axis aligned packing keeps each quad its own bounding box
     boxes = [
         (min(u for u, _ in face), min(v for _, v in face))
         + (max(u for u, _ in face), max(v for _, v in face))
-        for face in face_uvs(obj)
+        for face in face_uvs(obj.data)
     ]
-    assert not islands_overlap(boxes)
+    assert not boxes_overlap(boxes)
 
 
 def test_stalled_marker_flags_frozen_progress():
     unwrap = Unwrap("p", "p", pathlib.Path("p.obj"))
-    unwrap.is_active = True
+    unwrap.has_process = True
     assert not unwrap.is_stalled
 
     unwrap.progress_data.append("0.5 0.3 0.2")

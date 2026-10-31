@@ -3,6 +3,7 @@ import multiprocessing
 import bpy
 import pytest
 from blender_fixtures import (
+    EXPECTED,
     add_cube,
     addon,
     island_count,
@@ -11,41 +12,19 @@ from blender_fixtures import (
     needs_engine,
     seam_count,
     select,
+    side_uvs,
     two_loose_cubes,
+    uvs_inside_unit_square,
 )
 
 GRID_MATERIAL = "UVgami_grid"
-# (islands, seams) on the balanced unwrap, recorded 2026-08-22 at optcuts 1.20,
-# the hard surface rows 2026-10-24 on the placed seams route
-EXPECTED = {
-    ("cylinder", "ORGANIC"): (1, 30),
-    ("cylinder", "HARD"): (3, 97),
-    ("cube-bevel2", "ORGANIC"): (1, 12),
-    ("cube-bevel2", "HARD"): (6, 37),
-}
 QUALITY_LEVELS = ["LESS_STRETCH", "BALANCED", "FEWER_SEAMS"]
 
 
 def uv_area(obj):
-    layer = obj.data.uv_layers.active.data
-    total = 0
-    for face in obj.data.polygons:
-        corners = [layer[loop].uv for loop in face.loop_indices]
-        total += (
-            abs(
-                sum(
-                    a.x * b.y - b.x * a.y
-                    for a, b in zip(corners, corners[1:] + corners[:1])
-                )
-            )
-            / 2
-        )
-    return total
-
-
-def uv_inside_unit_square(obj):
-    return all(
-        0 <= c <= 1 for datum in obj.data.uv_layers.active.data for c in datum.uv
+    return sum(
+        abs(addon.src.no_bpy.signed_area(face))
+        for face in addon.src.utils.mesh.corner_uvs(obj.data)
     )
 
 
@@ -126,18 +105,11 @@ def test_stack_similar_copies_the_twin_instead_of_unwrapping_it(unwrap, outputs)
     unwrap()
 
     assert manager.summary == ["UV unwrap complete"]
-    engine_runs = [u for u, _ in manager.results if u.copy_of is None]
-    copies = [u for u, _ in manager.results if u.copy_of is not None]
+    engine_runs = [piece for piece, _ in manager.results if piece.copy_of is None]
+    copies = [piece for piece, _ in manager.results if piece.copy_of is not None]
     assert len(engine_runs) == 1 and len(copies) == 1
     output = outputs()[f"{joined.name}_unwrapped"]
-    layer = output.data.uv_layers.active.data
-    # the two cubes sit at x<2 and x>2
-    by_side = {False: set(), True: set()}
-    for face in output.data.polygons:
-        side = output.data.vertices[face.vertices[0]].co.x > 2
-        for loop in face.loop_indices:
-            by_side[side].add(tuple(round(c, 5) for c in layer[loop].uv))
-    assert by_side[False] == by_side[True]
+    assert side_uvs(output, second=False) == side_uvs(output, second=True)
 
 
 @needs_engine
@@ -153,7 +125,7 @@ def test_combine_uvs_packs_both_outputs_into_one_square(unwrap, outputs):
         props.combine_uvs = combine
         unwrap()
         for name, output in outputs().items():
-            assert uv_inside_unit_square(output)
+            assert uvs_inside_unit_square(output.data)
             areas[name, combine] = uv_area(output)
     for name in ("a_unwrapped", "b_unwrapped"):
         assert areas[name, True] < areas[name, False]
@@ -224,10 +196,11 @@ def test_reset_settings_restores_the_defaults():
 
     bpy.ops.uvgami.reset_settings()
 
-    assert props.margin == pytest.approx(0.001)
-    assert not props.use_proxy
+    defaults = props.bl_rna.properties
+    assert props.margin == pytest.approx(defaults["margin"].default)
+    assert props.use_proxy == defaults["use_proxy"].default
     assert props.max_cores == multiprocessing.cpu_count()
-    assert props.priority == "BALANCED"
+    assert props.priority == defaults["priority"].default
 
 
 @needs_engine

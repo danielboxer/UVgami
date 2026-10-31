@@ -15,21 +15,9 @@ def read_manifest():
         return tomllib.load(file)
 
 
-def get_addon_version():
-    return read_manifest()["version"]
-
-
-def get_addon_name():
-    return read_manifest()["name"]
-
-
-def get_root_package():
-    # the bl_ext install prefix isn't always the same depth
-    return __package__.rsplit(".", 2)[0]
-
-
 def get_addon_id():
-    return get_root_package()
+    # bl_ext install prefixes aren't always the same depth
+    return __package__.rsplit(".", 2)[0]
 
 
 def get_preferences():
@@ -37,16 +25,18 @@ def get_preferences():
 
 
 def get_extension_dir_path():
-    return pathlib.Path(bpy.utils.extension_path_user(get_root_package(), create=True))
+    return pathlib.Path(bpy.utils.extension_path_user(get_addon_id(), create=True))
 
 
-# engine binaries read argv in the ansi codepage
 def engine_file_stem(name):
-    return "".join(c if c.isascii() else "_" for c in bpy.path.clean_name(name))
+    # windows passes argv to the engine binaries in the ansi codepage
+    return "".join(
+        character if character.isascii() else "_"
+        for character in bpy.path.clean_name(name)
+    )
 
 
-# names can repeat across pieces, and the output file is keyed by stem
-def unused_input_path(folder, name, claimed=frozenset()):
+def unused_input_path(folder, name, claimed):
     path = folder / f"{engine_file_stem(name)}.obj"
     while path.is_file() or path in claimed:
         path = path.parent / f"{path.stem}1.obj"
@@ -73,9 +63,9 @@ def get_io_dir_paths():
     return input_path, output_path
 
 
-# the engine writes its result under the input's stem
 def engine_output_path(input_path):
-    return get_io_dir_paths()[1] / f"{input_path.stem}.obj"
+    _, output_path = get_io_dir_paths()
+    return output_path / f"{input_path.stem}.obj"
 
 
 def clear_io_dir(path):

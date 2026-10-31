@@ -3,7 +3,7 @@ import pytest
 from blender_fixtures import (
     UNWRAP_SECONDS,
     add_cube,
-    add_primitive,
+    add_dense_sphere,
     addon,
     join,
     manager,
@@ -22,23 +22,18 @@ Result = addon.src.job.Result
 SNAPSHOTS_WATCHED = 5
 
 
-def add_sphere(name, location=(0, 0, 0)):
-    return add_primitive(
-        name,
-        bpy.ops.mesh.primitive_uv_sphere_add,
-        segments=64,
-        ring_count=32,
-        location=location,
+def solving():
+    return next(
+        (piece for piece in manager.active if piece.is_solving and piece.has_reported),
+        None,
     )
 
 
-def solving():
-    return next((u for u in manager.active if u.is_solving and u.has_reported), None)
-
-
 def running_and_queued():
-    running = [u for u in manager.active if u.process is not None]
-    queued = [u for u in manager.active if u.process is None and u.is_exported]
+    running = [piece for piece in manager.active if piece.process is not None]
+    queued = [
+        piece for piece in manager.active if piece.process is None and piece.is_exported
+    ]
     if running and queued:
         return running[0], queued[0]
     return None
@@ -97,7 +92,7 @@ def test_refused_mesh_fails_next_to_a_good_cube(
 
 
 def test_cancel_all_kills_the_engine_and_keeps_the_inputs(unwrap, outputs):
-    sphere, cube = add_sphere("sphere"), add_cube("cube", location=(5, 0, 0))
+    sphere, cube = add_dense_sphere("sphere"), add_cube("cube", location=(5, 0, 0))
     select([sphere, cube])
     bpy.context.scene.uvgami.max_cores = 1
 
@@ -113,7 +108,7 @@ def test_cancel_all_kills_the_engine_and_keeps_the_inputs(unwrap, outputs):
 
 
 def test_cancel_one_queued_piece_lets_the_other_finish(unwrap, outputs):
-    sphere, cube = add_sphere("sphere"), add_cube("cube", location=(5, 0, 0))
+    sphere, cube = add_dense_sphere("sphere"), add_cube("cube", location=(5, 0, 0))
     select([sphere, cube])
     bpy.context.scene.uvgami.max_cores = 1
 
@@ -131,7 +126,7 @@ def test_cancel_one_queued_piece_lets_the_other_finish(unwrap, outputs):
 def test_stop_one_queued_piece_moves_it_to_not_unwrapped(
     unwrap, outputs, invalid_objects
 ):
-    sphere, cube = add_sphere("sphere"), add_cube("cube", location=(5, 0, 0))
+    sphere, cube = add_dense_sphere("sphere"), add_cube("cube", location=(5, 0, 0))
     select([sphere, cube])
     bpy.context.scene.uvgami.max_cores = 1
 
@@ -148,7 +143,7 @@ def test_stop_one_queued_piece_moves_it_to_not_unwrapped(
 
 
 def test_stop_a_solving_piece_keeps_its_partial_map(unwrap, outputs, invalid_objects):
-    sphere = add_sphere("sphere")
+    sphere = add_dense_sphere("sphere")
     select([sphere])
 
     pump = unwrap(until=solving)
@@ -166,7 +161,7 @@ def test_stop_a_solving_piece_keeps_its_partial_map(unwrap, outputs, invalid_obj
 
 
 def test_cancel_a_solving_piece_lets_the_queued_one_finish(unwrap, outputs):
-    sphere, cube = add_sphere("sphere"), add_cube("cube", location=(5, 0, 0))
+    sphere, cube = add_dense_sphere("sphere"), add_cube("cube", location=(5, 0, 0))
     select([sphere, cube])
     bpy.context.scene.uvgami.max_cores = 1
 
@@ -183,9 +178,9 @@ def test_cancel_a_solving_piece_lets_the_queued_one_finish(unwrap, outputs):
 
 def test_group_stop_merges_the_queued_pieces_into_one_object(unwrap, invalid_objects):
     spheres = [
-        add_sphere("a"),
-        add_sphere("b", location=(5, 0, 0)),
-        add_sphere("c", location=(10, 0, 0)),
+        add_dense_sphere("a"),
+        add_dense_sphere("b", location=(5, 0, 0)),
+        add_dense_sphere("c", location=(10, 0, 0)),
     ]
     join(spheres)
     bpy.context.scene.uvgami.max_cores = 1
@@ -194,8 +189,8 @@ def test_group_stop_merges_the_queued_pieces_into_one_object(unwrap, invalid_obj
 
     pump = unwrap(until=solving)
     piece = solving()
-    queued = [u for u in manager.active if u is not piece]
-    queued_vertices = sum(u.vertex_count for u in queued)
+    queued = [other for other in manager.active if other is not piece]
+    queued_vertices = sum(other.export.vertex_count for other in queued)
     bpy.ops.uvgami.stop(job_id=piece.join_job.job_id)
     pump.run_until(lambda: not manager.is_active, UNWRAP_SECONDS)
 
@@ -229,7 +224,7 @@ def test_group_cancel_discards_the_piece_that_already_finished(unwrap, outputs):
 def test_a_stop_the_engine_ignores_is_force_killed(
     unwrap, outputs, invalid_objects, monkeypatch
 ):
-    sphere = add_sphere("sphere")
+    sphere = add_dense_sphere("sphere")
     select([sphere])
     # the stop is reported as delivered and then nothing comes back
     monkeypatch.setattr(optcuts.ENGINE, "request_early_stop", lambda process: True)
@@ -246,7 +241,7 @@ def test_a_stop_the_engine_ignores_is_force_killed(
 
 
 def test_a_timeout_keeps_the_partial_map(unwrap, outputs, invalid_objects):
-    sphere = add_sphere("sphere")
+    sphere = add_dense_sphere("sphere")
     select([sphere])
     bpy.context.scene.uvgami.unwrap_timeout = 1
 
@@ -265,7 +260,7 @@ def test_a_timeout_keeps_the_partial_map(unwrap, outputs, invalid_objects):
 def test_a_timeout_bins_the_mesh_when_the_engine_cannot_stop(
     unwrap, outputs, invalid_objects, monkeypatch
 ):
-    sphere = add_sphere("sphere")
+    sphere = add_dense_sphere("sphere")
     select([sphere])
     bpy.context.scene.uvgami.unwrap_timeout = 1
     # xatlas and partuv take this branch, optcuts is the one slow enough to catch
@@ -283,7 +278,7 @@ def test_a_timeout_bins_the_mesh_when_the_engine_cannot_stop(
 
 
 def test_a_viewed_piece_streams_a_map_that_changes(unwrap, monkeypatch):
-    sphere = add_sphere("sphere")
+    sphere = add_dense_sphere("sphere")
     select([sphere])
     snapshots = []
     # the real one builds gpu batches, which a background blender has no context for

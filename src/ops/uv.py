@@ -1,22 +1,34 @@
+from collections import namedtuple
+
 import bmesh
 import bpy
 
 # from ..hard_surface import apply_seams, marked_seams
 # from ..proxy import bounds_frame, snap_cuts, vertex_map
 # from ..part_overrides import UV_SCALE_ATTRIBUTE
-from ..seams import face_edges, uv_island_groups
+from ..no_bpy import faces_by_edge, islands_from_uvs
 from ..similar import find_stacks
 from ..utils.mesh import (
     corner_uvs,
     edit_restore,
     face_vertices,
     in_object_mode,
-    select_uvs,
     validate_obj,
 )
 
+Stack = namedtuple(
+    "Stack",
+    [
+        "kept_loops",
+        "anchor_loop",
+        "reference_loop",
+        "anchor",
+        "reference",
+        "duplicate_faces",
+    ],
+)
 
-# the bulk reads come back empty for an object in edit mode
+
 def island_stacks(obj, faces=None, edges=None):
     mesh = obj.data
     if mesh.uv_layers.active is None:
@@ -24,79 +36,80 @@ def island_stacks(obj, faces=None, edges=None):
     if faces is None:
         faces = face_vertices(mesh)
     if edges is None:
-        edges = face_edges(faces)
+        edges = faces_by_edge(faces)
     uvs = corner_uvs(mesh)
 
     stacks = []
-    groups = uv_island_groups(faces, uvs, edges)
+    groups = islands_from_uvs(faces, uvs, edges)
     for kept, duplicates in find_stacks(groups, uvs):
         anchor_loop = (kept[0], 0)
         anchor = complex(*uvs[kept[0]][0])
-        corners = ((fi, ci) for fi in kept for ci in range(len(uvs[fi])))
+        corners = (
+            (face_index, corner_index)
+            for face_index in kept
+            for corner_index in range(len(uvs[face_index]))
+        )
         reference_loop = max(
-            corners, key=lambda fc: abs(complex(*uvs[fc[0]][fc[1]]) - anchor)
+            corners,
+            key=lambda corner: abs(complex(*uvs[corner[0]][corner[1]]) - anchor),
         )
         reference = complex(*uvs[reference_loop[0]][reference_loop[1]])
         if reference == anchor:
-            # a zero size island has no transform to recover
             continue
-        duplicate_faces = [fi for group in duplicates for fi in group]
         kept_loops = {}
-        for fi in kept:
-            for ci, uv in enumerate(uvs[fi]):
-                kept_loops.setdefault(uv, (fi, ci))
+        for face_index in kept:
+            for corner_index, uv in enumerate(uvs[face_index]):
+                kept_loops.setdefault(uv, (face_index, corner_index))
         stacks.append(
-            (
-                kept_loops,
-                anchor_loop,
-                reference_loop,
-                anchor,
-                reference,
-                duplicate_faces,
+            Stack(
+                kept_loops=kept_loops,
+                anchor_loop=anchor_loop,
+                reference_loop=reference_loop,
+                anchor=anchor,
+                reference=reference,
+                duplicate_faces=[face for group in duplicates for face in group],
             )
         )
     return stacks
 
 
-# a deselected face is invisible to every uv operator while sync is off
 def _deselect_stacked_duplicates(obj, stacks):
     if not stacks:
         return
     bm = bmesh.from_edit_mesh(obj.data)
     bm.faces.ensure_lookup_table()
     for stack in stacks:
-        for fi in stack[-1]:
-            bm.faces[fi].select = False
+        for face_index in stack.duplicate_faces:
+            # uv operators act only on selected faces while sync is off
+            bm.faces[face_index].select = False
 
 
-# applies the kept island's similarity transform to its duplicates
-def _restack(obj, stacks):
+def _move_duplicates_onto_kept_island(obj, stacks):
     if not stacks:
         return
     bm = bmesh.from_edit_mesh(obj.data)
     uv_layer = bm.loops.layers.uv.active
     bm.faces.ensure_lookup_table()
 
-    def loop_uv(fc):
-        return complex(*bm.faces[fc[0]].loops[fc[1]][uv_layer].uv)
+    def loop_uv(corner):
+        face_index, corner_index = corner
+        return complex(*bm.faces[face_index].loops[corner_index][uv_layer].uv)
 
     for stack in stacks:
-        kept_loops, anchor_loop, reference_loop, anchor, reference, duplicate_faces = (
-            stack
+        new_anchor = loop_uv(stack.anchor_loop)
+        ratio = (loop_uv(stack.reference_loop) - new_anchor) / (
+            stack.reference - stack.anchor
         )
-        new_anchor = loop_uv(anchor_loop)
-        ratio = (loop_uv(reference_loop) - new_anchor) / (reference - anchor)
-        # the stack must still be bit equal copies at the next pack
         exact = {
-            uv: tuple(bm.faces[fi].loops[ci][uv_layer].uv)
-            for uv, (fi, ci) in kept_loops.items()
+            uv: tuple(bm.faces[face_index].loops[corner_index][uv_layer].uv)
+            for uv, (face_index, corner_index) in stack.kept_loops.items()
         }
-        for fi in duplicate_faces:
-            for loop in bm.faces[fi].loops:
+        for face_index in stack.duplicate_faces:
+            for loop in bm.faces[face_index].loops:
                 old = tuple(loop[uv_layer].uv)
                 snapped = exact.get(old)
                 if snapped is None:
-                    moved = new_anchor + ratio * (complex(*old) - anchor)
+                    moved = new_anchor + ratio * (complex(*old) - stack.anchor)
                     snapped = (moved.real, moved.imag)
                 loop[uv_layer].uv = snapped
     bmesh.update_edit_mesh(obj.data)
@@ -117,7 +130,6 @@ def _restack(obj, stacks):
 #     bmesh.update_edit_mesh(obj.data)
 
 
-# topology maps an object to its (faces, edges) for a caller that read them already
 def pack_objects(objects, props, topology=None):
     if not objects:
         return
@@ -127,10 +139,15 @@ def pack_objects(objects, props, topology=None):
         stacks_of = {obj: island_stacks(obj, *topology.get(obj, ())) for obj in objects}
         edit_restore(objects, pack, stacks_of, props)
 
+    # foreach_get reads come back empty in edit mode
     in_object_mode(objects[0], read_and_pack)
 
 
-# blender's merge_overlap can't keep stacks together
+def select_uvs():
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.select_all(action="SELECT")
+
+
 def pack(stacks_of, props):
     tool_settings = bpy.context.scene.tool_settings
     old_sync = tool_settings.use_uv_select_sync
@@ -138,7 +155,8 @@ def pack(stacks_of, props):
     tool_settings.use_uv_select_sync = False
     try:
         select_uvs()
-        # a rotated copy's 3d area differs in the last few digits
+        # blender's merge_overlap can't keep stacks together
+        # rotated copies have 3d areas that differ in the last few digits
         for obj, stacks in stacks_of.items():
             _deselect_stacked_duplicates(obj, stacks)
         # without the average first, a repeat pack scales a part again
@@ -148,7 +166,7 @@ def pack(stacks_of, props):
             #     _scale_parts(obj)
         bpy.ops.uv.pack_islands(margin=props.margin, rotate_method="AXIS_ALIGNED")
         for obj, stacks in stacks_of.items():
-            _restack(obj, stacks)
+            _move_duplicates_onto_kept_island(obj, stacks)
         bpy.ops.mesh.select_all(action="SELECT")
         bpy.ops.uv.select_all(action="DESELECT")
     finally:
@@ -205,17 +223,17 @@ class UVGAMI_OT_pack(bpy.types.Operator):
 
     def execute(self, context):
         props = context.scene.uvgami
-        valid_objs = []
+        packable = []
 
         for obj in context.selected_objects:
-            if not validate_obj(self, obj, check_uvs=True):
+            if not validate_obj(self, obj) or not obj.data.uv_layers:
                 continue
             if props.combine_uvs:
-                valid_objs.append(obj)
+                packable.append(obj)
             else:
                 pack_objects([obj], props)
 
         if props.combine_uvs:
-            pack_objects(valid_objs, props)
+            pack_objects(packable, props)
 
         return {"FINISHED"}

@@ -1,24 +1,19 @@
-import bpy
 import mathutils
 import numpy
-from blender_fixtures import add_cube, addon, join
+from blender_fixtures import add_cube, add_dense_sphere, addon, join
 
 make_proxy = addon.src.proxy.make_proxy
 mirror_proxy = addon.src.proxy.mirror_proxy
 needs_proxy = addon.src.proxy.needs_proxy
 part_triangles = addon.src.proxy.part_triangles
 triangle_count = addon.src.proxy.triangle_count
+mutual_mirror_partners = addon.src.symmetry.mesh_mirror_partners
 
 PROXY_FACES = 500
 
 
-def add_dense_sphere(location=(0, 0, 0)):
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=64, ring_count=32, location=location)
-    return bpy.context.active_object
-
-
 def test_only_the_part_over_the_budget_is_decimated():
-    sphere = add_dense_sphere()
+    sphere = add_dense_sphere("sphere")
     obj = join([sphere, add_cube("cube", location=(5, 0, 0))])
 
     assert needs_proxy(obj, PROXY_FACES)
@@ -38,7 +33,7 @@ def test_parts_all_under_the_budget_are_left_alone():
 
 
 def test_a_single_part_lands_on_the_budget():
-    obj = add_dense_sphere()
+    obj = add_dense_sphere("sphere")
 
     assert needs_proxy(obj, PROXY_FACES)
     assert make_proxy(obj, PROXY_FACES)
@@ -46,7 +41,7 @@ def test_a_single_part_lands_on_the_budget():
 
 
 def test_a_part_at_the_face_count_keeps_its_faces():
-    obj = add_dense_sphere()
+    obj = add_dense_sphere("sphere")
     triangles = triangle_count(obj)
 
     assert not needs_proxy(obj, triangles)
@@ -54,26 +49,17 @@ def test_a_part_at_the_face_count_keeps_its_faces():
     assert triangle_count(obj) == triangles
 
 
-def mirror_partners(mesh, center, axis):
-    return addon.src.seams.mirror.mirror_partners(
-        addon.src.utils.uvgami_tools.tools_command(),
-        addon.src.job.mirror_workdir(),
-        addon.src.utils.mesh.vertex_position_array(mesh),
-        center,
-        axis,
-    )
-
-
 def test_a_mirrored_proxy_has_a_partner_for_every_vertex():
-    obj = add_dense_sphere()
+    obj = add_dense_sphere("sphere")
     make_proxy(obj, PROXY_FACES)
     center = mathutils.Vector((0, 0, 0))
-    assert len(mirror_partners(obj.data, center, "X")) < len(obj.data.vertices)
+    assert len(mutual_mirror_partners(obj.data, center, "X")) < len(obj.data.vertices)
     faces = len(obj.data.polygons)
 
-    source_faces = mirror_proxy(obj, "X", center, 1e-4, 1)
+    plan = addon.src.symmetry.SymmetryPlan("BISECT", "X", center, 1e-4, None, 1)
+    source_faces = mirror_proxy(obj, plan)
 
-    partners = mirror_partners(obj.data, center, "X")
+    partners = mutual_mirror_partners(obj.data, center, "X")
     assert len(partners) == len(obj.data.vertices)
     # each kept face and its mirror image come from one decimated face
     uses = numpy.bincount(source_faces, minlength=faces)

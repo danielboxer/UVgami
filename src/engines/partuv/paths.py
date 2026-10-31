@@ -19,6 +19,8 @@ def get_uv_path():
     return get_extension_dir_path() / "uv" / name
 
 
-# PartField checkpoint, downloaded by the AI-tier install
-def get_partuv_checkpoint_path():
-    return get_extension_dir_path() / "model_objaverse.ckpt"
+CHECKPOINT_NAME = "model_objaverse.ckpt"
+
+
+def get_partfield_checkpoint_path():
+    return get_extension_dir_path() / CHECKPOINT_NAME

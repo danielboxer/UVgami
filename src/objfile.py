@@ -1,56 +1,51 @@
+def _element_slot(line):
+    # obj face corners list their v, vt and vn indices in this order
+    for slot, prefix in enumerate(("v ", "vt ", "vn ")):
+        if line.startswith(prefix):
+            return slot
+    return None
+
+
 def _count_elements(path):
-    # blender's exporters list every v/vt/vn before the first f line
-    v = vt = vn = 0
-    with path.open() as f:
-        for line in f:
-            if line.startswith("v "):
-                v += 1
-            elif line.startswith("vt "):
-                vt += 1
-            elif line.startswith("vn "):
-                vn += 1
-            elif line.startswith("f "):
+    counts = [0, 0, 0]
+    with path.open() as obj_file:
+        for line in obj_file:
+            # blender's exporters list every v/vt/vn before the first f line
+            if line.startswith("f "):
                 break
-    return v, vt, vn
+            slot = _element_slot(line)
+            if slot is not None:
+                counts[slot] += 1
+    return counts
 
 
-def _offset_face(line, off_v, off_vt, off_vn):
-    tokens = line.split()
-    new_tokens = []
-    for token in tokens[1:]:
-        parts = token.split("/")
-        parts[0] = str(int(parts[0]) + off_v)
-        if len(parts) > 1 and parts[1] != "":
-            parts[1] = str(int(parts[1]) + off_vt)
-        if len(parts) > 2 and parts[2] != "":
-            parts[2] = str(int(parts[2]) + off_vn)
-        new_tokens.append("/".join(parts))
-    return "f " + " ".join(new_tokens) + "\n"
+def _offset_face(line, offsets):
+    corners = []
+    for corner in line.split()[1:]:
+        parts = corner.split("/")
+        for slot, part in enumerate(parts):
+            if part != "":
+                parts[slot] = str(int(part) + offsets[slot])
+        corners.append("/".join(parts))
+    return "f " + " ".join(corners) + "\n"
 
 
-# an obj may have v only, v/vt, or v/vt/vn
 def merge_obj_files(paths):
-    off_v, off_vt, off_vn = _count_elements(paths[0])
-    total_v, total_vt, total_vn = off_v, off_vt, off_vn
+    offsets = _count_elements(paths[0])
     with paths[0].open("a") as out:
         for obj_path in paths[1:]:
-            with obj_path.open() as f:
-                for line in f:
-                    if line.startswith("v "):
-                        total_v += 1
-                        out.write(line)
-                    elif line.startswith("vt "):
-                        total_vt += 1
-                        out.write(line)
-                    elif line.startswith("vn "):
-                        total_vn += 1
-                        out.write(line)
-                    elif line.startswith("f "):
-                        out.write(_offset_face(line, off_v, off_vt, off_vn))
-                    elif line.startswith(("o ", "g ")):
-                        # importer creates one object per o/g line
-                        pass
-                    else:
-                        out.write(line)
-            off_v, off_vt, off_vn = total_v, total_vt, total_vn
+            counts = [0, 0, 0]
+            with obj_path.open() as obj_file:
+                for line in obj_file:
+                    if line.startswith("f "):
+                        out.write(_offset_face(line, offsets))
+                        continue
+                    # Blender's obj importer creates one object per o or g line
+                    if line.startswith(("o ", "g ")):
+                        continue
+                    out.write(line)
+                    slot = _element_slot(line)
+                    if slot is not None:
+                        counts[slot] += 1
+            offsets = [offset + count for offset, count in zip(offsets, counts)]
     return paths[0]

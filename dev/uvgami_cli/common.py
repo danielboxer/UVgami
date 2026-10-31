@@ -124,7 +124,7 @@ def find_engine(name, label, explicit_path):
             raise UnwrapError(EXIT_MISSING_RUNTIME, f"{label} binary not found: {path}")
         return path
 
-    path = engine_binaries.get_local_engine_path(name)
+    path = engine_binaries.get_dev_build_path(name)
     if path is None:
         binary = engine_binaries.get_engine_binary_name(name)
         searched = ", ".join(

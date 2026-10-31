@@ -22,7 +22,7 @@ from ..install_task import (
     version_below,
 )
 from .paths import (
-    get_partuv_checkpoint_path,
+    get_partfield_checkpoint_path,
     get_partuv_venv_path,
     get_partuv_venv_python,
     get_uv_path,
@@ -33,7 +33,7 @@ from .venv_commands import VENV_PYTHON, build_install_commands
 PARTUV_VERSION = "0.1.6"
 PARTUV_MINIMUM_VERSION = "0.1.0"
 PARTUV_RELEASE_API = f"https://api.github.com/repos/DanielBoxer/UVgami/releases/tags/partuv-v{PARTUV_VERSION}"
-# the hugging face original moves with its main branch
+# Hugging Face's copy changes with its main branch
 CHECKPOINT_URL = "https://github.com/DanielBoxer/UVgami/releases/download/checkpoint/model_objaverse.ckpt"
 # partuv is an nvidia cuda wheel
 PARTUV_PLATFORMS = ("Windows", "Linux")
@@ -47,7 +47,6 @@ UV_ARCHIVES = {
 }
 
 
-# the panel calls this every redraw, cleared by invalidate_engine_caches
 @functools.cache
 def get_installed_partuv_version():
     venv = get_partuv_venv_path()
@@ -55,10 +54,10 @@ def get_installed_partuv_version():
         site = venv / "Lib" / "site-packages"
     else:
         site = venv / "lib" / f"python{VENV_PYTHON}" / "site-packages"
-    info = next(site.glob("partuv-*.dist-info"), None)
-    if info is None:
+    dist_info = next(site.glob("partuv-*.dist-info"), None)
+    if dist_info is None:
         return None
-    return info.name[len("partuv-") : -len(".dist-info")]
+    return dist_info.name[len("partuv-") : -len(".dist-info")]
 
 
 def partuv_update_pending():
@@ -79,26 +78,19 @@ def find_wheel_url():
 
     release = with_retries(PARTUV_RELEASE_API, fetch_release)
     # linux wheels ship as manylinux after auditwheel repair
-    plat = "win_amd64" if platform.system() == "Windows" else "x86_64"
+    wheel_platform = "win_amd64" if platform.system() == "Windows" else "x86_64"
     for asset in release.get("assets", []):
         name = asset["name"]
         if (
             name.startswith(f"partuv-{PARTUV_VERSION}-")
             and PARTUV_PY_TAG in name
-            and name.endswith(f"{plat}.whl")
+            and name.endswith(f"{wheel_platform}.whl")
         ):
             return asset["browser_download_url"]
     raise RuntimeError(
-        f"no partuv {PARTUV_VERSION} wheel for {PARTUV_PY_TAG} {plat} in the"
+        f"no partuv {PARTUV_VERSION} wheel for {PARTUV_PY_TAG} {wheel_platform} in the"
         f" partuv-v{PARTUV_VERSION} release"
     )
-
-
-def _run(args):
-    result = subprocess.run(args, capture_output=True, text=True)
-    if result.returncode != 0:
-        tail = "\n".join(result.stderr.strip().splitlines()[-3:])
-        raise RuntimeError(f"{pathlib.Path(args[0]).name} failed: {tail}")
 
 
 def ensure_uv():
@@ -110,26 +102,30 @@ def ensure_uv():
         f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/{archive_name}"
     )
     uv.parent.mkdir(parents=True, exist_ok=True)
-    tmp = uv.parent / archive_name
+    archive_path = uv.parent / archive_name
     task_state["phase"] = "Downloading uv"
-    download_file(url, tmp, progress=report_progress)
-    # the archives nest the binary in a per-target folder
+    download_file(url, archive_path, progress=report_progress)
+    # uv archives nest the binary in a per-target folder
     if archive_name.endswith(".zip"):
-        with zipfile.ZipFile(tmp) as archive:
-            member = next(n for n in archive.namelist() if n.endswith("uv.exe"))
-            with archive.open(member) as src, open(uv, "wb") as dst:
-                shutil.copyfileobj(src, dst)
+        with zipfile.ZipFile(archive_path) as archive:
+            member = next(
+                name for name in archive.namelist() if name.endswith("uv.exe")
+            )
+            with archive.open(member) as source, open(uv, "wb") as destination:
+                shutil.copyfileobj(source, destination)
     else:
-        with tarfile.open(tmp) as archive:
-            member = next(m for m in archive.getmembers() if m.name.endswith("/uv"))
-            with archive.extractfile(member) as src, open(uv, "wb") as dst:
-                shutil.copyfileobj(src, dst)
+        with tarfile.open(archive_path) as archive:
+            member = next(
+                entry for entry in archive.getmembers() if entry.name.endswith("/uv")
+            )
+            with archive.extractfile(member) as source, open(uv, "wb") as destination:
+                shutil.copyfileobj(source, destination)
         uv.chmod(0o755)
-    tmp.unlink()
+    archive_path.unlink()
     return uv
 
 
-def run_venv_install(wheel_url, ai):
+def run_venv_install(wheel_url, *, ai):
     uv = ensure_uv()
     # uv prints no byte counts
     task_state["phase"] = "Installing packages"
@@ -140,26 +136,24 @@ def run_venv_install(wheel_url, ai):
         str(venv_python),
         str(get_partuv_venv_path()),
         wheel_url,
-        ai,
+        ai=ai,
         create_venv=not venv_python.is_file(),
     )
     for command in commands:
-        _run(command)
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            tail = "\n".join(result.stderr.strip().splitlines()[-3:])
+            raise RuntimeError(f"{pathlib.Path(command[0]).name} failed: {tail}")
 
 
-def download_checkpoint():
-    target = get_partuv_checkpoint_path()
-    if target.is_file():
+def install_partuv(*, ai):
+    run_venv_install(find_wheel_url(), ai=ai)
+    target = get_partfield_checkpoint_path()
+    if not ai or target.is_file():
         return
     target.parent.mkdir(parents=True, exist_ok=True)
     task_state["phase"] = "Downloading AI checkpoint"
     download_file(CHECKPOINT_URL, target, progress=report_progress)
-
-
-def install_partuv(ai):
-    run_venv_install(find_wheel_url(), ai)
-    if ai:
-        download_checkpoint()
 
 
 def uninstall_partuv():
@@ -167,7 +161,7 @@ def uninstall_partuv():
     venv = get_partuv_venv_path()
     if venv.is_dir():
         shutil.rmtree(venv)
-    get_partuv_checkpoint_path().unlink(missing_ok=True)
+    get_partfield_checkpoint_path().unlink(missing_ok=True)
     uv_dir = get_uv_path().parent
     if uv_dir.is_dir():
         shutil.rmtree(uv_dir)
@@ -226,7 +220,7 @@ class UVGAMI_OT_install_partuv(PartuvTask, bpy.types.Operator):
 
     def build_task(self):
         ai = self.tier == "AI"
-        return lambda: install_partuv(ai)
+        return lambda: install_partuv(ai=ai)
 
 
 class UVGAMI_OT_uninstall_partuv(PartuvTask, bpy.types.Operator):

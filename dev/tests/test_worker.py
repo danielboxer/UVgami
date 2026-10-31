@@ -1,20 +1,20 @@
 import pytest
 
-from seams import (
+from no_bpy import (
     Cancelled,
     EngineError,
     check_cancelled,
-    face_edges,
+    faces_by_edge,
 )
-from seams.preseed import _read_hardsurface
-from seams.worker import WorkerProcess, last_progress
+from no_bpy.preseed import _read_hardsurface
+from no_bpy.worker import WorkerProcess, last_progress
 
 TWO_TRIANGLES = [(0, 1, 2), (1, 3, 2)]
 
 
 def test_result_comes_back():
-    worker = WorkerProcess(face_edges, TWO_TRIANGLES)
-    assert worker.result() == face_edges(TWO_TRIANGLES)
+    worker = WorkerProcess(faces_by_edge, TWO_TRIANGLES)
+    assert worker.result() == faces_by_edge(TWO_TRIANGLES)
     assert worker.done()
 
 
@@ -35,7 +35,7 @@ def test_the_function_sees_the_cancel():
 
 
 def test_result_removes_the_worker_folder():
-    worker = WorkerProcess(face_edges, TWO_TRIANGLES)
+    worker = WorkerProcess(faces_by_edge, TWO_TRIANGLES)
     folder = worker._folder
     assert folder.is_dir()
     worker.result()
