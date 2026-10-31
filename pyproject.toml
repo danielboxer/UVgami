@@ -1,7 +1,7 @@
 [project]
 name = "uvgami-dev"
 version = "0.1.0"
-description = "Dev environment for UVgami: engine CLI, tests and benchmark"
+description = "Dev environment for UVgami: engine CLI and tests"
 requires-python = ">=3.11,<3.12"
 dependencies = []
 
@@ -25,7 +25,6 @@ environments = ["sys_platform == 'win32'", "sys_platform == 'linux'"]
 
 [tool.ruff]
 target-version = "py311"
-# private is its own repo, so the root gitignore does not keep ruff out of it
 extend-exclude = ["private"]
 
 [tool.ruff.lint]

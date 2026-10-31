@@ -1,9 +1,9 @@
 import os
 
-from ..seams.engine_run import EngineError
+from ..no_bpy.engine_run import EngineError, ToolsCommand
 from .engine_binaries import (
+    get_dev_build_path,
     get_engine_binary_name,
-    get_local_engine_path,
     get_platform_tag,
 )
 from .paths import get_dir_path
@@ -15,7 +15,7 @@ TOOLS_NAME = "uvgami-tools"
 
 
 def tools_command():
-    path = get_local_engine_path(TOOLS_NAME)
+    path = get_dev_build_path(TOOLS_NAME)
     if path is None:
         tag = get_platform_tag()
         if tag is None:
@@ -26,4 +26,4 @@ def tools_command():
     # blender's zip install drops the executable bit
     if not os.access(path, os.X_OK):
         path.chmod(0o755)
-    return [str(path)]
+    return ToolsCommand([str(path)], None)

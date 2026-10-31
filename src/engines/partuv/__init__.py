@@ -9,14 +9,17 @@ from dataclasses import dataclass
 
 import bpy
 
+from ...no_bpy.engine_run import EngineError
 from ...utils.paths import get_dir_path, get_io_dir_paths
 from ...utils.ui import only_active
-from .. import Engine
+from .. import Engine, EngineFailure
 from ..install_task import (
+    ENGINE_TOO_OLD_ERROR,
     NOT_DOWNLOADED_ERROR,
     UPDATE_ICON,
     CachedUpdateNotice,
     draw_error,
+    draw_install_status,
     draw_online_access,
     draw_progress,
     task_state,
@@ -31,8 +34,8 @@ from .install import (
     partuv_update_pending,
 )
 from .paths import (
-    get_partuv_checkpoint_path,
-    get_partuv_venv_path,
+    CHECKPOINT_NAME,
+    get_partfield_checkpoint_path,
     get_partuv_venv_python,
 )
 
@@ -64,7 +67,6 @@ def _segmentation_items(self, context):
     return [_SEGMENTATION_ITEMS[GEOMETRIC_SEGMENTATION]]
 
 
-# ai comes back as the selection once its checkpoint is downloaded
 def _segmentation_get(self):
     stored = self.get("segmentation", AI_SEGMENTATION)
     if stored == AI_SEGMENTATION and not is_ai_segmentation_available():
@@ -90,7 +92,6 @@ class UVGAMI_PG_partuv(bpy.types.PropertyGroup):
     )
 
 
-# validate runs on every panel redraw and shutil.which scans the whole PATH
 @functools.cache
 def find_partuv_dev_repo():
     repo = get_dir_path()
@@ -104,24 +105,22 @@ def find_partuv_dev_repo():
 
 
 def is_partuv_installed():
-    # uv venv makes the python before anything is installed into it
+    # uv venv creates the python before anything is installed into it
     return get_installed_partuv_version() is not None
 
 
 def is_partuv_ai_installed():
-    return is_partuv_installed() and get_partuv_checkpoint_path().is_file()
+    return is_partuv_installed() and get_partfield_checkpoint_path().is_file()
 
 
 def is_ai_segmentation_available():
-    # a dev checkout runs against the repo checkpoint, not the downloaded one
     return find_partuv_dev_repo() is not None or is_partuv_ai_installed()
 
 
 @dataclass
 class PartuvRun:
-    # "dev" runs the workspace partuv through uv, "installed" the wheel's python
-    mode: str
-    path: pathlib.Path
+    command: list
+    checkpoint: pathlib.Path
 
 
 class PartuvEngine(CachedUpdateNotice, Engine):
@@ -144,19 +143,30 @@ class PartuvEngine(CachedUpdateNotice, Engine):
         # more than one process runs out of vram
         return props.partuv.segmentation == "AI"
 
-    def validate(self, prefs):
+    def validate(self):
         repo = find_partuv_dev_repo()
         if repo is not None:
-            return PartuvRun("dev", repo), None
-        if partuv_too_old():
-            return (
-                None,
-                "This update needs a newer engine. Download it in the add-on"
-                " preferences",
+            return PartuvRun(
+                [
+                    "uv",
+                    "run",
+                    "--project",
+                    str(repo),
+                    "--no-sync",
+                    "python",
+                    "-m",
+                    "partuv",
+                ],
+                repo / "engine-builds" / CHECKPOINT_NAME,
             )
+        if partuv_too_old():
+            raise EngineError(ENGINE_TOO_OLD_ERROR)
         if is_partuv_installed():
-            return PartuvRun("installed", get_partuv_venv_path()), None
-        return None, NOT_DOWNLOADED_ERROR
+            return PartuvRun(
+                [str(get_partuv_venv_python()), "-m", "partuv"],
+                get_partfield_checkpoint_path(),
+            )
+        raise EngineError(NOT_DOWNLOADED_ERROR)
 
     def invalidate_caches(self):
         super().invalidate_caches()
@@ -193,7 +203,7 @@ class PartuvEngine(CachedUpdateNotice, Engine):
     def install_too_old(self):
         return partuv_too_old()
 
-    def draw_prefs(self, layout, prefs):
+    def draw_prefs(self, layout):
         if not self.is_available():
             layout.row().label(text="PartUV is not available on macOS", icon="ERROR")
             return
@@ -201,28 +211,21 @@ class PartuvEngine(CachedUpdateNotice, Engine):
             layout.row().label(text="Local build", icon="CHECKMARK")
             return
 
-        if task_state["running"] and task_state["owner"] == "partuv":
-            draw_progress(layout, "Installing engine")
+        if task_state["running"] and task_state["owner"] == self.install_owner:
+            draw_progress(layout, self.install_phase)
             return
 
         installed = is_partuv_installed()
         ai_installed = is_partuv_ai_installed()
         update_pending = partuv_update_pending()
-        change = f"v{get_installed_partuv_version()} → v{PARTUV_VERSION}"
-        if partuv_too_old():
-            layout.row().label(text=f"Engine update required: {change}", icon="ERROR")
-        elif update_pending:
-            layout.row().label(
-                text=f"Engine update available: {change}", icon=UPDATE_ICON
-            )
-        elif not installed:
-            layout.row().label(text="Not downloaded", icon="X")
-        else:
-            layout.row().label(
-                text=f"Downloaded v{get_installed_partuv_version()}", icon="CHECKMARK"
-            )
+        draw_install_status(
+            layout,
+            get_installed_partuv_version(),
+            PARTUV_VERSION,
+            too_old=partuv_too_old(),
+            update_pending=update_pending,
+        )
 
-        # an update reinstalls the tier already there
         current_tier = "AI" if ai_installed else "GEOMETRIC"
         wants_download = update_pending or not ai_installed
         if not (wants_download and draw_online_access(layout)):
@@ -253,32 +256,19 @@ class PartuvEngine(CachedUpdateNotice, Engine):
             row.scale_y = 1.5
             row.operator("uvgami.uninstall_partuv", text="Delete Engine", icon="TRASH")
 
-        draw_error(layout, "partuv")
+        draw_error(layout, self.install_owner)
 
     def build_args(self, ctx, input_path, props):
         return self.build_batch_args(ctx, [input_path], props)
 
     def build_batch_args(self, ctx, input_paths, props):
-        if ctx.mode == "dev":
-            base = [
-                "uv",
-                "run",
-                "--project",
-                str(ctx.path),
-                "--no-sync",
-                "python",
-                "-m",
-                "partuv",
-            ]
-        else:
-            base = [str(get_partuv_venv_python()), "-m", "partuv"]
         input_dir, output_dir = get_io_dir_paths()
         # windows caps a command line near 32k characters
         input_list = input_dir / f"{input_paths[0].stem}_inputs.txt"
         input_list.write_text(
             "\n".join(str(path) for path in input_paths) + "\n", encoding="utf-8"
         )
-        return base + [
+        return ctx.command + [
             "--input-list",
             str(input_list),
             "--output-dir",
@@ -288,31 +278,26 @@ class PartuvEngine(CachedUpdateNotice, Engine):
             props.partuv.segmentation.lower(),
             "--threshold",
             PRIORITY_VALUES[props.priority],
-            # the progress bar and the live chart viewer come from this output
             "--visual",
         ]
 
     def build_env(self, ctx):
         env = os.environ.copy()
-        # the cli's source-tree default resolves relative to the installed package
-        if ctx.mode == "dev":
-            checkpoint = ctx.path / "engine-builds" / "model_objaverse.ckpt"
-        else:
-            checkpoint = get_partuv_checkpoint_path()
-        env["UVGAMI_PARTUV_CHECKPOINT"] = str(checkpoint)
+        # partuv's default checkpoint path is relative to its installed package
+        env["UVGAMI_PARTUV_CHECKPOINT"] = str(ctx.checkpoint)
         return env
 
     def describe_failure(self, code):
         return {
-            2: ("Invalid input mesh", True),
-            # missing module, config, checkpoint or cuda, the cause is in stderr
-            3: ("PartUV could not start", False),
-            4: ("PartUV failed on this mesh", True),
-            5: ("PartUV produced invalid output", True),
+            2: EngineFailure("Invalid input mesh", moves_to_invalid=True),
+            # 3 is a missing module, config, checkpoint or cuda, with the cause in stderr
+            3: EngineFailure("PartUV could not start", moves_to_invalid=False),
+            4: EngineFailure("PartUV failed on this mesh", moves_to_invalid=True),
+            5: EngineFailure("PartUV produced invalid output", moves_to_invalid=True),
         }.get(code) or super().describe_failure(code)
 
-    # uv starts the engine as a child process, which outlives a kill of uv alone
     def stop(self, process, ctx):
+        # uv starts the engine as a child process, which outlives a kill of uv alone
         if platform.system() == "Windows":
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(process.pid)],

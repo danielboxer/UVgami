@@ -1,40 +1,9 @@
-import math
-
 import bpy
-from mathutils import Vector
-from mathutils.bvhtree import BVHTree
 
+# from mathutils import Vector
+# from ..guides import exposure_weights
+from ..guides import SEAM_RESTRICTIONS_GROUP
 from ..utils.mesh import validate_obj
-
-SEAM_RESTRICTIONS_GROUP = "UVgami_seam_restrictions"
-
-
-# vertex index to painted weight, empty without the group
-def seam_restriction_weights(obj):
-    if SEAM_RESTRICTIONS_GROUP not in obj.vertex_groups:
-        return {}
-    group_index = obj.vertex_groups[SEAM_RESTRICTIONS_GROUP].index
-    return {
-        vertex.index: group.weight
-        for vertex in obj.data.vertices
-        for group in vertex.groups
-        if group.group == group_index
-    }
-
-
-def _sphere_dirs(n=64):
-    # fibonacci sphere
-    dirs = []
-    golden = math.pi * (3 - math.sqrt(5))
-    for i in range(n):
-        z = 1 - 2 * (i + 0.5) / n
-        r = math.sqrt(1 - z * z)
-        dirs.append(Vector((r * math.cos(golden * i), r * math.sin(golden * i), z)))
-    return dirs
-
-
-SPHERE_DIRS = _sphere_dirs()
-
 
 # def _set_group_weights(obj, weights):
 #     vertex_groups = obj.vertex_groups
@@ -67,7 +36,6 @@ def is_draw_active():
     )
 
 
-# saves the old mode and group for Exit
 def _enter_draw_mode(context, obj):
     vertex_groups = obj.vertex_groups
     if not is_draw_active():
@@ -118,33 +86,6 @@ class UVGAMI_OT_draw_guides(bpy.types.Operator):
 #         # fade past the silhouette so seams land on the true back
 #         weights[v.index] = min(max((facing + 0.25) / 0.75, 0.0), 1.0) ** 2
 #     return weights
-
-
-def exposure_weights(obj):
-    mesh = obj.data
-    bvh = BVHTree.FromPolygons(
-        [v.co for v in mesh.vertices],
-        [p.vertices[:] for p in mesh.polygons],
-    )
-    corners = [Vector(c) for c in obj.bound_box]
-    offset = (corners[6] - corners[0]).length * 1e-3
-
-    weights = {}
-    for v in mesh.vertices:
-        origin = v.co + v.normal * offset
-        escaped = 0
-        total = 0
-        for direction in SPHERE_DIRS:
-            # grazing rays hit their own surface on curves
-            if direction.dot(v.normal) < 0.1:
-                continue
-            total += 1
-            if bvh.ray_cast(origin, direction)[0] is None:
-                escaped += 1
-        exposure = escaped / total if total else 1.0
-        # exposure is about one on a flat surface and half in an inside corner
-        weights[v.index] = min(max((exposure - 0.45) / 0.5, 0.0), 1.0) ** 2
-    return weights
 
 
 # FREE_FRACTION = 0.5
@@ -237,7 +178,7 @@ class UVGAMI_OT_exit_draw(bpy.types.Operator):
         if is_draw_active():
             if _old_active_group is not None:
                 active_obj.vertex_groups.active_index = _old_active_group
-            # an addon reload clears the saved mode
+            # addon reloads clear _old_mode
             bpy.ops.object.mode_set(mode=_old_mode or "OBJECT")
         return {"FINISHED"}
 
@@ -256,11 +197,11 @@ class UVGAMI_OT_clear_draw(bpy.types.Operator):
             vertex_groups = obj.vertex_groups
             if SEAM_RESTRICTIONS_GROUP in vertex_groups:
                 if obj.mode == "WEIGHT_PAINT":
-                    group_idx = vertex_groups[SEAM_RESTRICTIONS_GROUP].index
-                    for v in obj.data.vertices:
-                        for g in v.groups:
-                            if g.group == group_idx:
-                                g.weight = 0
+                    group_index = vertex_groups[SEAM_RESTRICTIONS_GROUP].index
+                    for vertex in obj.data.vertices:
+                        for membership in vertex.groups:
+                            if membership.group == group_index:
+                                membership.weight = 0
                                 break
                 else:
                     vertex_groups.remove(vertex_groups[SEAM_RESTRICTIONS_GROUP])

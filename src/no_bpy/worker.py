@@ -16,15 +16,17 @@ CANCEL_NAME = "cancel"
 STDOUT_NAME = "stdout"
 STDERR_NAME = "stderr"
 PROGRESS_PREFIX = "progress: "
+START_PREFIX = "start: "
+DONE_PREFIX = "done: "
+FAILED_PREFIX = "failed: "
 STDERR_TAIL_LINES = 10
-# how often the worker looks for the cancel file
 CANCEL_CHECK_SECONDS = 0.05
 
-# a killed process keeps its log files locked a few milliseconds past its exit
+# log files stay locked for a few milliseconds after their process is killed
 LOG_UNLOCK_SECONDS = 0.1
 LOG_UNLOCK_POLL_SECONDS = 0.001
 
-SEAMS_PACKAGE = "seams"
+WORKER_PACKAGE = "no_bpy"
 SOURCE_FOLDER = Path(__file__).parents[1]
 
 
@@ -41,7 +43,7 @@ def remove_folder(folder):
 
 
 def last_progress(stdout_path):
-    # the last line can be half written
+    # stdout's last line can be half written while the process runs
     whole_lines = Path(stdout_path).read_text().rpartition("\n")[0]
     for line in reversed(whole_lines.splitlines()):
         if line.startswith(PROGRESS_PREFIX):
@@ -55,15 +57,13 @@ def stderr_tail(stderr_path):
 
 
 class _ResultUnpickler(pickle.Unpickler):
-    # the worker pickled seams classes under the top-level package name
     def find_class(self, module, name):
-        if module == SEAMS_PACKAGE or module.startswith(SEAMS_PACKAGE + "."):
-            module = __package__ + module[len(SEAMS_PACKAGE) :]
+        if module == WORKER_PACKAGE or module.startswith(WORKER_PACKAGE + "."):
+            module = __package__ + module[len(WORKER_PACKAGE) :]
         return super().find_class(module, name)
 
 
 class _InputUnpickler(pickle.Unpickler):
-    # the caller pickled seams classes under the addon's package name
     def __init__(self, file, caller_package):
         super().__init__(file)
         self._caller_package = caller_package
@@ -72,13 +72,13 @@ class _InputUnpickler(pickle.Unpickler):
         if module == self._caller_package or module.startswith(
             self._caller_package + "."
         ):
-            module = SEAMS_PACKAGE + module[len(self._caller_package) :]
+            module = WORKER_PACKAGE + module[len(self._caller_package) :]
         return super().find_class(module, name)
 
 
-# the process stalls when nothing reads its stdout, a file never fills
 def start_logged(args, folder, env, stdin=None):
     try:
+        # processes stall once their unread stdout pipe fills up, and files never fill
         with (
             (folder / STDOUT_NAME).open("wb") as stdout,
             (folder / STDERR_NAME).open("wb") as stderr,
@@ -109,19 +109,17 @@ def python_process(import_folders):
     return [sys.executable, "-s", "-P"], env
 
 
-# runs a seams function in its own python process
 class WorkerProcess:
-    # args and kwargs cross to the worker pickled
     def __init__(self, function, *args, **kwargs):
         self._folder = Path(tempfile.mkdtemp(prefix="uvgami-worker-"))
-        module = SEAMS_PACKAGE + function.__module__[len(__package__) :]
+        module = WORKER_PACKAGE + function.__module__[len(__package__) :]
         call = (module, function.__name__, args, kwargs)
         (self._folder / INPUT_NAME).write_bytes(
             pickle.dumps(__package__, pickle.HIGHEST_PROTOCOL)
             + pickle.dumps(call, pickle.HIGHEST_PROTOCOL)
         )
         python_command, env = python_process([SOURCE_FOLDER])
-        run_worker = "import sys; from seams.worker import run_in_worker; run_in_worker(sys.argv[1])"
+        run_worker = f"import sys; from {WORKER_PACKAGE}.worker import run_in_worker; run_in_worker(sys.argv[1])"
         command = [*python_command, "-c", run_worker, str(self._folder)]
         self.process = start_logged(
             command, self._folder, env, stdin=subprocess.DEVNULL
@@ -134,7 +132,6 @@ class WorkerProcess:
     def progress(self):
         return last_progress(self._folder / STDOUT_NAME)
 
-    # raises what the function raised
     def result(self):
         code = self.process.wait()
         try:
@@ -152,7 +149,6 @@ class WorkerProcess:
             raise value
         return value
 
-    # only a function with a cancelled parameter gets this
     def cancel(self):
         if self._folder.is_dir():
             (self._folder / CANCEL_NAME).touch()
@@ -179,7 +175,6 @@ def _print_progress(fraction):
     print(f"{PROGRESS_PREFIX}{fraction}", flush=True)
 
 
-# the worker process's side of WorkerProcess
 def run_in_worker(folder):
     folder = Path(folder)
     with (folder / INPUT_NAME).open("rb") as file:

@@ -170,8 +170,8 @@ def octagon_tube():
     return coords, faces
 
 
-# pca axes are arbitrary in the tube's round plane, needs the rotation search
 def test_find_twins_matches_symmetric_rotated_copy():
+    # pca axes are arbitrary in the tube's round plane, needs the rotation search
     coords, faces = octagon_tube()
     rep = FakeObject(coords, faces)
     turn = numpy.pi / 6
@@ -208,8 +208,8 @@ CUBE_FACES = [
 ]
 
 
-# all three pca axes are arbitrary on a cube, needs the permutation search
 def test_find_twins_matches_symmetric_reordered_copy():
+    # all three pca axes are arbitrary on a cube, needs the permutation search
     rep = FakeObject(CUBE_COORDS, CUBE_FACES)
     moved = [tuple(ROTATE_Z @ co + (5.0, 0.0, 0.0)) for co in CUBE_COORDS]
     order = [(index * 3 + 1) % 8 for index in range(8)]
@@ -228,8 +228,8 @@ def test_find_twins_matches_symmetric_reordered_copy():
     )
 
 
-# same quad region and vertex positions, opposite diagonal: not a duplicate
 def test_find_twins_rejects_different_topology():
+    # same quad region and vertex positions, opposite diagonal, so not a duplicate
     coords = [(0, 0, 0), (3, 0, 0), (2, 1, 0), (0, 1, 0)]
     rep = FakeObject(coords, [(0, 1, 2), (0, 2, 3)])
     other = FakeObject(coords, [(0, 1, 3), (1, 2, 3)])

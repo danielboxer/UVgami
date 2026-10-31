@@ -1,6 +1,6 @@
 from uvgami_cli.common import load_addon_module
 
-objfile = load_addon_module("src/objfile.py")
+objfile = load_addon_module("src/unwrap/objfile.py")
 
 
 def write_obj(tmp_path, name, body):

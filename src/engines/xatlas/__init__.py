@@ -1,4 +1,5 @@
 from ...utils.paths import engine_output_path
+from .. import EngineFailure
 from .install import XatlasInstall
 
 # above 4.0 the output is identical
@@ -12,13 +13,12 @@ class XatlasEngine(XatlasInstall):
     description = "Fast CPU engine for baking lightmaps and texture painting"
     icon = "MESH_GRID"
 
-    # xatlas has no hard surface route
     def unset_surface_mode(self, props):
         return "ORGANIC"
 
     def build_args(self, ctx, input_path, props):
         return [
-            *self.command(ctx),
+            *self.command_prefix(ctx),
             "-i",
             str(input_path),
             "-o",
@@ -29,9 +29,9 @@ class XatlasEngine(XatlasInstall):
 
     def describe_failure(self, code):
         return {
-            2: ("Invalid input mesh", True),
-            3: ("Invalid geometry", True),
-            4: ("Unwrap failed", True),
+            2: EngineFailure("Invalid input mesh", moves_to_invalid=True),
+            3: EngineFailure("Invalid geometry", moves_to_invalid=True),
+            4: EngineFailure("Unwrap failed", moves_to_invalid=True),
         }.get(code) or super().describe_failure(code)
 
 

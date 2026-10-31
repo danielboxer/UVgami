@@ -1,23 +1,30 @@
+import collections
 import sys
 
 import numpy
 import pytest
+from uvgami_cli._pytest_plugin import corners_and_totals
 
-from seams import SURFACE_MODE_CODES, EngineError
-from seams.segmentation import (
+from no_bpy import SURFACE_MODE_CODES, EngineError
+from no_bpy.engine_run import ToolsCommand
+from no_bpy.segmentation import (
     # split_loop_job,
     # split_region_job,
     # merge_region,
     segment_job,
 )
-from seams.worker import WorkerProcess
+from no_bpy.worker import WorkerProcess
 
 # the dumbbell fixture's bulbs meet a straight neck of this radius around the x axis
 NECK_RADIUS = 0.3
 
+SegmentInputs = collections.namedtuple(
+    "SegmentInputs", "positions corners totals surface_modes kept"
+)
 
-# (verts, faces, mode code, kept) per loose part, flattened into the worker's inputs
+
 def mesh_inputs(parts):
+    # each part is (verts, faces, mode name, kept)
     verts, faces, modes, kept = [], [], [], []
     for part_verts, part_faces, mode, part_kept in parts:
         base = len(verts)
@@ -25,10 +32,9 @@ def mesh_inputs(parts):
         faces += [[base + v for v in face] for face in part_faces]
         modes += [SURFACE_MODE_CODES[mode]] * len(part_faces)
         kept += [part_kept] * len(part_faces)
-    return (
+    return SegmentInputs(
         numpy.array(verts, dtype=numpy.float64),
-        numpy.array([v for face in faces for v in face], dtype=numpy.int64),
-        numpy.array([len(face) for face in faces], dtype=numpy.int64),
+        *corners_and_totals(faces),
         numpy.array(modes, dtype=numpy.int32),
         numpy.array(kept, dtype=bool),
     )
@@ -41,7 +47,7 @@ def cube_at(unit_cube, y):
 
 @pytest.mark.smoke
 def test_dumbbell_splits_on_the_neck_and_skips_hard_and_kept_parts(
-    tmp_path, engine_binary, fixture_mesh, unit_cube
+    tmp_path, tools, fixture_mesh, unit_cube
 ):
     dumbbell_verts, dumbbell_faces = fixture_mesh("dumbbell")
     inputs = mesh_inputs(
@@ -52,10 +58,9 @@ def test_dumbbell_splits_on_the_neck_and_skips_hard_and_kept_parts(
             (*cube_at(unit_cube, 11.0), "AUTO", False),
         ]
     )
-    positions = inputs[0]
+    positions = inputs.positions
 
-    segment = [engine_binary("uvgami-tools"), "segment"]
-    result = WorkerProcess(segment_job, segment, tmp_path, *inputs).result()
+    result = WorkerProcess(segment_job, tools, tmp_path, *inputs).result()
 
     assert SURFACE_MODE_CODES["AUTO"] not in result.surface_modes
     assert result.region_count >= 2
@@ -71,27 +76,28 @@ def test_a_missing_engine_raises(tmp_path, fixture_mesh):
     verts, faces = fixture_mesh("dumbbell")
     inputs = mesh_inputs([(verts, faces, "ORGANIC", False)])
     with pytest.raises(EngineError, match="failed to start"):
-        segment_job(["no-such-segment-engine.exe"], tmp_path, *inputs)
+        segment_job(
+            ToolsCommand(["no-such-segment-engine.exe"], None), tmp_path, *inputs
+        )
 
 
 def test_a_failing_engine_raises(tmp_path, fixture_mesh):
     verts, faces = fixture_mesh("dumbbell")
     inputs = mesh_inputs([(verts, faces, "ORGANIC", False)])
-    failing = [sys.executable, "-c", "import sys; sys.exit(2)"]
+    failing = ToolsCommand([sys.executable, "-c", "import sys; sys.exit(2)"], None)
     with pytest.raises(EngineError, match="exited 2"):
         segment_job(failing, tmp_path, *inputs)
 
 
 @pytest.mark.smoke
-def test_hard_and_kept_parts_get_no_regions(tmp_path, engine_binary, unit_cube):
+def test_hard_and_kept_parts_get_no_regions(tmp_path, tools, unit_cube):
     inputs = mesh_inputs(
         [
             (*cube_at(unit_cube, 0.0), "HARD", False),
             (*cube_at(unit_cube, 5.0), "ORGANIC", True),
         ]
     )
-    segment = [engine_binary("uvgami-tools"), "segment"]
-    result = segment_job(segment, tmp_path, *inputs)
+    result = segment_job(tools, tmp_path, *inputs)
     assert result.region_count == 0
     assert not result.labels.any()
     assert result.border_edges == []

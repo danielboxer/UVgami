@@ -1,8 +1,8 @@
 import bpy
 import pytest
-from blender_fixtures import addon, logger, needs_engine
+from blender_fixtures import add_cube, addon, logger, needs_engine
 
-log_module = addon.src.logger
+log_module = addon.src.unwrap.logger
 LOG_LINE_LIMIT = log_module.LOG_LINE_LIMIT
 UNSAVED_FILE_NAME = log_module.UNSAVED_FILE_NAME
 block_header = log_module.block_header
@@ -125,8 +125,7 @@ def test_log_survives_a_file_load():
 @needs_engine
 @pytest.mark.smoke
 def test_log_line_names_the_input(log_file, unwrap):
-    bpy.ops.mesh.primitive_cube_add()
-    bpy.context.active_object.name = "cube"
+    add_cube("cube")
 
     unwrap()
 

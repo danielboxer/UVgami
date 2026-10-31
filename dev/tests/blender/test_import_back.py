@@ -8,9 +8,9 @@ DIGITS = 3
 UNWRAPPED_COLLECTION = "UVgami Unwrapped"
 
 
-def world_positions(obj, vertices=None):
+def rounded_world_position_set(obj, vertices=None):
     return {
-        tuple(round(c, DIGITS) for c in obj.matrix_world @ v.co)
+        tuple(round(coordinate, DIGITS) for coordinate in obj.matrix_world @ v.co)
         for v in (obj.data.vertices if vertices is None else vertices)
     }
 
@@ -42,7 +42,7 @@ def test_slots_shading_and_transform_survive(unwrap, outputs):
         face.material_index = {1: 0, -1: 1}.get(x, 2)
         face.use_smooth = face.normal.z > 0
     bpy.context.view_layer.update()
-    expected_positions = world_positions(cube)
+    expected_positions = rounded_world_position_set(cube)
     expected_material = by_world_normal(cube, "material_index")
     expected_smooth = by_world_normal(cube, "use_smooth")
 
@@ -54,7 +54,7 @@ def test_slots_shading_and_transform_survive(unwrap, outputs):
         slot.material.name if slot.material else None for slot in output.material_slots
     ]
     assert slots == ["A", None, "B"]
-    assert world_positions(output) == expected_positions
+    assert rounded_world_position_set(output) == expected_positions
     assert by_world_normal(output, "material_index") == expected_material
     assert by_world_normal(output, "use_smooth") == expected_smooth
 
@@ -69,18 +69,20 @@ def test_unicode_name_output_is_named_hidden_and_collected(unwrap, outputs):
     assert list(outputs()) == [f"{name}_unwrapped"]
     assert cube.hide_get()
     output = outputs()[f"{name}_unwrapped"]
-    assert [c.name for c in output.users_collection] == [UNWRAPPED_COLLECTION]
+    assert [collection.name for collection in output.users_collection] == [
+        UNWRAPPED_COLLECTION
+    ]
 
 
 def test_far_small_mesh_keeps_its_place(unwrap, outputs):
     cube = add_cube("far", location=(1000, -2000, 3000), scale=(0.01, 0.01, 0.01))
     bpy.context.view_layer.update()
-    expected_positions = world_positions(cube)
+    expected_positions = rounded_world_position_set(cube)
 
     unwrap()
 
     assert manager.summary_failed is False, manager.summary
-    assert world_positions(outputs()["far_unwrapped"]) == expected_positions
+    assert rounded_world_position_set(outputs()["far_unwrapped"]) == expected_positions
 
 
 def test_vertex_group_comes_back(unwrap, outputs):
@@ -88,7 +90,7 @@ def test_vertex_group_comes_back(unwrap, outputs):
     top = [v for v in cube.data.vertices if v.co.z > 0]
     group = cube.vertex_groups.new(name="top")
     group.add([v.index for v in top], 0.75, "REPLACE")
-    expected_positions = world_positions(cube, top)
+    expected_positions = rounded_world_position_set(cube, top)
 
     unwrap()
 
@@ -99,9 +101,14 @@ def test_vertex_group_comes_back(unwrap, outputs):
     grouped = [
         v
         for v in output.data.vertices
-        if any(g.group == restored.index for g in v.groups)
+        if any(membership.group == restored.index for membership in v.groups)
     ]
     # a seam splits a vertex, so the group is compared by position
-    assert world_positions(output, grouped) == expected_positions
-    weights = [g.weight for v in grouped for g in v.groups if g.group == restored.index]
-    assert all(w == 0.75 for w in weights)
+    assert rounded_world_position_set(output, grouped) == expected_positions
+    weights = [
+        membership.weight
+        for v in grouped
+        for membership in v.groups
+        if membership.group == restored.index
+    ]
+    assert all(weight == 0.75 for weight in weights)

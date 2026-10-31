@@ -6,7 +6,6 @@ if importlib.util.find_spec("bpy") is None:
 else:
     from blender_fixtures import (  # noqa: F401
         empty_scene,
-        face_uvs,
         invalid_objects,
         load_obj,
         make_mesh,

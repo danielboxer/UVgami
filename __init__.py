@@ -17,11 +17,17 @@
 import bpy
 
 from .src.engines import ENGINES
-from .src.manager import manager
 from .src.ops.auto_preview import (
     UVGAMI_OT_clear_auto_preview,
     UVGAMI_OT_preview_auto_settings,
     stop_auto_preview,
+)
+from .src.ops.fix_tools import (
+    UVGAMI_OT_combine_islands,
+    UVGAMI_OT_relax_area,
+    UVGAMI_OT_relax_island,
+    UVGAMI_OT_unwrap_area,
+    UVGAMI_OT_unwrap_island,
 )
 from .src.ops.grid import (
     UVGAMI_OT_add_grid,
@@ -37,19 +43,13 @@ from .src.ops.info import (
     UVGAMI_OT_clear_summary,
     UVGAMI_OT_open_logs,
 )
-from .src.ops.island import (
-    UVGAMI_OT_combine_islands,
-    UVGAMI_OT_relax_area,
-    UVGAMI_OT_relax_island,
-    UVGAMI_OT_unwrap_area,
-    UVGAMI_OT_unwrap_island,
-)
 from .src.ops.misc import (
     UVGAMI_OT_expand,
     UVGAMI_OT_open_preferences,
     UVGAMI_OT_reset_setting,
     UVGAMI_OT_reset_settings,
 )
+from .src.ops.pack import UVGAMI_OT_pack
 from .src.ops.part_overrides import (
     UVGAMI_OT_edit_part_overrides,
     UVGAMI_OT_exit_part_overrides,
@@ -57,7 +57,7 @@ from .src.ops.part_overrides import (
     stop_part_overrides,
 )
 
-# from .src.ops.segment_edit import (
+# from .src.ops.segmentation import (
 #     UVGAMI_OT_edit_regions,
 #     UVGAMI_OT_reset_regions,
 #     stop_segment_edit,
@@ -69,7 +69,6 @@ from .src.ops.stop import (
     UVGAMI_OT_cancel_background,
     UVGAMI_OT_stop,
 )
-from .src.ops.uv import UVGAMI_OT_pack
 from .src.ops.viewer import UVGAMI_OT_view_unwrap
 from .src.ui.panels import (
     UVGAMI_PT_advanced,
@@ -86,8 +85,8 @@ from .src.ui.props import (
     UVGAMI_AP_preferences,
     UVGAMI_PG_properties,
 )
+from .src.unwrap.manager import manager
 
-# two engines can list the same operator
 engine_classes = tuple(
     dict.fromkeys(cls for engine in ENGINES.values() for cls in engine.classes)
 )

@@ -39,8 +39,8 @@ def test_unwrap_runs_to_completion(load_obj, unwrap, outputs):
         assert piece.process.stdin.closed
 
 
-# without the lock the torus handle cut runs along diagonals
 def test_keep_quads_rebuilds_every_face(load_obj, unwrap, outputs):
+    # without the lock the torus handle cut runs along diagonals
     obj = load_obj("torus")[0]
     sizes = sorted(len(polygon.vertices) for polygon in obj.data.polygons)
     assert 4 in sizes
@@ -64,8 +64,8 @@ def test_flipped_face_is_rewound_instead_of_refused(load_obj, unwrap, outputs):
     assert has_uvs(next(iter(outputs().values())))
 
 
-# shade_auto_smooth cancels on headless 4.3
 def smooth_by_angle_node_group():
+    # shade_auto_smooth cancels on headless 4.3
     name = addon.src.utils.mesh.AUTO_SMOOTH_MODIFIER_NAME
     assets = pathlib.Path(bpy.utils.system_resource("DATAFILES")) / "assets"
     for path in sorted(assets.rglob("*.blend")):
@@ -90,11 +90,14 @@ def test_shading_modifiers_carry_over(load_obj, unwrap, outputs):
 
     assert manager.error_messages == []
     output = outputs()["cylinder_unwrapped"]
-    assert [m.type for m in output.modifiers] == ["WEIGHTED_NORMAL", "NODES"]
+    assert [modifier.type for modifier in output.modifiers] == [
+        "WEIGHTED_NORMAL",
+        "NODES",
+    ]
     assert output.modifiers[0].keep_sharp is True
     assert output.modifiers[1].node_group is not None
     records = addon.src.utils.mesh.get_shading_modifiers(output)
-    assert records[1][2][1]["Input_1"] == pytest.approx(angle)
+    assert records[1].settings["Input_1"] == pytest.approx(angle)
 
 
 @pytest.mark.parametrize("engine", OTHER_ENGINES)
@@ -112,35 +115,42 @@ def test_other_engines_unwrap_the_cylinder(load_obj, unwrap, outputs, engine):
 
 def capped_quad_cylinder(around=24, along=6):
     verts = [
-        (math.cos(2 * math.pi * i / around), math.sin(2 * math.pi * i / around), r / 2)
-        for r in range(along + 1)
-        for i in range(around)
+        (
+            math.cos(2 * math.pi * step / around),
+            math.sin(2 * math.pi * step / around),
+            ring / 2,
+        )
+        for ring in range(along + 1)
+        for step in range(around)
     ]
     faces = []
-    for r in range(along):
-        for i in range(around):
-            j = (i + 1) % around
+    for ring in range(along):
+        for step in range(around):
+            following = (step + 1) % around
             faces.append(
                 (
-                    r * around + i,
-                    r * around + j,
-                    (r + 1) * around + j,
-                    (r + 1) * around + i,
+                    ring * around + step,
+                    ring * around + following,
+                    (ring + 1) * around + following,
+                    (ring + 1) * around + step,
                 )
             )
     faces.append(tuple(reversed(range(around))))
-    faces.append(tuple(along * around + i for i in range(around)))
+    faces.append(tuple(along * around + step for step in range(around)))
     return verts, faces
 
 
-# hard surface locks the triangulation diagonals, so no seam may run along one
 def test_hard_surface_keeps_seams_off_the_diagonals(make_mesh, unwrap, outputs):
+    # hard surface locks the triangulation diagonals, so no seam may run along one
     verts, faces = capped_quad_cylinder()
-    obj = make_mesh("cylinder", verts, faces, [[(0.0, 0.0)] * len(f) for f in faces])
+    obj = make_mesh(
+        "cylinder", verts, faces, [[(0.0, 0.0)] * len(face) for face in faces]
+    )
     mesh = obj.data
     mesh_edges = {
         frozenset(
-            tuple(round(c, 5) for c in mesh.vertices[v].co) for v in edge.vertices
+            tuple(round(coordinate, 5) for coordinate in mesh.vertices[v].co)
+            for v in edge.vertices
         )
         for edge in mesh.edges
     }
@@ -166,7 +176,8 @@ def test_hard_surface_keeps_seams_off_the_diagonals(make_mesh, unwrap, outputs):
     diagonal_seams = 0
     for edge in output.edges:
         key = frozenset(
-            tuple(round(c, 5) for c in output.vertices[v].co) for v in edge.vertices
+            tuple(round(coordinate, 5) for coordinate in output.vertices[v].co)
+            for v in edge.vertices
         )
         if key in mesh_edges:
             continue

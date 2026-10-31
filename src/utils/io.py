@@ -1,86 +1,89 @@
 import re
+from collections import namedtuple
 
 import bpy
 import numpy
 
+from ..no_bpy.mesh import face_starts
+from .mesh import loop_uvs, loop_vertices_and_face_sizes, world_positions
 
-# the built-in exporter rounds to 6 decimals, which flips tiny uv triangles
-def export_obj(obj, path, export_uv, flip_mirrored=False, matrix=None):
+
+def export_obj(obj, path, *, export_uv, flip_mirrored=False, matrix=None):
     mesh = obj.data
     matrix = numpy.array(obj.matrix_world if matrix is None else matrix)
-    co = numpy.empty(len(mesh.vertices) * 3)
-    mesh.vertices.foreach_get("co", co)
-    co = co.reshape(-1, 3) @ matrix[:3, :3].T + matrix[:3, 3]
+    positions = world_positions(mesh, matrix)
+    loop_vertices, totals = loop_vertices_and_face_sizes(mesh)
 
-    loop_verts = numpy.empty(len(mesh.loops), dtype=numpy.int64)
-    mesh.loops.foreach_get("vertex_index", loop_verts)
-    totals = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
-    mesh.polygons.foreach_get("loop_total", totals)
-
-    # a mirror flips positions but not corner order, so faces bake in inside out
+    # mirror matrices turn faces inside out unless the corner order is reversed
     loop_order = None
     if flip_mirrored and numpy.linalg.det(matrix[:3, :3]) < 0:
-        starts = numpy.cumsum(totals) - totals
-        within = numpy.arange(len(loop_verts)) - numpy.repeat(starts, totals)
+        starts = face_starts(totals)
+        within = numpy.arange(len(loop_vertices)) - numpy.repeat(starts, totals)
         loop_order = numpy.repeat(starts + totals - 1, totals) - within
-        loop_verts = loop_verts[loop_order]
+        loop_vertices = loop_vertices[loop_order]
 
     layer = mesh.uv_layers.active
     export_uv = export_uv and layer is not None
-    vt_verts = None
+    vertex_of_uv = None
 
-    with path.open("w") as f:
-        # optcuts' obj reader warns on o lines but skips g lines silently
-        f.write(f"g {obj.name}\n")
-        # a single %-format over the whole array runs in C, f-strings are 10x slower
-        f.write(("v %.9f %.9f %.9f\n" * len(co)) % tuple(co.ravel().tolist()))
+    with path.open("w") as file:
+        # optcuts' obj reader prints a warning for o lines but not g lines
+        file.write(f"g {obj.name}\n")
+        # one %-format over the whole array runs in C, f-strings are ten times slower
+        file.write(
+            ("v %.9f %.9f %.9f\n" * len(positions)) % tuple(positions.ravel().tolist())
+        )
 
         if export_uv:
-            uvs = numpy.empty(len(mesh.loops) * 2)
-            layer.data.foreach_get("uv", uvs)
-            uvs = uvs.reshape(-1, 2)
+            uvs = loop_uvs(mesh)
             if loop_order is not None:
                 uvs = uvs[loop_order]
-            # optcuts gives each vt its own vertex, so a shared uv would weld two
+            # optcuts welds corners that share a vt
             scaled = numpy.rint(uvs * 1e9).astype(numpy.int64)
-            order = numpy.lexsort((scaled[:, 1], scaled[:, 0], loop_verts))
-            sv = loop_verts[order]
-            su = scaled[order, 0]
-            sw = scaled[order, 1]
+            order = numpy.lexsort((scaled[:, 1], scaled[:, 0], loop_vertices))
+            sorted_vertices = loop_vertices[order]
+            sorted_u = scaled[order, 0]
+            sorted_v = scaled[order, 1]
             first = numpy.zeros(len(order), dtype=bool)
             first[:1] = True
-            first[1:] = (sv[1:] != sv[:-1]) | (su[1:] != su[:-1]) | (sw[1:] != sw[:-1])
-            loop_vts = numpy.empty(len(order), dtype=numpy.int64)
-            loop_vts[order] = numpy.cumsum(first) - 1
-            vt_verts = sv[first]
-            values = numpy.column_stack((su[first], sw[first])) / 1e9
-            f.write(("vt %.9f %.9f\n" * len(values)) % tuple(values.ravel().tolist()))
-            corners = numpy.column_stack((loop_verts + 1, loop_vts + 1))
+            first[1:] = (
+                (sorted_vertices[1:] != sorted_vertices[:-1])
+                | (sorted_u[1:] != sorted_u[:-1])
+                | (sorted_v[1:] != sorted_v[:-1])
+            )
+            loop_uv_indices = numpy.empty(len(order), dtype=numpy.int64)
+            loop_uv_indices[order] = numpy.cumsum(first) - 1
+            vertex_of_uv = sorted_vertices[first]
+            values = numpy.column_stack((sorted_u[first], sorted_v[first])) / 1e9
+            # Blender's obj exporter rounds to 6 decimals, which flips tiny uv triangles
+            file.write(
+                ("vt %.9f %.9f\n" * len(values)) % tuple(values.ravel().tolist())
+            )
+            corners = numpy.column_stack((loop_vertices + 1, loop_uv_indices + 1))
             token = "%d/%d"
         else:
-            corners = loop_verts[:, None] + 1
+            corners = loop_vertices[:, None] + 1
             token = "%d"
 
         if len(totals) and (totals == totals[0]).all():
             size = int(totals[0])
-            fmt = "f " + " ".join([token] * size) + "\n"
-            f.write((fmt * len(totals)) % tuple(corners.ravel().tolist()))
+            line_format = "f " + " ".join([token] * size) + "\n"
+            file.write((line_format * len(totals)) % tuple(corners.ravel().tolist()))
         else:
             flat = corners.ravel().tolist()
             width = corners.shape[1]
             lines = []
-            li = 0
+            offset = 0
             for total in totals.tolist():
-                fmt = "f " + " ".join([token] * total) + "\n"
-                lines.append(fmt % tuple(flat[li : li + total * width]))
-                li += total * width
-            f.writelines(lines)
+                line_format = "f " + " ".join([token] * total) + "\n"
+                lines.append(line_format % tuple(flat[offset : offset + total * width]))
+                offset += total * width
+            file.writelines(lines)
 
-    return vt_verts
+    return vertex_of_uv
 
 
 def _block(text, prefix):
-    # every writer here keeps same-type lines contiguous, merged files interleave them
     tag = "\n" + prefix + " "
     if text.startswith(prefix + " "):
         start = 0
@@ -98,64 +101,64 @@ def _block(text, prefix):
     return block if block.endswith("\n") else block + "\n"
 
 
-def _numeric_columns(text, prefix, comps):
+def obj_numeric_columns(text, prefix, columns):
     block = _block(text, prefix)
     if not block:
-        return numpy.empty((0, comps))
+        return numpy.empty((0, columns))
     lines = block.count("\n")
     tokens = block.replace(prefix + " ", " ").split()
-    if len(tokens) % lines == 0 and len(tokens) // lines >= comps:
+    if len(tokens) % lines == 0 and len(tokens) // lines >= columns:
         stride = len(tokens) // lines
-        return numpy.array(tokens, dtype=numpy.float64).reshape(-1, stride)[:, :comps]
+        return numpy.array(tokens, dtype=numpy.float64).reshape(-1, stride)[:, :columns]
     return numpy.array(
-        [ln.split()[1 : comps + 1] for ln in block.splitlines()],
+        [line.split()[1 : columns + 1] for line in block.splitlines()],
         dtype=numpy.float64,
     )
 
 
-def _parse_faces(text):
+ObjFaces = namedtuple("ObjFaces", "totals loop_vertices loop_uv_indices")
+
+
+def parse_obj_faces(text):
     block = _block(text, "f")
     empty = numpy.empty(0, dtype=numpy.int64)
     if not block:
-        return numpy.empty(0, dtype=numpy.int32), empty, empty
+        return ObjFaces(numpy.empty(0, dtype=numpy.int32), empty, empty)
     lines = block.count("\n")
     first_line = block.split("\n", 1)[0][2:].split()
     size = len(first_line)
     stride = first_line[0].count("/") + 1
-    # "v//vn" gets a 0 placeholder so every corner expands to the same width
     tokens = block.replace("f ", " ").replace("//", "/0/").replace("/", " ").split()
     if len(tokens) == lines * size * stride:
-        nums = numpy.array(tokens, dtype=numpy.int64).reshape(-1, stride)
+        numbers = numpy.array(tokens, dtype=numpy.int64).reshape(-1, stride)
         totals = numpy.full(lines, size, dtype=numpy.int32)
-        loop_verts = nums[:, 0] - 1
+        loop_vertices = numbers[:, 0] - 1
         if stride > 1:
-            loop_vts = numpy.maximum(nums[:, 1] - 1, 0)
+            loop_uv_indices = numpy.maximum(numbers[:, 1] - 1, 0)
         else:
-            loop_vts = numpy.zeros(len(nums), dtype=numpy.int64)
-        return totals, loop_verts, loop_vts
+            loop_uv_indices = numpy.zeros(len(numbers), dtype=numpy.int64)
+        return ObjFaces(totals, loop_vertices, loop_uv_indices)
 
-    # mixed token forms, e.g. merged pieces with and without uvs
     totals = []
-    loop_verts = []
-    loop_vts = []
-    for ln in block.splitlines():
-        corners = ln.split()[1:]
+    loop_vertices = []
+    loop_uv_indices = []
+    for line in block.splitlines():
+        corners = line.split()[1:]
         totals.append(len(corners))
         for corner in corners:
             parts = corner.split("/")
-            loop_verts.append(int(parts[0]) - 1)
+            loop_vertices.append(int(parts[0]) - 1)
             if len(parts) > 1 and parts[1]:
-                loop_vts.append(int(parts[1]) - 1)
+                loop_uv_indices.append(int(parts[1]) - 1)
             else:
-                loop_vts.append(0)
-    return (
+                loop_uv_indices.append(0)
+    return ObjFaces(
         numpy.array(totals, dtype=numpy.int32),
-        numpy.array(loop_verts, dtype=numpy.int64),
-        numpy.array(loop_vts, dtype=numpy.int64),
+        numpy.array(loop_vertices, dtype=numpy.int64),
+        numpy.array(loop_uv_indices, dtype=numpy.int64),
     )
 
 
-# not bpy.ops.wm.obj_import: that changes selection, the active object and undo
 def import_obj(path, name=""):
     text = path.read_text()
 
@@ -163,24 +166,25 @@ def import_obj(path, name=""):
         name_match = re.search(r"(?m)^[og] (.*)$", text)
         name = name_match.group(1).strip() if name_match else path.stem
 
-    verts = _numeric_columns(text, "v", 3)
-    uvs = _numeric_columns(text, "vt", 2)
-    totals, loop_verts, loop_vts = _parse_faces(text)
+    positions = obj_numeric_columns(text, "v", 3)
+    uvs = obj_numeric_columns(text, "vt", 2)
+    faces = parse_obj_faces(text)
+    totals = faces.totals
 
+    # bpy.ops.wm.obj_import changes selection, the active object and undo
     mesh = bpy.data.meshes.new(name)
-    mesh.vertices.add(len(verts))
-    mesh.vertices.foreach_set("co", verts.ravel())
-    mesh.loops.add(len(loop_verts))
-    mesh.loops.foreach_set("vertex_index", loop_verts)
+    mesh.vertices.add(len(positions))
+    mesh.vertices.foreach_set("co", positions.ravel())
+    mesh.loops.add(len(faces.loop_vertices))
+    mesh.loops.foreach_set("vertex_index", faces.loop_vertices)
     mesh.polygons.add(len(totals))
-    starts = numpy.cumsum(totals) - totals
-    mesh.polygons.foreach_set("loop_start", starts)
+    mesh.polygons.foreach_set("loop_start", face_starts(totals))
     mesh.polygons.foreach_set("loop_total", totals)
     # some meshes have no sharp_face attribute
     mesh.polygons.foreach_set("use_smooth", numpy.zeros(len(totals), dtype=bool))
     if len(uvs):
         layer = mesh.uv_layers.new()
-        layer.data.foreach_set("uv", uvs[loop_vts].ravel())
+        layer.data.foreach_set("uv", uvs[faces.loop_uv_indices].ravel())
     mesh.update(calc_edges=True)
     mesh.validate()
 
@@ -189,11 +193,11 @@ def import_obj(path, name=""):
     return imported_obj
 
 
-def print_stdin(process, msg):
+def print_stdin(process, line):
     if process.poll() is not None:
         return False
     try:
-        print(msg, file=process.stdin, flush=True)
+        print(line, file=process.stdin, flush=True)
     except OSError:
         return False
     return True

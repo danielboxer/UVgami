@@ -1,19 +1,21 @@
+import collections
 import itertools
 
 import numpy
 
-from .seams.mesh import NEIGHBOR_CELLS, transformed
+from .no_bpy.mesh import NEIGHBOR_CELLS, bounding_box_diagonal, transform_positions
+from .no_bpy.mesh_reads import loop_vertices_and_face_sizes, vertex_position_array
 
-# rms fit error as a fraction of the piece's bounding box diagonal
 MATCH_TOLERANCE = 1e-4
 
 
-# rotation or reflection, then translation
 def rigid_fit(source, target):
     source_center = source.mean(axis=0)
     target_center = target.mean(axis=0)
-    u, _, vt = numpy.linalg.svd((source - source_center).T @ (target - target_center))
-    rotation = vt.T @ u.T
+    left, _, right_transposed = numpy.linalg.svd(
+        (source - source_center).T @ (target - target_center)
+    )
+    rotation = right_transposed.T @ left.T
     translation = target_center - rotation @ source_center
     moved = source @ rotation.T + translation
     error = numpy.sqrt(numpy.mean(numpy.sum((moved - target) ** 2, axis=1)))
@@ -23,21 +25,12 @@ def rigid_fit(source, target):
     return matrix, error
 
 
-def _topology(mesh):
-    corners = numpy.empty(len(mesh.loops), dtype=numpy.int64)
-    mesh.loops.foreach_get("vertex_index", corners)
-    totals = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
-    mesh.polygons.foreach_get("loop_total", totals)
-    return totals, corners
-
-
-# duplicates land on each other to float precision after pca alignment
+# duplicates coincide to float precision after pca alignment
 MATCH_CELL = 1e-4
 
-# pca eigenvalue mismatch above this fraction of the largest means a different shape
 SPREAD_TOLERANCE = 1e-3
 
-# closer than this and the pca axes in that plane are arbitrary
+# pca axes in a plane are arbitrary when their eigenvalues are closer than this
 DEGENERATE_GAP = 1e-2
 
 
@@ -46,28 +39,20 @@ class _Piece:
         mesh = obj.data
         self.obj = obj
         self.signature = (len(mesh.vertices), len(mesh.loops), len(mesh.polygons))
-        self.totals, self.corners = _topology(mesh)
-        self.positions = transformed(_mesh_positions(mesh), obj.matrix_world)
-        self.diagonal = numpy.linalg.norm(
-            self.positions.max(axis=0) - self.positions.min(axis=0)
+        self.corners, self.totals = loop_vertices_and_face_sizes(mesh)
+        self.positions = transform_positions(
+            vertex_position_array(mesh), obj.matrix_world
         )
+        self.diagonal = bounding_box_diagonal(self.positions)
         centered = self.positions - self.positions.mean(axis=0)
         self.spread, axes = numpy.linalg.eigh(centered.T @ centered)
         self.local = centered @ axes
         self.grid = None
 
 
-def _grid(local, cell):
-    lookup = {}
-    keys = numpy.round(local / cell).astype(numpy.int64)
-    for index, key in enumerate(map(tuple, keys.tolist())):
-        lookup.setdefault(key, []).append(index)
-    return lookup
-
-
-def _match_vertices(rep_local, grid, aligned, cell):
+def _match_vertices(representative_local, grid, aligned, cell):
     permutation = numpy.empty(len(aligned), dtype=numpy.int64)
-    used = numpy.zeros(len(rep_local), dtype=bool)
+    used = numpy.zeros(len(representative_local), dtype=bool)
     keys = numpy.round(aligned / cell).astype(numpy.int64).tolist()
     for index, (x, y, z) in enumerate(keys):
         options = [i for i in grid.get((x, y, z), ()) if not used[i]]
@@ -78,7 +63,9 @@ def _match_vertices(rep_local, grid, aligned, cell):
                 ]
         if not options:
             return None
-        distances = numpy.linalg.norm(rep_local[options] - aligned[index], axis=1)
+        distances = numpy.linalg.norm(
+            representative_local[options] - aligned[index], axis=1
+        )
         nearest = int(numpy.argmin(distances))
         if distances[nearest] > cell:
             return None
@@ -87,19 +74,20 @@ def _match_vertices(rep_local, grid, aligned, cell):
     return permutation
 
 
-# the anchor is the rep vertex farthest from the symmetry axis
-def _plane_alignments(rep, piece, plane, unique, cell):
-    rep_radius = numpy.hypot(rep.local[:, plane[0]], rep.local[:, plane[1]])
-    anchor = int(rep_radius.argmax())
-    anchor_angle = numpy.arctan2(
-        rep.local[anchor, plane[1]], rep.local[anchor, plane[0]]
+def _plane_alignments(representative, piece, plane, unique, cell):
+    representative_radius = numpy.hypot(
+        representative.local[:, plane[0]], representative.local[:, plane[1]]
     )
-    anchor_height = rep.local[anchor, unique]
+    anchor = int(representative_radius.argmax())
+    anchor_angle = numpy.arctan2(
+        representative.local[anchor, plane[1]], representative.local[anchor, plane[0]]
+    )
+    anchor_height = representative.local[anchor, unique]
     candidate_radius = numpy.hypot(piece.local[:, plane[0]], piece.local[:, plane[1]])
     for axis_sign in (1.0, -1.0):
         heights = piece.local[:, unique] * axis_sign
         anchors = numpy.nonzero(
-            (numpy.abs(candidate_radius - rep_radius[anchor]) <= cell)
+            (numpy.abs(candidate_radius - representative_radius[anchor]) <= cell)
             & (numpy.abs(heights - anchor_height) <= cell)
         )[0]
         for mirror in (1.0, -1.0):
@@ -119,25 +107,23 @@ def _plane_alignments(rep, piece, plane, unique, cell):
                 yield aligned
 
 
-# covers a box but not a freely rotated ball-like shape
-def _alignments(rep, piece, cell):
-    scale = rep.spread[2]
-    low_gap = (rep.spread[1] - rep.spread[0]) / scale
-    high_gap = (rep.spread[2] - rep.spread[1]) / scale
+def _alignments(representative, piece, cell):
+    scale = representative.spread[2]
+    low_gap = (representative.spread[1] - representative.spread[0]) / scale
+    high_gap = (representative.spread[2] - representative.spread[1]) / scale
     if low_gap >= DEGENERATE_GAP and high_gap >= DEGENERATE_GAP:
         for signs in itertools.product((1.0, -1.0), repeat=3):
             yield piece.local * signs
     elif low_gap >= DEGENERATE_GAP or high_gap >= DEGENERATE_GAP:
         plane = (1, 2) if high_gap < DEGENERATE_GAP else (0, 1)
         unique = 0 if high_gap < DEGENERATE_GAP else 2
-        yield from _plane_alignments(rep, piece, plane, unique, cell)
+        yield from _plane_alignments(representative, piece, plane, unique, cell)
     else:
         for order in itertools.permutations((0, 1, 2)):
             for signs in itertools.product((1.0, -1.0), repeat=3):
                 yield piece.local[:, order] * signs
 
 
-# each cycle rotated, and reversed if that is smaller, to its smallest tuple
 def _face_keys(totals, corners):
     keys = []
     face_corners = corners.tolist()
@@ -155,90 +141,95 @@ def _face_keys(totals, corners):
     return sorted(keys)
 
 
-# the cheap index-for-index fit first, then pca alignment for a reordered copy
-def _twin_matrix(rep, piece):
+def _twin_matrix(representative, piece):
     tolerance = MATCH_TOLERANCE * piece.diagonal
-    same_order = numpy.array_equal(rep.totals, piece.totals) and numpy.array_equal(
-        rep.corners, piece.corners
-    )
+    same_order = numpy.array_equal(
+        representative.totals, piece.totals
+    ) and numpy.array_equal(representative.corners, piece.corners)
     if same_order:
-        matrix, error = rigid_fit(rep.positions, piece.positions)
+        matrix, error = rigid_fit(representative.positions, piece.positions)
         if error <= tolerance:
             return matrix, True
-    spread_gap = numpy.abs(rep.spread - piece.spread).max()
+    spread_gap = numpy.abs(representative.spread - piece.spread).max()
     if spread_gap > SPREAD_TOLERANCE * piece.spread.max():
         return None
-    if not numpy.array_equal(numpy.sort(rep.totals), numpy.sort(piece.totals)):
+    if not numpy.array_equal(
+        numpy.sort(representative.totals), numpy.sort(piece.totals)
+    ):
         return None
-    cell = MATCH_CELL * rep.diagonal
-    if rep.grid is None:
-        rep.grid = _grid(rep.local, cell)
+    cell = MATCH_CELL * representative.diagonal
+    if representative.grid is None:
+        representative.grid = {}
+        keys = numpy.round(representative.local / cell).astype(numpy.int64)
+        for index, key in enumerate(map(tuple, keys.tolist())):
+            representative.grid.setdefault(key, []).append(index)
     face_keys = _face_keys(piece.totals, piece.corners)
-    for aligned in _alignments(rep, piece, cell):
-        permutation = _match_vertices(rep.local, rep.grid, aligned, cell)
+    for aligned in _alignments(representative, piece, cell):
+        permutation = _match_vertices(
+            representative.local, representative.grid, aligned, cell
+        )
         if permutation is None:
             continue
         inverse = numpy.empty_like(permutation)
         inverse[permutation] = numpy.arange(len(permutation))
-        if _face_keys(rep.totals, inverse[rep.corners]) != face_keys:
+        moved_keys = _face_keys(representative.totals, inverse[representative.corners])
+        if moved_keys != face_keys:
             continue
-        matrix, error = rigid_fit(rep.positions[permutation], piece.positions)
+        matrix, error = rigid_fit(
+            representative.positions[permutation], piece.positions
+        )
         if error <= tolerance:
             return matrix, False
     return None
 
 
-# a reordered twin ships the representative's face and vertex data
-def _copyable_data(rep, obj):
-    if list(rep.data.materials) != list(obj.data.materials):
+def _copyable_data(representative, obj):
+    if list(representative.data.materials) != list(obj.data.materials):
         return False
-    slots = {p.material_index for p in rep.data.polygons}
-    if len(slots) > 1 or slots != {p.material_index for p in obj.data.polygons}:
+    slots = {polygon.material_index for polygon in representative.data.polygons}
+    other_slots = {polygon.material_index for polygon in obj.data.polygons}
+    if len(slots) > 1 or slots != other_slots:
         return False
-    smooth = {p.use_smooth for p in rep.data.polygons}
-    return len(smooth) == 1 and smooth == {p.use_smooth for p in obj.data.polygons}
+    smooth = {polygon.use_smooth for polygon in representative.data.polygons}
+    other_smooth = {polygon.use_smooth for polygon in obj.data.polygons}
+    return len(smooth) == 1 and smooth == other_smooth
 
 
-# only pieces made by duplication qualify
+Twin = collections.namedtuple("Twin", "representative matrix exact")
+
+
 def find_twins(objects):
     representatives = {}
     twins = {}
     for obj in objects:
         piece = _Piece(obj)
         candidates = representatives.setdefault(piece.signature, [])
-        for rep in candidates:
-            match = _twin_matrix(rep, piece)
+        for representative in candidates:
+            match = _twin_matrix(representative, piece)
             if match is None:
                 continue
             matrix, exact = match
-            if not exact and not _copyable_data(rep.obj, obj):
+            if not exact and not _copyable_data(representative.obj, obj):
                 continue
-            twins[obj] = (rep.obj, matrix, exact)
+            twins[obj] = Twin(representative.obj, matrix, exact)
             break
         else:
             candidates.append(piece)
     return twins
 
 
-def _mesh_positions(mesh):
-    positions = numpy.empty(len(mesh.vertices) * 3)
-    mesh.vertices.foreach_get("co", positions)
-    return positions.reshape(-1, 3)
-
-
 # with fewer decimals, distinct islands at nearly the same uvs count as one stack
 STACK_DECIMALS = 9
 
 
-# only the kept island packs, the duplicates follow it
 def find_stacks(groups, uvs):
     by_key = {}
     for group in groups:
         key = tuple(
             sorted(
                 (round(u, STACK_DECIMALS), round(v, STACK_DECIMALS))
-                for fi in group
-                for u, v in uvs[fi]
+                for face in group
+                for u, v in uvs[face]
             )
         )
         by_key.setdefault(key, []).append(group)
@@ -247,10 +238,10 @@ def find_stacks(groups, uvs):
     ]
 
 
-# a reflection flips each face's winding so normals stay outward
 def write_twin_output(source_path, target_path, matrix):
     rotation = numpy.array(matrix)[:3, :3]
     translation = numpy.array(matrix)[:3, 3]
+    # reflections turn normals inward unless each face's winding is reversed
     mirrored = numpy.linalg.det(rotation) < 0
     lines = []
     for line in source_path.read_text().splitlines(keepends=True):

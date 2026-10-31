@@ -1,20 +1,22 @@
 import multiprocessing
+from collections import namedtuple
 
 import bpy
 
-from ..engines import ENGINES, installed_engines
+from ..engines import ENGINES, active_engine, installed_engines
 from ..utils.paths import get_addon_id
+from ..utils.ui import is_non_default, only_active
 
-# a hung engine is stopped after this
 UNWRAP_TIMEOUT_DEFAULT_MINUTES = 60
 
 # blender requires a dynamic enum's item strings to stay referenced
 _ENGINE_ITEMS = {
-    e.id: (e.id, e.label, e.description, e.enum_value) for e in ENGINES.values()
+    engine.id: (engine.id, engine.label, engine.description, engine.enum_value)
+    for engine in ENGINES.values()
 }
 
 
-# blender warns on every redraw when an enum has no items
+# blender prints a warning on every redraw when an enum has no items
 NO_ENGINE_ITEM = ("NONE", "No engine installed", "", 0)
 
 PRIORITY_LABELS = {
@@ -24,20 +26,94 @@ PRIORITY_LABELS = {
 }
 
 
+IconAndLabel = namedtuple("IconAndLabel", "icon label")
+
+SETTING_ICONS_AND_LABELS = {
+    "priority": IconAndLabel("SOLO_OFF", "Priority"),
+    "split_regions": IconAndLabel("MOD_EXPLODE", "Segmentation"),
+    "import_uvs": IconAndLabel("IMPORT", "Import UVs"),
+    "use_weights": IconAndLabel("MOD_VERTEX_WEIGHT", "Weights"),
+    "use_proxy": IconAndLabel("MOD_DECIM", "Proxy"),
+    "stack_similar": IconAndLabel("LINKED", "Stack Similar"),
+    "symmetry": IconAndLabel("MOD_MIRROR", "Symmetry"),
+    "unwrap_timeout": IconAndLabel("TIME", "Timeout"),
+    "keep_quads": IconAndLabel("MOD_TRIANGULATE", "Keep Quads"),
+    "transfer_uvs": IconAndLabel("MOD_DATA_TRANSFER", "Transfer UVs"),
+}
+
+
+def _setting_entry(props, path, *, supported):
+    icon, label = SETTING_ICONS_AND_LABELS[path]
+    return icon, label, path, supported and is_non_default(props, path)
+
+
+def _priority_entry(props):
+    return (
+        SETTING_ICONS_AND_LABELS["priority"].icon,
+        PRIORITY_LABELS[props.priority],
+        "priority",
+        is_non_default(props, "priority"),
+    )
+
+
+def unwrap_settings(props):
+    engine = active_engine(props.engine)
+    import_uvs_shown = engine.supports_import_uvs and not engine.import_uvs_ignored(
+        props
+    )
+    return engine.active_settings(props) + only_active(
+        (
+            _priority_entry(props),
+            _setting_entry(props, "split_regions", supported=engine.supports_regions),
+            _setting_entry(props, "import_uvs", supported=import_uvs_shown),
+            _setting_entry(props, "use_weights", supported=engine.supports_guided),
+            _setting_entry(props, "use_proxy", supported=engine.supports_proxy),
+            _setting_entry(props, "stack_similar", supported=True),
+            _setting_entry(props, "symmetry", supported=True),
+            _setting_entry(props, "unwrap_timeout", supported=True),
+            _setting_entry(props, "keep_quads", supported=engine.supports_keep_quads),
+            _setting_entry(props, "transfer_uvs", supported=True),
+        )
+    )
+
+
+SETTING_VALUES = {
+    "unwrap_timeout": lambda props: f"{props.unwrap_timeout} min",
+    "use_proxy": lambda props: f"{props.proxy_faces} tris",
+}
+
+
+def describe_settings(props, settings):
+    parts = []
+    for _, label, path in settings:
+        value = SETTING_VALUES.get(path)
+        parts.append(f"{label} {value(props)}" if value else label)
+    return ", ".join(parts)
+
+
+def fix_settings(props):
+    return only_active(
+        (
+            _priority_entry(props),
+            _setting_entry(props, "use_proxy", supported=True),
+            _setting_entry(props, "unwrap_timeout", supported=True),
+        )
+    )
+
+
 def _engine_items(self, context):
     installed = installed_engines()
     if not installed:
         return [NO_ENGINE_ITEM]
-    return [_ENGINE_ITEMS[e.id] for e in installed]
+    return [_ENGINE_ITEMS[engine.id] for engine in installed]
 
 
-# leaves the stored value alone so reinstalling an engine selects it again
 def _engine_get(self):
     stored = self.get("engine", -1)
     installed = installed_engines()
-    if any(_ENGINE_ITEMS[e.id][3] == stored for e in installed):
+    if any(engine.enum_value == stored for engine in installed):
         return stored
-    return _ENGINE_ITEMS[installed[0].id][3] if installed else 0
+    return installed[0].enum_value if installed else 0
 
 
 def _engine_set(self, value):
@@ -303,7 +379,9 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
             "uvgami.reset_settings", text="Reset Settings", icon="FILE_REFRESH"
         )
 
-        installable = [e for e in ENGINES.values() if e.has_install_controls]
+        installable = [
+            engine for engine in ENGINES.values() if engine.has_install_controls
+        ]
 
         box = layout.box()
         row = box.row()
@@ -316,4 +394,4 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
             row = engine_box.row()
             row.active = False
             row.label(text=engine.description)
-            engine.draw_prefs(engine_box, self)
+            engine.draw_prefs(engine_box)

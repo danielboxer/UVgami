@@ -8,18 +8,12 @@ from pathlib import Path
 _CHUNK = 1 << 20
 _ATTEMPTS = 4
 _BACKOFF = 2.0
-# the only 4xx a retry can clear: a stale range and rate limiting
+# 416 and 429 are the only 4xx a retry can clear: a stale range and rate limiting
 _RETRIED_CLIENT_CODES = (416, 429)
 
 
 class DownloadError(RuntimeError):
     pass
-
-
-def _worth_retrying(error):
-    if not isinstance(error, urllib.error.HTTPError):
-        return True
-    return error.code < 400 or error.code >= 500 or error.code in _RETRIED_CLIENT_CODES
 
 
 def with_retries(url, call, attempts=_ATTEMPTS, backoff=_BACKOFF):
@@ -31,25 +25,26 @@ def with_retries(url, call, attempts=_ATTEMPTS, backoff=_BACKOFF):
         tried += 1
         try:
             return call()
-        except (OSError, http.client.IncompleteRead, DownloadError) as e:
-            error = e
-            if not _worth_retrying(e):
+        except (OSError, http.client.IncompleteRead, DownloadError) as caught:
+            error = caught
+            client_error = (
+                isinstance(caught, urllib.error.HTTPError) and 400 <= caught.code < 500
+            )
+            if client_error and caught.code not in _RETRIED_CLIENT_CODES:
                 break
     tail = f" after {tried} attempts" if tried > 1 else ""
     raise DownloadError(f"failed to fetch {url}{tail}: {error}")
 
 
-def download_file(
-    url, dest, attempts=_ATTEMPTS, timeout=30, backoff=_BACKOFF, progress=None
-):
+def download_file(url, dest, attempts=_ATTEMPTS, backoff=_BACKOFF, progress=None):
     dest = Path(dest)
     part = dest.with_name(dest.name + ".part")
 
     def attempt():
         try:
-            _fetch(url, part, timeout, progress)
+            _fetch(url, part, progress)
         except urllib.error.HTTPError as error:
-            # a full-size .part yields an unsatisfiable range
+            # full-size .part files yield an unsatisfiable range
             if error.code == 416:
                 part.unlink(missing_ok=True)
             raise
@@ -58,15 +53,17 @@ def download_file(
     with_retries(url, attempt, attempts, backoff)
 
 
-def _fetch(url, part, timeout, progress=None):
+DOWNLOAD_TIMEOUT_SECONDS = 30
+
+
+def _fetch(url, part, progress):
     resume_from = part.stat().st_size if part.is_file() else 0
     request = urllib.request.Request(url)
     if resume_from:
         request.add_header("Range", f"bytes={resume_from}-")
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
         resumed = response.status == 206
         if not resumed:
-            # server ignored the range, or none was sent
             resume_from = 0
         length = response.headers.get("Content-Length")
         expected = resume_from + int(length) if length is not None else None

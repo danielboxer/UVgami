@@ -29,3 +29,5 @@ private/
 .playwright-mcp/
 docs.pdf
 post/
+/AGENTS.md
+/CLAUDE.md
