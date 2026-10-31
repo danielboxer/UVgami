@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.2.3
+## 2.3.0
 
 **New:**
 
@@ -19,6 +19,7 @@
 
 - Remove reduce stretching weight option
 - Default mode is now Auto
+- Pack and Grid panels moved to the Misc panel
 
 ## 2.2.0
 
