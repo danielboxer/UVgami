@@ -56,7 +56,7 @@ from .job import (
     Preserve,
     Result,
     TransferUVs,
-    unwrap_symmetry,
+    start_unwrap_symmetry,
 )
 from .logger import logger
 from .manager import Preparing, manager
@@ -454,12 +454,22 @@ class SessionBuilder:
 
         obj = self.remaining.popleft()
         props = manager.props
-        symmetry = unwrap_symmetry(
+        check = start_unwrap_symmetry(
             self.engine,
             props,
             obj.data,
             painted=paints_seams(obj, self.engine, props),
         )
+        if check is None:
+            return self._start_segmenting_or_preseed(obj, None)
+        return self._wait(
+            check,
+            obj,
+            lambda task: self._start_segmenting_or_preseed(obj, task.result()),
+        )
+
+    def _start_segmenting_or_preseed(self, obj, symmetry):
+        props = manager.props
         if not self.engine.splits_regions(props):
             return self._start_preseed(obj, symmetry)
         from ..segmentation import segment_work

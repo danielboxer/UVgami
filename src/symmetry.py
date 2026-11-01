@@ -8,13 +8,16 @@ import numpy
 from .guides import painted_weight_by_vertex
 from .no_bpy.mesh import bounding_box_diagonal, transform_positions
 from .no_bpy.symmetry import (
+    FaceSpansCharts,
+    faces_mirror,
     mirrored_uvs,
     mutual_mirror_partners,
     partner_map,
-    symmetric_axis,
+    start_symmetric_axis,
     symmetric_regions,
 )
 from .part_overrides import read_overrides
+from .unwrap.logger import logger
 from .utils.mesh import (
     loop_uvs,
     loop_vertices_and_face_sizes,
@@ -61,8 +64,8 @@ def mirror_workdir():
     return get_extension_dir_path() / "mirror"
 
 
-def mesh_symmetric_axis(mesh, center, tolerance):
-    return symmetric_axis(
+def start_mesh_symmetric_axis(mesh, center, tolerance):
+    return start_symmetric_axis(
         tools_command(),
         mirror_workdir(),
         *mesh_arrays(mesh),
@@ -80,19 +83,6 @@ def mesh_mirror_partners(mesh, center, axis):
 MirrorPlan = collections.namedtuple("MirrorPlan", "axis whole partners")
 
 
-def mirror_plan(mesh, center, tolerance):
-    # if props.symmetry == "AXES":
-    #     return sorted(props.sym_axes)
-    if any(any(values) for values in read_overrides(mesh).values()):
-        return None
-    # optcuts welds only one plane
-    found = mesh_symmetric_axis(mesh, center, tolerance)
-    if found is None:
-        return None
-    whole = not found.exact or found.crosses
-    return MirrorPlan(found.axis, whole, found.partners)
-
-
 def paints_seams(obj, engine, props):
     return (
         engine.supports_guided
@@ -106,20 +96,58 @@ SymmetryPlan = collections.namedtuple(
 )
 
 
-def symmetry_plan(engine, mesh, painted):
-    center, diagonal = bounding_box_center_and_diagonal(mesh)
-    tolerance = PLANE_SNAP * diagonal
-    found = mirror_plan(mesh, center, tolerance)
-    if found is None:
-        return None
-    if not engine.keeps_plane_vertices_on_u_zero:
-        if found.whole:
+class SymmetryCheck:
+    def __init__(self, engine, mesh, painted):
+        self.engine = engine
+        self.painted = painted
+        self.center, diagonal = bounding_box_center_and_diagonal(mesh)
+        self.tolerance = PLANE_SNAP * diagonal
+        self.corners, self.totals = loop_vertices_and_face_sizes(mesh)
+        # optcuts welds only one plane
+        self.run = start_mesh_symmetric_axis(mesh, self.center, self.tolerance)
+
+    def done(self):
+        return self.run.done()
+
+    def cancel(self):
+        self.run.close()
+
+    def close(self):
+        self.run.close()
+
+    def mirror_plan(self):
+        found = self.run.result()
+        if found is None:
             return None
-        return SymmetryPlan("MIRROR_UVS", found.axis, center, tolerance, None, 1)
-    if not found.whole and not painted:
-        return SymmetryPlan("BISECT", found.axis, center, tolerance, None, 1)
-    partners = partner_map(found.partners)
-    return SymmetryPlan("WHOLE", found.axis, center, tolerance, partners, 1)
+        whole = not found.exact or found.crosses
+        return MirrorPlan(found.axis, whole, found.partners)
+
+    def result(self):
+        found = self.mirror_plan()
+        if found is None:
+            return None
+        center, tolerance = self.center, self.tolerance
+        if not self.engine.keeps_plane_vertices_on_u_zero:
+            if found.whole:
+                return None
+            return SymmetryPlan("MIRROR_UVS", found.axis, center, tolerance, None, 1)
+        bisects = (
+            not found.whole
+            and not self.painted
+            and faces_mirror(self.corners, self.totals, found.partners)
+        )
+        if bisects:
+            return SymmetryPlan("BISECT", found.axis, center, tolerance, None, 1)
+        partners = partner_map(found.partners)
+        return SymmetryPlan("WHOLE", found.axis, center, tolerance, partners, 1)
+
+
+def start_symmetry_check(engine, mesh, painted):
+    # if props.symmetry == "AXES":
+    #     return sorted(props.sym_axes)
+    if any(any(values) for values in read_overrides(mesh).values()):
+        return None
+    return SymmetryCheck(engine, mesh, painted)
 
 
 def mirror_segmentation(positions, corners, totals, segmentation, symmetry):
@@ -237,15 +265,22 @@ class MirrorUVs:
         corners, totals = loop_vertices_and_face_sizes(mesh)
         # obj exports bake the matrix's rotation and scale into the vertices
         local = matrix.to_3x3().inverted().to_4x4()
-        coords = mirrored_uvs(
-            tools_command(),
-            mirror_workdir(),
-            transform_positions(vertex_position_array(mesh), local),
-            corners,
-            totals,
-            loop_uvs(mesh),
-            self.center,
-            self.axis,
-            self.tolerance,
-        )
+        try:
+            coords = mirrored_uvs(
+                tools_command(),
+                mirror_workdir(),
+                transform_positions(vertex_position_array(mesh), local),
+                corners,
+                totals,
+                loop_uvs(mesh),
+                self.center,
+                self.axis,
+                self.tolerance,
+            )
+        except FaceSpansCharts:
+            logger.add_error(
+                f"{output.name}: symmetry skipped, its faces don't mirror across"
+                f" the {self.axis} axis"
+            )
+            return
         set_loop_uvs(mesh, coords)

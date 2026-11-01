@@ -13,7 +13,7 @@ from ..hard_surface import (
 from ..no_bpy import fit_uvs_keeping_area, sorted_pair
 from ..no_bpy.uv_transfer import TransferError, transfer_exact_job
 from ..no_bpy.worker import WorkerProcess
-from ..symmetry import symmetry_plan
+from ..symmetry import start_symmetry_check
 from ..utils.mesh import (
     check_exists,
     in_object_mode,
@@ -472,7 +472,7 @@ class AreaUVs(IslandUVs):
                 plan.loop_uvs[loop] = old
 
 
-def unwrap_symmetry(engine, props, mesh, *, painted):
+def start_unwrap_symmetry(engine, props, mesh, *, painted):
     if not engine.uses_symmetry(props) or len(mesh.vertices) == 0:
         return None
-    return symmetry_plan(engine, mesh, painted)
+    return start_symmetry_check(engine, mesh, painted)

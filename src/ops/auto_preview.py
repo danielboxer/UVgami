@@ -14,7 +14,7 @@ from ..no_bpy.worker import WorkerError, WorkerProcess
 from ..part_overrides import KEEP_ATTRIBUTE, face_values, surface_modes
 from ..proxy import part_triangles
 from ..symmetry import mirror_segmentation, paints_seams
-from ..unwrap.job import unwrap_symmetry
+from ..unwrap.job import start_unwrap_symmetry
 from ..unwrap.manager import SettingsCopy, manager
 from ..utils.mesh import (
     applied_matrix,
@@ -52,42 +52,51 @@ class PreviewRun:
         self.engine = engine
         self.props = props
         self.mesh = evaluated_mesh(obj)
-        self.symmetry = unwrap_symmetry(
+        self.symmetry_check = start_unwrap_symmetry(
             engine, props, self.mesh, painted=paints_seams(obj, engine, props)
         )
         try:
             self.worker = self._start_worker(applied_matrix(obj))
         except EngineError:
+            if self.symmetry_check is not None:
+                self.symmetry_check.close()
             bpy.data.meshes.remove(self.mesh)
             raise
-        self.plane = None
         self.local_positions = vertex_position_array(self.mesh)
-        if self.symmetry is not None:
-            self.plane = plane_corners(
-                self.symmetry, self.local_positions, obj.matrix_world
-            )
+        self.matrix_world = obj.matrix_world.copy()
         self.mesh.transform(obj.matrix_world)
         self.cancelled = False
+
+    def _tasks(self):
+        return [task for task in (self.worker, self.symmetry_check) if task is not None]
 
     def tick(self):
         global _preview
         if self.cancelled:
             return None
-        if self.worker is not None and not self.worker.done():
+        if not all(task.done() for task in self._tasks()):
             return 0.1
         try:
+            symmetry = None
+            plane = None
+            if self.symmetry_check is not None:
+                symmetry = self.symmetry_check.result()
+            if symmetry is not None:
+                plane = plane_corners(symmetry, self.local_positions, self.matrix_world)
             _preview = build_preview(
                 self.name,
                 self.mesh,
                 self.engine,
                 self.props,
-                self.symmetry,
-                self.plane,
-                self._segments(),
+                symmetry,
+                plane,
+                self._segments(symmetry),
             )
         except (EngineError, WorkerError) as error:
             _preview = Preview([], [self.name, f"Failed, {error}"])
         finally:
+            for task in self._tasks():
+                task.close()
             bpy.data.meshes.remove(self.mesh)
             end_run()
         return None
@@ -113,7 +122,7 @@ class PreviewRun:
             surface_modes(self.mesh, unset_mode),
         )
 
-    def _segments(self):
+    def _segments(self, symmetry):
         if self.worker is None:
             return None
         result = self.worker.result()
@@ -122,7 +131,7 @@ class PreviewRun:
                 self.local_positions,
                 *loop_vertices_and_face_sizes(self.mesh),
                 result,
-                self.symmetry,
+                symmetry,
             )
             return segments
         return SegmentRegions(
@@ -132,8 +141,8 @@ class PreviewRun:
     def cancel(self):
         # bpy.app.timers unregisters a callback that returns None
         self.cancelled = True
-        if self.worker is not None:
-            self.worker.close()
+        for task in self._tasks():
+            task.close()
         bpy.data.meshes.remove(self.mesh)
 
 

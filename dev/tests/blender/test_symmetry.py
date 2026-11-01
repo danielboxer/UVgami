@@ -32,8 +32,13 @@ def plane_vertices(mesh, axis):
     return [v.index for v in mesh.vertices if abs(v.co[axis] - center) <= tolerance]
 
 
+def symmetric_axis(mesh, center, tolerance):
+    return addon.src.symmetry.start_mesh_symmetric_axis(
+        mesh, center, tolerance
+    ).result()
+
+
 def test_auto_takes_the_first_axis_the_mesh_mirrors_across():
-    symmetric_axis = addon.src.symmetry.mesh_symmetric_axis
     bpy.ops.mesh.primitive_cube_add()
     cube = bpy.context.active_object
     center = mathutils.Vector((0, 0, 0))
@@ -49,10 +54,9 @@ def test_auto_takes_the_first_axis_the_mesh_mirrors_across():
 
 
 def auto_plan(mesh):
-    symmetry = addon.src.symmetry
-    center, diagonal = symmetry.bounding_box_center_and_diagonal(mesh)
-    tolerance = symmetry.PLANE_SNAP * diagonal
-    return symmetry.mirror_plan(mesh, center, tolerance)
+    engine = addon.src.engines.ENGINES["OPTCUTS"]
+    check = addon.src.symmetry.start_symmetry_check(engine, mesh, painted=False)
+    return None if check is None else check.mirror_plan()
 
 
 def test_auto_keeps_a_mesh_the_cut_would_add_edges_to_whole(load_obj):
@@ -78,6 +82,22 @@ def test_auto_skips_a_mesh_with_part_overrides(load_obj):
     name = addon.src.part_overrides.KEEP_ATTRIBUTE
     mesh.attributes.new(name, "INT", "FACE").data[0].value = 1
     assert auto_plan(mesh) is None
+
+
+def test_auto_keeps_a_mesh_whose_faces_dont_mirror_whole():
+    coords = [(1, 0, 0), (2, 0, 0), (2, 1, 0), (1, 1, 0)]
+    mesh = bpy.data.meshes.new("other diagonal")
+    # the negative quad splits on the other diagonal
+    faces = [(0, 1, 2), (0, 2, 3), (4, 7, 5), (5, 7, 6)]
+    mesh.from_pydata(coords + [(-x, y, z) for x, y, z in coords], [], faces)
+    engine = addon.src.engines.ENGINES["OPTCUTS"]
+    props = bpy.context.scene.uvgami
+
+    plan = addon.src.unwrap.job.start_unwrap_symmetry(
+        engine, props, mesh, painted=False
+    ).result()
+
+    assert plan[:2] == ("WHOLE", "X")
 
 
 def mirror_vertices_across_x(mesh):
@@ -186,9 +206,8 @@ def test_xatlas_gives_the_negative_side_the_mirrored_uvs(load_obj, unwrap, outpu
     assert_negative_side_mirrored(outputs()["cylinder_unwrapped"].data)
 
 
-def turned_lopsided_cylinder(load_obj, scale):
+def turned_lopsided(cylinder, scale):
     # mirrors across local X only, and after a 45 degree turn about Z on no world axis
-    (cylinder,) = load_obj("cylinder")
     for vertex in cylinder.data.vertices:
         if vertex.co.z > 0:
             vertex.co.x *= 0.8
@@ -216,14 +235,16 @@ def move_to_source_positions(mesh, source, matrix):
 
 @needs_engine
 @pytest.mark.parametrize("scale", [(1, 1, 1), (1.5, 1, 0.7)])
-def test_a_turned_mesh_mirrors_across_its_own_plane(load_obj, unwrap, outputs, scale):
-    cylinder = turned_lopsided_cylinder(load_obj, scale)
+def test_a_turned_mesh_mirrors_across_its_own_plane(unwrap, outputs, scale):
+    # quad sides mirror across X, the cylinder fixture's triangles don't
+    bpy.ops.mesh.primitive_cylinder_add(vertices=48, depth=3, end_fill_type="TRIFAN")
+    cylinder = turned_lopsided(bpy.context.active_object, scale)
     props = bpy.context.scene.uvgami
     props.pack_after_unwrap = False
     engine = addon.src.engines.ENGINES["OPTCUTS"]
-    symmetry = addon.src.unwrap.job.unwrap_symmetry(
+    symmetry = addon.src.unwrap.job.start_unwrap_symmetry(
         engine, props, cylinder.data, painted=False
-    )
+    ).result()
     assert symmetry[:2] == ("BISECT", "X")
     unwrap()
 
@@ -238,13 +259,14 @@ def test_a_turned_mesh_mirrors_across_its_own_plane(load_obj, unwrap, outputs, s
 @needs_engine
 @needs_xatlas
 def test_xatlas_mirrors_a_turned_and_stretched_mesh(load_obj, unwrap, outputs):
-    cylinder = turned_lopsided_cylinder(load_obj, (1.5, 1, 0.7))
+    (cylinder,) = load_obj("cylinder")
+    cylinder = turned_lopsided(cylinder, (1.5, 1, 0.7))
     props = bpy.context.scene.uvgami
     props.pack_after_unwrap = False
     engine = addon.src.engines.ENGINES["XATLAS"]
-    symmetry = addon.src.unwrap.job.unwrap_symmetry(
+    symmetry = addon.src.unwrap.job.start_unwrap_symmetry(
         engine, props, cylinder.data, painted=False
-    )
+    ).result()
     assert symmetry[:2] == ("MIRROR_UVS", "X")
     unwrap("XATLAS")
 

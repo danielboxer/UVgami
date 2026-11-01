@@ -4,10 +4,12 @@ from uvgami_cli._pytest_plugin import corners_and_totals
 
 from no_bpy import EngineError
 from no_bpy.symmetry import (
+    FaceSpansCharts,
+    faces_mirror,
     mirrored_uvs,
     mutual_mirror_partners,
     partner_map,
-    symmetric_axis,
+    start_symmetric_axis,
     symmetric_regions,
 )
 
@@ -26,9 +28,9 @@ def mesh_arrays(coords, faces):
 @pytest.fixture
 def axis_of(tools, tmp_path):
     def find(coords, faces, center):
-        return symmetric_axis(
+        return start_symmetric_axis(
             tools, tmp_path, *mesh_arrays(coords, faces), center, TOLERANCE
-        )
+        ).result()
 
     return find
 
@@ -219,6 +221,77 @@ def test_mirrored_uvs_raise_when_a_vertex_has_no_mirror(tools, tmp_path):
             "X",
             TOLERANCE,
         )
+
+
+def mirrored_coords(positive_coords):
+    return positive_coords + [(-x, y, z) for x, y, z in positive_coords]
+
+
+def chart_uvs(positions, corners, totals, chart_of_face):
+    chart = numpy.repeat(chart_of_face, totals)
+    # chart k sits five units right of chart k - 1, and chart -1's uvs are thrown away
+    uvs = positions[corners, :2] + numpy.stack([5.0 * chart, 0.0 * chart], axis=1)
+    return numpy.where((chart < 0)[:, None], 9.0, uvs)
+
+
+QUAD_COORDS = [(1, 0, 0), (2, 0, 0), (2, 1, 0), (1, 1, 0)]
+
+
+def test_mirrored_uvs_take_a_face_from_the_one_chart_holding_all_its_corners(
+    tools, tmp_path
+):
+    # the positive quad splits on 0 2, which is a seam, and the negative quad on 7 9
+    # chart 0 also reaches vertex 3 around vertex 2, through 1 5 4
+    coords = mirrored_coords([*QUAD_COORDS, (2, 2, 0), (3, 1.5, 0)])
+    positive = [(0, 1, 2), (1, 5, 2), (5, 4, 2), (4, 3, 2), (3, 0, 2)]
+    negative = [(6, 7, 9), (7, 8, 9), (8, 11, 7), (8, 10, 11), (8, 9, 10)]
+    positions, corners, totals = mesh_arrays(coords, positive + negative)
+    uvs = chart_uvs(positions, corners, totals, [0, 0, 0, 0, 1, -1, -1, -1, -1, -1])
+
+    mirrored = mirrored_uvs(
+        tools, tmp_path, positions, corners, totals, uvs, numpy.zeros(3), "X", TOLERANCE
+    )
+
+    # chart 1 reaches u 7, every negative corner mirrors its chart 0 uv past it
+    negative_corners = numpy.arange(len(corners)) >= 15
+    x, y = positions[corners, 0], positions[corners, 1]
+    expected = numpy.where(
+        negative_corners[:, None], numpy.stack([14 - numpy.abs(x), y], axis=1), uvs
+    )
+    low = expected.min(axis=0)
+    numpy.testing.assert_allclose(
+        mirrored, (expected - low) / (expected.max(axis=0) - low).max()
+    )
+
+
+def test_mirrored_uvs_raise_when_no_chart_holds_a_face_s_mirror(tools, tmp_path):
+    # face 4 5 7 mirrors vertices 0 1 3, and only chart 0 has 1, only chart 1 has 3
+    positions, corners, totals = mesh_arrays(
+        mirrored_coords(QUAD_COORDS), [(0, 1, 2), (3, 0, 2), (4, 5, 7), (5, 6, 7)]
+    )
+    uvs = chart_uvs(positions, corners, totals, [0, 1, -1, -1])
+    with pytest.raises(FaceSpansCharts):
+        mirrored_uvs(
+            tools,
+            tmp_path,
+            positions,
+            corners,
+            totals,
+            uvs,
+            numpy.zeros(3),
+            "X",
+            TOLERANCE,
+        )
+
+
+def test_faces_mirror_only_when_every_face_has_a_mirror_face():
+    coords = mirrored_coords(QUAD_COORDS)
+    partners = numpy.array([4, 5, 6, 7, 0, 1, 2, 3])
+    same_diagonal = [(0, 1, 2), (0, 2, 3), (4, 6, 5), (4, 7, 6)]
+    other_diagonal = [(0, 1, 2), (0, 2, 3), (4, 7, 5), (5, 7, 6)]
+
+    assert faces_mirror(*mesh_arrays(coords, same_diagonal)[1:], partners)
+    assert not faces_mirror(*mesh_arrays(coords, other_diagonal)[1:], partners)
 
 
 def quad_row(face_count):

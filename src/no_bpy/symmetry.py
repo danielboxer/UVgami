@@ -10,7 +10,7 @@ from .engine_run import (
     start_run,
     write_obj,
 )
-from .mesh import faces_from_arrays
+from .mesh import face_starts, faces_from_arrays
 
 INPUT_NAME = "mirror.obj"
 LABELS_NAME = "labels.txt"
@@ -33,7 +33,7 @@ def _plane_flags(center, axis=None, tolerance=None):
     return flags
 
 
-def _run(
+def _start(
     command, workdir, subcommand, positions, faces, flags, read, labels=None, uvs=None
 ):
     folder = new_run_folder(workdir)
@@ -47,7 +47,7 @@ def _run(
         paths.append(folder / UVS_NAME)
         paths[-1].write_text("".join(f"{u!r} {v!r}\n" for u, v in uvs.tolist()))
     paths.append(folder / OUTPUT_NAME)
-    run = start_run(
+    return start_run(
         folder,
         [*command.args, subcommand, *paths, *flags],
         command.env,
@@ -55,14 +55,29 @@ def _run(
         len(faces),
         lambda path, _: read(path),
     )
-    return poll_run(run, None)
+
+
+def faces_mirror(corners, totals, partners):
+    starts = face_starts(totals)
+    for size in numpy.unique(totals):
+        rows = corners[starts[totals == size][:, None] + numpy.arange(size)]
+        mirrored = partners[rows]
+        if (mirrored < 0).any():
+            return False
+        own = numpy.unique(numpy.sort(rows, axis=1), axis=0)
+        combined = numpy.concatenate([own, numpy.sort(mirrored, axis=1)])
+        if len(numpy.unique(combined, axis=0)) != len(own):
+            return False
+    return True
 
 
 def partner_map(partner):
     return {v: int(m) for v, m in enumerate(partner.tolist()) if m >= 0}
 
 
-def symmetric_axis(command, workdir, positions, corners, totals, center, tolerance):
+def start_symmetric_axis(
+    command, workdir, positions, corners, totals, center, tolerance
+):
     def read(folder):
         words = done_text(folder).split()
         if words == ["none"]:
@@ -74,7 +89,7 @@ def symmetric_axis(command, workdir, positions, corners, totals, center, toleran
 
     faces = faces_from_arrays(corners, totals)
     flags = _plane_flags(center, tolerance=tolerance)
-    return _run(command, workdir, "mirror-axis", positions, faces, flags, read)
+    return _start(command, workdir, "mirror-axis", positions, faces, flags, read)
 
 
 def mutual_mirror_partners(command, workdir, positions, center, axis):
@@ -83,7 +98,8 @@ def mutual_mirror_partners(command, workdir, positions, center, axis):
         return partner_map(_read_integers(folder))
 
     flags = _plane_flags(center, axis=axis)
-    return _run(command, workdir, "mirror-partners", positions, [], flags, read)
+    run = _start(command, workdir, "mirror-partners", positions, [], flags, read)
+    return poll_run(run, None)
 
 
 MirroredRegions = namedtuple(
@@ -107,16 +123,24 @@ def symmetric_regions(
 
     faces = faces_from_arrays(corners, totals)
     flags = _plane_flags(center, axis=axis, tolerance=tolerance)
-    return _run(
+    run = _start(
         command, workdir, "mirror-regions", positions, faces, flags, read, labels=labels
     )
+    return poll_run(run, None)
+
+
+class FaceSpansCharts(EngineError):
+    pass
 
 
 def mirrored_uvs(
     command, workdir, positions, corners, totals, uvs, center, axis, tolerance
 ):
     def read(folder):
-        done_text(folder)
+        if done_text(folder) == "spans-charts":
+            raise FaceSpansCharts(
+                "a face's mirror image has its corners in two uv islands"
+            )
         values = numpy.loadtxt(folder / OUTPUT_NAME, dtype=numpy.float64, ndmin=2)
         if values.shape != uvs.shape:
             raise EngineError(
@@ -126,4 +150,5 @@ def mirrored_uvs(
 
     faces = faces_from_arrays(corners, totals)
     flags = _plane_flags(center, axis=axis, tolerance=tolerance)
-    return _run(command, workdir, "mirror-uvs", positions, faces, flags, read, uvs=uvs)
+    run = _start(command, workdir, "mirror-uvs", positions, faces, flags, read, uvs=uvs)
+    return poll_run(run, None)

@@ -35,8 +35,9 @@ def test_preview_draws_the_region_borders(load_obj, preview):
     assert auto_preview.BORDER_COLOR in shape_colors(result)
 
 
-def test_preview_draws_the_symmetry_plane(load_obj, preview):
-    load_obj("cylinder")
+def test_preview_draws_the_symmetry_plane(preview):
+    # quad sides mirror across X, the cylinder fixture's triangles don't
+    bpy.ops.mesh.primitive_cylinder_add(vertices=48, depth=3, end_fill_type="TRIFAN")
     bpy.context.scene.uvgami.split_regions = False
 
     result = preview()
