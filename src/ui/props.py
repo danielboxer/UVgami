@@ -198,7 +198,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         description="Triangle count of the decimated copy",
         min=100,
         max=100000,
-        default=20000,
+        default=5000,
     )
     use_weights: bpy.props.BoolProperty(
         name="", description="Use the painted weights to change the unwrap"

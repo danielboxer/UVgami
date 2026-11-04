@@ -38,12 +38,13 @@ def dense_subset(dense, faces):
     return subset, used
 
 
-def start_proxy_transfer(command, workdir, dense, proxy):
+def start_proxy_transfer(command, workdir, dense, proxy, *, border_edges):
     positions, normals = dense_in_proxy_space(dense, proxy)
     corners = numpy.asarray(dense["corners"], dtype=INTEGER)
     proxy_positions = numpy.asarray(proxy["positions"], dtype=FLOAT).reshape(-1, 3)
     proxy_sizes, proxy_uvs = face_arrays(proxy["corner_uvs"])
     face_sizes = numpy.asarray(dense["face_sizes"], dtype=INTEGER)
+    border_edges = numpy.asarray(border_edges, dtype=INTEGER).reshape(-1, 2)
     arrays = [
         numpy.array(
             [
@@ -62,6 +63,8 @@ def start_proxy_transfer(command, workdir, dense, proxy):
         proxy_sizes,
         corner_array(proxy["faces"], proxy_sizes),
         proxy_uvs,
+        numpy.array([len(border_edges)], dtype=INTEGER),
+        border_edges,
     ]
 
     def read(data):

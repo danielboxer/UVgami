@@ -305,12 +305,19 @@ def transfer_inputs(input_mesh, output):
 class ProxyUVs(Transfer):
     allows_missing_pieces = False
 
+    def __init__(self, input_mesh, *, border_edges=()):
+        super().__init__(input_mesh)
+        self.border_edges = border_edges
+
     def _extract(self, target, output):
         return transfer_inputs(target, output)
 
     def _begin(self, inputs):
         self.task = start_proxy_transfer(
-            tools_command(), get_extension_dir_path() / "proxy", *inputs
+            tools_command(),
+            get_extension_dir_path() / "proxy",
+            *inputs,
+            border_edges=self.border_edges,
         )
 
     def _apply(self, target, result):

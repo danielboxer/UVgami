@@ -494,6 +494,7 @@ class SessionBuilder:
             return self._start_preseed(obj, symmetry)
         border_positions = None
         parts = None
+        border_edges = ()
         symmetry, segmentation = mirror_segmentation(
             *mesh_arrays(obj.data),
             segmentation,
@@ -503,12 +504,14 @@ class SessionBuilder:
             from ..segmentation import split_on_borders
 
             border_positions, parts = split_on_borders(obj, segmentation.border_edges)
+            border_edges = segmentation.border_edges
         return self._start_preseed(
             obj,
             symmetry,
             surface_modes=segmentation.surface_modes,
             parts=parts,
             border_positions=border_positions,
+            border_edges=border_edges,
         )
 
     def _start_preseed(
@@ -518,6 +521,7 @@ class SessionBuilder:
         surface_modes=None,
         parts=None,
         border_positions=None,
+        border_edges=(),
     ):
         props = manager.props
         proxied = self.inputs[obj].proxy_parts is not None
@@ -540,6 +544,7 @@ class SessionBuilder:
             symmetrize_job=symmetry_job(symmetry),
             had_uv_layer=obj.data.uv_layers.active is not None,
             border_positions=border_positions,
+            border_edges=border_edges,
         )
         work = self.engine.preseed_work(obj, props, plane, surface_modes)
         if work is None:
@@ -604,7 +609,14 @@ class SessionBuilder:
         manager.add(unwrap)
 
     def _separate(
-        self, obj, *, preseeded, symmetrize_job, had_uv_layer, border_positions
+        self,
+        obj,
+        *,
+        preseeded,
+        symmetrize_job,
+        had_uv_layer,
+        border_positions,
+        border_edges,
     ):
         props = manager.props
         if symmetrize_job is not None:
@@ -638,9 +650,9 @@ class SessionBuilder:
 
         entry = self.inputs[obj]
         if entry.proxy_parts is not None and props.transfer_uvs:
-            transfer_uvs_job = ProxyUVs(entry.original)
+            transfer_uvs_job = ProxyUVs(entry.original, border_edges=border_edges)
         elif entry.proxy_parts is not None:
-            transfer_uvs_job = ProxyCopyUVs(entry.original)
+            transfer_uvs_job = ProxyCopyUVs(entry.original, border_edges=border_edges)
         elif props.transfer_uvs:
             transfer_uvs_job = TransferUVs(entry.original)
         else:
