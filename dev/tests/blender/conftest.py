@@ -10,6 +10,7 @@ else:
         load_obj,
         make_mesh,
         outputs,
+        proxy_target,
         seam_edges,
         session,
         unwrap,

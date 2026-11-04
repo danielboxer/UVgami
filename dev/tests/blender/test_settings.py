@@ -187,10 +187,14 @@ def test_partuv_alone_skips_splitting_and_every_engine_mirrors_by_default():
     assert not engines["OPTCUTS"].uses_symmetry(props)
 
 
+def test_proxy_is_auto_by_default():
+    assert bpy.context.scene.uvgami.bl_rna.properties["proxy_mode"].default == "AUTO"
+
+
 def test_reset_settings_restores_the_defaults():
     props = bpy.context.scene.uvgami
     props.margin = 0.5
-    props.use_proxy = True
+    props.proxy_mode = "OFF"
     props.max_cores = 1
     props.priority = "FEWER_SEAMS"
 
@@ -198,7 +202,7 @@ def test_reset_settings_restores_the_defaults():
 
     defaults = props.bl_rna.properties
     assert props.margin == pytest.approx(defaults["margin"].default)
-    assert props.use_proxy == defaults["use_proxy"].default
+    assert props.proxy_mode == defaults["proxy_mode"].default
     assert props.max_cores == multiprocessing.cpu_count()
     assert props.priority == defaults["priority"].default
 

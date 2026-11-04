@@ -7,6 +7,7 @@ from ..binary_engine import (
     UVGAMI_OT_delete_engine,
 )
 
+PROXY_MODE_DEFAULT = "AUTO"
 # must match the optcuts engine VERSION
 OPTCUTS_VERSION = "1.23.1"
 OPTCUTS_MINIMUM_VERSION = "1.23.0"

@@ -13,7 +13,7 @@ from ..no_bpy import (
     signed_area,
     sorted_pair,
 )
-from ..proxy import ProxyIslandUVs, make_proxy, triangle_count
+from ..proxy import ProxyIslandUVs, make_proxy, proxy_trigger_faces, triangle_count
 from ..ui.props import describe_settings, fix_settings
 from ..unwrap.job import AreaUVs, IslandUVs
 from ..unwrap.logger import logger
@@ -139,7 +139,7 @@ def queue_island(obj, group, bbox, area, number, input_path, props):
     temp, _ = face_subset_object(obj, group, "uvgami_island")
     triangulate_mesh(temp.data)
 
-    proxied = props.use_proxy and make_proxy(temp, props.proxy_faces)
+    proxied = props.proxy_mode != "OFF" and make_proxy(temp, proxy_trigger_faces(props))
 
     name = f"{obj.name}_island_{number}"
     path = unused_input_path(input_path, name, manager.claimed_paths())

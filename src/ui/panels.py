@@ -268,15 +268,9 @@ def draw_concurrent(layout, props, engine):
 
 
 def draw_proxy(layout, props):
-    container = layout.box() if props.use_proxy else layout
-    split = container.split(factor=0.7)
-    _setting_label(split, "use_proxy")
-    split.prop(props, "use_proxy")
-    if not props.use_proxy:
-        return
-    row = container.row()
-    row.label(text="Faces", icon="MESH_DATA")
-    row.prop(props, "proxy_faces")
+    row = layout.row()
+    _setting_label(row, "proxy_mode")
+    row.prop(props, "proxy_mode", expand=True)
 
 
 def draw_timeout(layout, props):
@@ -301,11 +295,7 @@ class UVGAMI_PT_speed(EnginePanel, bpy.types.Panel):
         engine = active_engine(props.engine)
         draw_concurrent(box, props, engine)
 
-        if engine.supports_proxy:
-            draw_proxy(box, props)
-
         split = box.split(factor=0.7)
-        split.active = not engine.uses_proxy(props)
         _setting_label(split, "stack_similar")
         split.prop(props, "stack_similar")
 
@@ -414,6 +404,9 @@ class UVGAMI_PT_advanced(EnginePanel, bpy.types.Panel):
         props = context.scene.uvgami
         engine = active_engine(props.engine)
         box = self.layout.box()
+
+        if engine.supports_proxy:
+            draw_proxy(box, props)
 
         if engine.supports_import_uvs:
             split = box.split(factor=0.7)

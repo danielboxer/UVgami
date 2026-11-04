@@ -16,13 +16,23 @@ from ..no_bpy import (
     islands_from_uvs,
 )
 from ..no_bpy.mesh import moved_island_uvs, next_corners_in_face
-from ..no_bpy.worker import WorkerError
+from ..no_bpy.preseed import classify_job
+from ..no_bpy.worker import WorkerError, WorkerProcess
 from ..part_overrides import (
     piece_keeps_uvs,
     # piece_priority_override,
     read_overrides,
+    surface_modes,
 )
-from ..proxy import ProxyCopyUVs, ProxyUVs, make_proxy, mirror_proxy
+from ..proxy import (
+    ProxyCopyUVs,
+    ProxyUVs,
+    make_proxy,
+    make_proxy_with_modes,
+    mirror_proxy,
+    parts_for_auto_proxy,
+    proxy_trigger_faces,
+)
 from ..similar import find_twins, write_twin_output
 from ..symmetry import (
     MirrorUVs,
@@ -48,7 +58,8 @@ from ..utils.mesh import (
     triangulate,
     world_positions,
 )
-from ..utils.paths import unused_input_path
+from ..utils.paths import get_extension_dir_path, unused_input_path
+from ..utils.uvgami_tools import tools_command
 from .handler import handle_start_error
 from .job import (
     HideInput,
@@ -471,7 +482,20 @@ class SessionBuilder:
     def _start_segmenting_or_preseed(self, obj, symmetry):
         props = manager.props
         if not self.engine.splits_regions(props):
-            return self._start_preseed(obj, symmetry)
+            if self.inputs[obj].proxy_parts is None or props.proxy_mode != "AUTO":
+                return self._start_preseed(obj, symmetry)
+            worker = WorkerProcess(
+                classify_job,
+                tools_command(),
+                get_extension_dir_path() / "segment",
+                *mesh_arrays(obj.data),
+                surface_modes(obj.data, self.engine.unset_surface_mode(props)),
+            )
+            return self._wait(
+                worker,
+                obj,
+                functools.partial(self._finish_classifying, obj=obj, symmetry=symmetry),
+            )
         from ..segmentation import segment_work
 
         worker = segment_work(
@@ -485,6 +509,14 @@ class SessionBuilder:
             obj,
             functools.partial(self._finish_segmenting, obj=obj, symmetry=symmetry),
         )
+
+    def _finish_classifying(self, task, *, obj, symmetry):
+        try:
+            modes = task.result()
+        except (EngineError, WorkerError) as error:
+            logger.add_error(f"{self.inputs[obj].name}: classifying failed, {error}")
+            return self._start_preseed(obj, symmetry)
+        return self._start_preseed(obj, symmetry, surface_modes=modes)
 
     def _finish_segmenting(self, task, *, obj, symmetry):
         try:
@@ -561,13 +593,14 @@ class SessionBuilder:
     def _make_proxy(self, obj, props, parts, surface_modes, symmetry):
         # Decimate modifiers only evaluate on objects in the scene
         bpy.context.scene.collection.objects.link(obj)
+        trigger_faces = proxy_trigger_faces(props)
         if surface_modes is None:
-            make_proxy(obj, props.proxy_faces, parts)
+            make_proxy(obj, trigger_faces, parts)
         else:
-            from ..segmentation import make_segmented_proxy
-
-            surface_modes = make_segmented_proxy(
-                obj, props.proxy_faces, parts, surface_modes
+            if props.proxy_mode == "AUTO":
+                parts = parts_for_auto_proxy(parts, obj.data, surface_modes)
+            surface_modes = make_proxy_with_modes(
+                obj, trigger_faces, parts, surface_modes
             )
         bpy.context.scene.collection.objects.unlink(obj)
         if symmetry is None:
@@ -649,10 +682,20 @@ class SessionBuilder:
                 manager.moved_to_invalid = True
 
         entry = self.inputs[obj]
+        mirror = None
+        if entry.proxy_parts is not None and symmetrize_job is not None:
+            mirror = symmetrize_job.transfer_mirror(entry.original.data)
         if entry.proxy_parts is not None and props.transfer_uvs:
-            transfer_uvs_job = ProxyUVs(entry.original, border_edges=border_edges)
+            transfer_uvs_job = ProxyUVs(
+                entry.original, border_edges=border_edges, mirror=mirror
+            )
         elif entry.proxy_parts is not None:
-            transfer_uvs_job = ProxyCopyUVs(entry.original, border_edges=border_edges)
+            transfer_uvs_job = ProxyCopyUVs(
+                entry.original,
+                border_edges=border_edges,
+                mirror=mirror,
+                keep_quads=props.keep_quads and self.engine.supports_keep_quads,
+            )
         elif props.transfer_uvs:
             transfer_uvs_job = TransferUVs(entry.original)
         else:

@@ -2,7 +2,7 @@ import bpy
 import mathutils
 import pytest
 from blender_fixtures import (
-    PROXY_FACES_MINIMUM,
+    SMALL_PROXY_FACES,
     face_uvs,
     island_count,
     manager,
@@ -95,13 +95,13 @@ OPERATORS = ["unwrap_island", "relax_island", "unwrap_area", "relax_area"]
 @pytest.mark.parametrize("operator", OPERATORS)
 @pytest.mark.parametrize("proxy", [False, True], ids=["direct", "proxy"])
 def test_operator_moves_the_distorted_vertex_and_restores_edit_mode(
-    session, operator, proxy
+    session, proxy_target, operator, proxy
 ):
     grid = add_grid_mesh()
     props = bpy.context.scene.uvgami
-    props.use_proxy = proxy
+    props.proxy_mode = "ON" if proxy else "OFF"
     # under the grid's 512 triangles
-    props.proxy_faces = PROXY_FACES_MINIMUM
+    proxy_target(SMALL_PROXY_FACES)
     center = center_vertex(grid)
     distort(grid, center)
     select_faces(grid, faces_around(grid, center))

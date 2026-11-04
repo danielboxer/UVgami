@@ -1,3 +1,5 @@
+from collections import namedtuple
+
 import numpy
 
 from .engine_run import (
@@ -38,7 +40,10 @@ def dense_subset(dense, faces):
     return subset, used
 
 
-def start_proxy_transfer(command, workdir, dense, proxy, *, border_edges):
+TransferMirror = namedtuple("TransferMirror", "partners dropped")
+
+
+def start_proxy_transfer(command, workdir, dense, proxy, *, border_edges, mirror):
     positions, normals = dense_in_proxy_space(dense, proxy)
     corners = numpy.asarray(dense["corners"], dtype=INTEGER)
     proxy_positions = numpy.asarray(proxy["positions"], dtype=FLOAT).reshape(-1, 3)
@@ -66,6 +71,14 @@ def start_proxy_transfer(command, workdir, dense, proxy, *, border_edges):
         numpy.array([len(border_edges)], dtype=INTEGER),
         border_edges,
     ]
+    if mirror is None:
+        arrays.append(numpy.array([0], dtype=INTEGER))
+    else:
+        arrays += [
+            numpy.array([len(positions)], dtype=INTEGER),
+            numpy.asarray(mirror.partners, dtype=INTEGER),
+            numpy.asarray(mirror.dropped, dtype=INTEGER),
+        ]
 
     def read(data):
         take = packed_reader(data)

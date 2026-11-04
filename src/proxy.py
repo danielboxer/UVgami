@@ -7,7 +7,7 @@ from mathutils import Matrix, Vector
 
 # from mathutils.kdtree import KDTree
 from .hard_surface import apply_seams
-from .no_bpy import fit_uvs_keeping_area
+from .no_bpy import SURFACE_MODE_CODES, fit_uvs_keeping_area
 from .no_bpy.mesh import face_starts, lowest_index_part_labels
 from .no_bpy.proxy import dense_subset, start_proxy_transfer
 from .symmetry import cut_on_axis
@@ -47,21 +47,43 @@ def part_triangles(data):
     return PartTriangles(labels, part_labels, counts)
 
 
-def needs_proxy(obj, target_faces, parts=None):
-    if triangle_count(obj) <= target_faces:
+PROXY_TARGET_FACES = 5000
+PROXY_AUTO_TRIGGER_FACES = 20000
+# hard surface parts of 68k and 111k triangles miss 15 minutes at full resolution, 42k takes 207s
+PROXY_AUTO_HARD_SURFACE_FACES = 50000
+
+
+def proxy_trigger_faces(props):
+    if props.proxy_mode == "AUTO":
+        return PROXY_AUTO_TRIGGER_FACES
+    return PROXY_TARGET_FACES
+
+
+def parts_for_auto_proxy(parts, mesh, surface_modes):
+    corners, totals = loop_vertices_and_face_sizes(mesh)
+    face_labels = parts.vertex_labels[corners[face_starts(totals)]]
+    hard_labels = face_labels[surface_modes == SURFACE_MODE_CODES["HARD"]]
+    counts = parts.triangle_counts.copy()
+    is_hard = numpy.isin(parts.part_labels, hard_labels)
+    counts[is_hard & (counts <= PROXY_AUTO_HARD_SURFACE_FACES)] = 0
+    return parts._replace(triangle_counts=counts)
+
+
+def needs_proxy(obj, trigger_faces, parts=None):
+    if triangle_count(obj) <= trigger_faces:
         return False
     if parts is None:
         parts = part_triangles(obj.data)
-    return int(parts.triangle_counts.max()) > target_faces
+    return int(parts.triangle_counts.max()) > trigger_faces
 
 
-def make_proxy(obj, target_faces, parts=None):
+def make_proxy(obj, trigger_faces, parts=None):
     if parts is None:
         parts = part_triangles(obj.data)
-    if not needs_proxy(obj, target_faces, parts):
+    if not needs_proxy(obj, trigger_faces, parts):
         return False
     labels, part_labels, counts = parts
-    over = numpy.flatnonzero(counts > target_faces).tolist()
+    over = numpy.flatnonzero(counts > trigger_faces).tolist()
     triangles = triangle_count(obj)
 
     modifiers = []
@@ -69,7 +91,7 @@ def make_proxy(obj, target_faces, parts=None):
     # each decimate ratio is a fraction of the previous modifier's output
     remaining = triangles
     for part in over:
-        target = remaining - (int(counts[part]) - target_faces)
+        target = remaining - (int(counts[part]) - PROXY_TARGET_FACES)
         modifier = obj.modifiers.new("UVgami Proxy", "DECIMATE")
         modifier.ratio = target / remaining
         remaining = target
@@ -111,6 +133,18 @@ def values_carried_through(obj, attribute_name, values, operation):
     attribute.data.foreach_get("value", carried)
     obj.data.attributes.remove(attribute)
     return carried
+
+
+RESOLVED_MODE_ATTRIBUTE = "uvgami_resolved_surface_mode"
+
+
+def make_proxy_with_modes(obj, trigger_faces, parts, surface_modes):
+    return values_carried_through(
+        obj,
+        RESOLVED_MODE_ATTRIBUTE,
+        surface_modes,
+        lambda: make_proxy(obj, trigger_faces, parts),
+    )
 
 
 SOURCE_FACE_ATTRIBUTE = "uvgami_proxy_source_face"
@@ -305,9 +339,10 @@ def transfer_inputs(input_mesh, output):
 class ProxyUVs(Transfer):
     allows_missing_pieces = False
 
-    def __init__(self, input_mesh, *, border_edges=()):
+    def __init__(self, input_mesh, *, border_edges=(), mirror=None):
         super().__init__(input_mesh)
         self.border_edges = border_edges
+        self.mirror = mirror
 
     def _extract(self, target, output):
         return transfer_inputs(target, output)
@@ -318,6 +353,7 @@ class ProxyUVs(Transfer):
             get_extension_dir_path() / "proxy",
             *inputs,
             border_edges=self.border_edges,
+            mirror=self.mirror,
         )
 
     def _apply(self, target, result):
@@ -333,10 +369,15 @@ class ProxyUVs(Transfer):
 class ProxyCopyUVs(ProxyUVs):
     repack_input = False
 
+    def __init__(self, input_mesh, *, border_edges, mirror, keep_quads):
+        super().__init__(input_mesh, border_edges=border_edges, mirror=mirror)
+        self.keep_quads = keep_quads
+
     def _target(self, input_mesh):
         target = input_mesh.copy()
         target.data = input_mesh.data.copy()
-        triangulate_mesh(target.data)
+        if not self.keep_quads:
+            triangulate_mesh(target.data)
         return target
 
     def _show(self):

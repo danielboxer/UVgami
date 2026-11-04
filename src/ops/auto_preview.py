@@ -12,7 +12,12 @@ from ..no_bpy.mesh import face_starts
 from ..no_bpy.preseed import SegmentRegions, classify_job
 from ..no_bpy.worker import WorkerError, WorkerProcess
 from ..part_overrides import KEEP_ATTRIBUTE, face_values, surface_modes
-from ..proxy import part_triangles
+from ..proxy import (
+    PROXY_TARGET_FACES,
+    part_triangles,
+    parts_for_auto_proxy,
+    proxy_trigger_faces,
+)
 from ..symmetry import mirror_segmentation, paints_seams
 from ..unwrap.job import start_unwrap_symmetry
 from ..unwrap.manager import SettingsCopy, manager
@@ -180,7 +185,12 @@ def build_preview(name, mesh, engine, props, symmetry, plane, segments):
     part_counts = part_triangles(mesh)
     decimated = 0
     if engine.uses_proxy(props):
-        decimated = int((part_counts.triangle_counts > props.proxy_faces).sum())
+        candidates = part_counts
+        if props.proxy_mode == "AUTO":
+            candidates = parts_for_auto_proxy(
+                part_counts, mesh, segments.surface_modes
+            )
+        decimated = int((candidates.triangle_counts > proxy_trigger_faces(props)).sum())
     kept = face_values(mesh, KEEP_ATTRIBUTE) != 0
     part_count = len(part_counts.part_labels)
     parts = count_label(part_count, "part")
@@ -223,7 +233,7 @@ def build_preview(name, mesh, engine, props, symmetry, plane, segments):
         lines.append("Not symmetrical")
 
     if decimated:
-        lines.append(f"{decimated} parts decimated to {props.proxy_faces} triangles")
+        lines.append(f"{decimated} parts decimated to {PROXY_TARGET_FACES} triangles")
 
     return Preview(shapes, lines)
 

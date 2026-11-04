@@ -8,7 +8,7 @@ from .no_bpy.segmentation import segment_job
 # from .no_bpy.segmentation import split_loop_job, split_region_job
 from .no_bpy.worker import WorkerProcess
 from .part_overrides import KEEP_ATTRIBUTE, face_values, surface_modes
-from .proxy import make_proxy, part_triangles, values_carried_through
+from .proxy import part_triangles
 from .utils.mesh import (
     loop_vertices_and_face_sizes,
     new_bmesh,
@@ -101,18 +101,6 @@ def split_on_borders(obj, border_edges):
     vertex_labels[: len(labels)] = labels
     vertex_labels[loop_vertices_and_face_sizes(mesh)[0]] = corner_parts
     return border_positions, parts._replace(vertex_labels=vertex_labels)
-
-
-RESOLVED_MODE_ATTRIBUTE = "uvgami_resolved_surface_mode"
-
-
-def make_segmented_proxy(obj, target_faces, parts, surface_modes):
-    return values_carried_through(
-        obj,
-        RESOLVED_MODE_ATTRIBUTE,
-        surface_modes,
-        lambda: make_proxy(obj, target_faces, parts),
-    )
 
 
 WELD_TOLERANCE = 1e-5

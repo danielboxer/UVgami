@@ -359,7 +359,9 @@ def test_organic_mirrors_the_half_run_cuts_on_a_whole_mesh(load_obj, unwrap, out
 
 
 @needs_engine
-def test_a_proxied_mesh_mirrors_the_half_run_cuts(load_obj, unwrap, outputs):
+def test_a_proxied_mesh_mirrors_the_half_run_cuts(
+    load_obj, unwrap, outputs, proxy_target
+):
     (cylinder,) = load_obj("cylinder")
     bpy.context.view_layer.objects.active = cylinder
     bpy.ops.object.mode_set(mode="EDIT")
@@ -371,8 +373,8 @@ def test_a_proxied_mesh_mirrors_the_half_run_cuts(load_obj, unwrap, outputs):
     cylinder.data.vertices[0].co += mathutils.Vector((1, 1, 1)) * 0.001 * diagonal
     props = bpy.context.scene.uvgami
     props.optcuts.mode = "ORGANIC"
-    props.use_proxy = True
-    props.proxy_faces = 1000
+    props.proxy_mode = "ON"
+    proxy_target(1000)
     unwrap()
 
     results = [result for _, result in manager.results]

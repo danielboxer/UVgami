@@ -4,7 +4,7 @@ import bpy
 
 from ..engines import ENGINES, active_engine
 from ..no_bpy import EngineError
-from ..proxy import needs_proxy, part_triangles, triangle_count
+from ..proxy import needs_proxy, part_triangles, proxy_trigger_faces, triangle_count
 from ..ui.props import describe_settings, unwrap_settings
 from ..unwrap.handler import handle_start_error
 from ..unwrap.logger import logger
@@ -150,7 +150,7 @@ def prepare_meshes(context, engine):
         input_sizes.append((obj.name, triangles))
         parts = part_triangles(copy_object.data) if engine.uses_proxy(props) else None
         proxied = parts is not None and needs_proxy(
-            copy_object, props.proxy_faces, parts
+            copy_object, proxy_trigger_faces(props), parts
         )
         if proxied or props.transfer_uvs:
             copy_object.modifiers.clear()

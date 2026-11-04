@@ -63,7 +63,7 @@ class Engine:
         )
 
     def uses_proxy(self, props):
-        return props.use_proxy and self.supports_proxy
+        return props.proxy_mode != "OFF" and self.supports_proxy
 
     def splits_regions(self, props):
         return (

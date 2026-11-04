@@ -7,7 +7,7 @@ import pytest
 from uvgami_cli._pytest_plugin import corners_and_totals, grid_uvs, quad_grid
 
 from no_bpy.engine_run import POLL_INTERVAL
-from no_bpy.proxy import dense_subset, start_proxy_transfer
+from no_bpy.proxy import TransferMirror, dense_subset, start_proxy_transfer
 
 IDENTITY = numpy.eye(4)
 GRID = 6
@@ -56,11 +56,11 @@ def uncut_proxy():
     return proxy_arrays(verts, faces, grid_uvs(verts, faces))
 
 
-def split_proxy():
+def split_proxy(cut_x=CUT_X):
     verts = [
         (0.0, 0.0, 0.0),
-        (CUT_X, 0.0, 0.0),
-        (CUT_X, GRID, 0.0),
+        (cut_x, 0.0, 0.0),
+        (cut_x, GRID, 0.0),
         (0.0, GRID, 0.0),
         (GRID, 0.0, 0.0),
         (GRID, GRID, 0.0),
@@ -90,9 +90,9 @@ def loose_halves_proxy():
 
 @pytest.fixture
 def start_transfer(tools, tmp_path):
-    def start(dense, proxy, border_edges=()):
+    def start(dense, proxy, border_edges=(), mirror=None):
         return start_proxy_transfer(
-            tools, tmp_path, dense, proxy, border_edges=border_edges
+            tools, tmp_path, dense, proxy, border_edges=border_edges, mirror=mirror
         )
 
     return start
@@ -106,8 +106,8 @@ def finished(run):
 
 @pytest.fixture
 def transfer(start_transfer):
-    def run(dense, proxy, border_edges=()):
-        return finished(start_transfer(dense, proxy, border_edges)).result()
+    def run(dense, proxy, border_edges=(), mirror=None):
+        return finished(start_transfer(dense, proxy, border_edges, mirror)).result()
 
     return run
 
@@ -312,6 +312,64 @@ def test_transfer_runs_the_seam_along_the_proxy_cut(transfer):
     ]
     assert uv_pieces(uvs, faces) == 2
     assert_no_flips_or_crossings(uvs, faces)
+
+
+def column_seams(column):
+    return {(y * SIDE + column, (y + 1) * SIDE + column) for y in range(GRID)}
+
+
+def mirror_across_the_middle_column(verts, *, dropped_when):
+    partners = [
+        index - int(x) + (GRID - int(x)) for index, (x, _, _) in enumerate(verts)
+    ]
+    dropped = [dropped_when(x - GRID / 2) for x, _, _ in verts]
+    return TransferMirror(partners, dropped)
+
+
+def test_transfer_mirror_replaces_the_dropped_side_cuts(transfer):
+    verts, faces = quad_grid(GRID)
+    mirror = mirror_across_the_middle_column(
+        verts, dropped_when=lambda offset: offset < 0
+    )
+
+    seams, uvs = transfer(dense_arrays(verts, faces), split_proxy(1.5), mirror=mirror)
+
+    assert seams == set()
+    assert uv_pieces(uvs, faces) == 1
+
+
+def test_transfer_mirror_copies_the_kept_side_cut_and_uvs(transfer):
+    verts, faces = quad_grid(GRID)
+    mirror = mirror_across_the_middle_column(
+        verts, dropped_when=lambda offset: offset > 0
+    )
+
+    seams, uvs = transfer(dense_arrays(verts, faces), split_proxy(1.5), mirror=mirror)
+
+    assert seams in [
+        column_seams(column) | column_seams(GRID - column) for column in (1, 2)
+    ]
+    assert uv_pieces(uvs, faces) == 3
+    corner_of = {}
+    corner = 0
+    for face in faces:
+        for vertex in face:
+            corner_of[(tuple(sorted(face)), vertex)] = corner
+            corner += 1
+    sums, differences = [], []
+    # columns past GRID - 1 lie in the outer chart for either traced column
+    for face in faces:
+        if any(verts[vertex][0] < GRID - 1 for vertex in face):
+            continue
+        image = tuple(sorted(mirror.partners[vertex] for vertex in face))
+        for vertex in face:
+            dropped_uv = uvs[corner_of[(tuple(sorted(face)), vertex)]]
+            kept_uv = uvs[corner_of[(image, mirror.partners[vertex])]]
+            sums.append(dropped_uv[0] + kept_uv[0])
+            differences.append(dropped_uv[1] - kept_uv[1])
+    assert sums
+    assert numpy.ptp(sums) < 1e-9
+    assert numpy.ptp(differences) < 1e-9
 
 
 def test_transfer_seams_every_region_border_it_is_given(transfer):

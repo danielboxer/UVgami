@@ -81,7 +81,7 @@ def test_the_split_keeps_face_order_and_the_weld_closes_it(load_obj):
     assert len(mesh.vertices) == vertex_count
 
 
-def test_the_proxy_keeps_each_segment_mode(load_obj):
+def test_the_proxy_keeps_each_segment_mode(load_obj, proxy_target):
     (dumbbell,) = load_obj("dumbbell")
     mesh = dumbbell.data
     ring_x, ring = neck_ring(mesh)
@@ -92,7 +92,8 @@ def test_the_proxy_keeps_each_segment_mode(load_obj):
     ).astype(numpy.int32)
     face_count = len(mesh.polygons)
 
-    decimated = segmentation.make_segmented_proxy(dumbbell, 100, parts, modes)
+    proxy_target(100)
+    decimated = addon.src.proxy.make_proxy_with_modes(dumbbell, 100, parts, modes)
 
     mesh = dumbbell.data
     assert len(mesh.polygons) < face_count

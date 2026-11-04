@@ -7,6 +7,7 @@ import numpy
 
 from .guides import painted_weight_by_vertex
 from .no_bpy.mesh import bounding_box_diagonal, transform_positions
+from .no_bpy.proxy import TransferMirror
 from .no_bpy.symmetry import (
     FaceSpansCharts,
     faces_mirror,
@@ -188,6 +189,14 @@ class Symmetrise:
     def cut(self, obj):
         cut_on_axis(obj, self.center, self.axis, self.tolerance, self.kept_side)
 
+    def transfer_mirror(self, mesh):
+        index = "XYZ".index(self.axis)
+        found = mesh_mirror_partners(mesh, self.center, self.axis)
+        partners = numpy.full(len(mesh.vertices), -1, dtype=numpy.int64)
+        partners[list(found)] = list(found.values())
+        offsets = vertex_position_array(mesh)[:, index] - self.center[index]
+        return TransferMirror(partners, offsets * self.kept_side < -self.tolerance)
+
     def with_mirrored(self, positions):
         index = "XYZ".index(self.axis)
         flipped = positions.copy()
@@ -253,6 +262,9 @@ class MirrorUVs:
 
     def cut(self, obj):
         pass
+
+    def transfer_mirror(self, mesh):
+        return None
 
     def with_mirrored(self, positions):
         return positions

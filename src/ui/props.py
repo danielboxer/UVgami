@@ -4,6 +4,7 @@ from collections import namedtuple
 import bpy
 
 from ..engines import ENGINES, active_engine, installed_engines
+from ..engines.optcuts.install import PROXY_MODE_DEFAULT
 from ..utils.paths import get_addon_id
 from ..utils.ui import is_non_default, only_active
 
@@ -33,7 +34,7 @@ SETTING_ICONS_AND_LABELS = {
     "split_regions": IconAndLabel("MOD_EXPLODE", "Segmentation"),
     "import_uvs": IconAndLabel("IMPORT", "Import UVs"),
     "use_weights": IconAndLabel("MOD_VERTEX_WEIGHT", "Weights"),
-    "use_proxy": IconAndLabel("MOD_DECIM", "Proxy"),
+    "proxy_mode": IconAndLabel("MOD_DECIM", "Proxy"),
     "stack_similar": IconAndLabel("LINKED", "Stack Similar"),
     "symmetry": IconAndLabel("MOD_MIRROR", "Symmetry"),
     "unwrap_timeout": IconAndLabel("TIME", "Timeout"),
@@ -67,7 +68,7 @@ def unwrap_settings(props):
             _setting_entry(props, "split_regions", supported=engine.supports_regions),
             _setting_entry(props, "import_uvs", supported=import_uvs_shown),
             _setting_entry(props, "use_weights", supported=engine.supports_guided),
-            _setting_entry(props, "use_proxy", supported=engine.supports_proxy),
+            _setting_entry(props, "proxy_mode", supported=engine.supports_proxy),
             _setting_entry(props, "stack_similar", supported=True),
             _setting_entry(props, "symmetry", supported=True),
             _setting_entry(props, "unwrap_timeout", supported=True),
@@ -79,7 +80,7 @@ def unwrap_settings(props):
 
 SETTING_VALUES = {
     "unwrap_timeout": lambda props: f"{props.unwrap_timeout} min",
-    "use_proxy": lambda props: f"{props.proxy_faces} tris",
+    "proxy_mode": lambda props: props.proxy_mode.capitalize(),
 }
 
 
@@ -95,7 +96,7 @@ def fix_settings(props):
     return only_active(
         (
             _priority_entry(props),
-            _setting_entry(props, "use_proxy", supported=True),
+            _setting_entry(props, "proxy_mode", supported=True),
             _setting_entry(props, "unwrap_timeout", supported=True),
         )
     )
@@ -185,20 +186,22 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         name="",
         description="Stack repeated mesh pieces by only unwrapping one and copying it",
     )
-    use_proxy: bpy.props.BoolProperty(
-        name="",
+    proxy_mode: bpy.props.EnumProperty(
+        name="Proxy",
         description=(
-            "Unwrap a low poly copy of each part over the face count,"
-            " then transfer the seams to the original."
+            "Unwrap a low poly copy, then transfer the seams to the original."
             " Much faster for high poly meshes"
         ),
-    )
-    proxy_faces: bpy.props.IntProperty(
-        name="",
-        description="Triangle count of the decimated copy",
-        min=100,
-        max=100000,
-        default=5000,
+        items=(
+            (
+                "AUTO",
+                "Auto",
+                "Use a low poly copy for large organic parts and very large hard surface parts",
+            ),
+            ("ON", "On", "Use a low poly copy for every part over 5000 triangles"),
+            ("OFF", "Off", "Unwrap every part at full resolution"),
+        ),
+        default=PROXY_MODE_DEFAULT,
     )
     use_weights: bpy.props.BoolProperty(
         name="", description="Use the painted weights to change the unwrap"

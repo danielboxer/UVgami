@@ -48,9 +48,7 @@ needs_partuv = pytest.mark.skipif(
 )
 
 
-PROXY_FACES_MINIMUM = addon.src.ui.props.UVGAMI_PG_properties.bl_rna.properties[
-    "proxy_faces"
-].hard_min
+SMALL_PROXY_FACES = 100
 # (islands, seams) on the balanced unwrap, recorded 2026-08-22 at optcuts 1.20,
 # the hard surface rows 2026-10-24 on the placed seams route
 EXPECTED = {
@@ -155,6 +153,14 @@ def side_uvs(obj, second):
 @pytest.fixture(autouse=True)
 def empty_scene():
     bpy.ops.wm.read_homefile(use_empty=True)
+
+
+@pytest.fixture
+def proxy_target(monkeypatch):
+    def set_target(faces):
+        monkeypatch.setattr(addon.src.proxy, "PROXY_TARGET_FACES", faces)
+
+    return set_target
 
 
 @pytest.fixture

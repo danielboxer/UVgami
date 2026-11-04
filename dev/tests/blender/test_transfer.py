@@ -1,7 +1,7 @@
 import bpy
 import pytest
 from blender_fixtures import (
-    PROXY_FACES_MINIMUM,
+    SMALL_PROXY_FACES,
     add_cube,
     add_primitive,
     add_sphere,
@@ -74,11 +74,11 @@ def test_import_uvs_runs_with_and_without_a_map(unwrap, outputs, with_map):
     assert has_uvs(outputs()["cube_unwrapped"])
 
 
-def test_proxy_with_transfer_lands_on_the_input(unwrap, outputs):
+def test_proxy_with_transfer_lands_on_the_input(unwrap, outputs, proxy_target):
     sphere = add_sphere("sphere")
     props = bpy.context.scene.uvgami
-    props.use_proxy = True
-    props.proxy_faces = PROXY_FACES_MINIMUM
+    props.proxy_mode = "ON"
+    proxy_target(SMALL_PROXY_FACES)
     props.transfer_uvs = True
 
     unwrap()
@@ -91,13 +91,13 @@ def test_proxy_with_transfer_lands_on_the_input(unwrap, outputs):
 
 
 def test_proxy_on_a_multi_part_mesh_decimates_only_the_part_over_the_budget(
-    unwrap, outputs
+    unwrap, outputs, proxy_target
 ):
     sphere = add_sphere("sphere")
     joined = join([sphere, add_cube("cube", location=(5, 0, 0))])
     props = bpy.context.scene.uvgami
-    props.use_proxy = True
-    props.proxy_faces = PROXY_FACES_MINIMUM
+    props.proxy_mode = "ON"
+    proxy_target(SMALL_PROXY_FACES)
     props.transfer_uvs = True
 
     unwrap()
@@ -116,11 +116,13 @@ def test_proxy_on_a_multi_part_mesh_decimates_only_the_part_over_the_budget(
         assert has_uvs(joined, [face])
 
 
-def test_proxy_without_transfer_replaces_the_output_with_a_full_copy(unwrap, outputs):
+def test_proxy_without_transfer_replaces_the_output_with_a_full_copy(
+    unwrap, outputs, proxy_target
+):
     sphere = add_sphere("sphere")
     props = bpy.context.scene.uvgami
-    props.use_proxy = True
-    props.proxy_faces = PROXY_FACES_MINIMUM
+    props.proxy_mode = "ON"
+    proxy_target(SMALL_PROXY_FACES)
     props.transfer_uvs = False
 
     unwrap()
@@ -132,4 +134,4 @@ def test_proxy_without_transfer_replaces_the_output_with_a_full_copy(unwrap, out
     assert sphere.hide_get()
     assert has_uvs(output)
     # the copy is the original triangulated, not the decimated proxy
-    assert len(output.data.polygons) > PROXY_FACES_MINIMUM
+    assert len(output.data.polygons) > SMALL_PROXY_FACES
