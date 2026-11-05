@@ -133,6 +133,10 @@ class FaceSpansCharts(EngineError):
     pass
 
 
+class FaceHasNoMirror(EngineError):
+    pass
+
+
 def mirrored_uvs(
     command, workdir, positions, corners, totals, uvs, center, axis, tolerance
 ):
@@ -141,6 +145,8 @@ def mirrored_uvs(
             raise FaceSpansCharts(
                 "a face's mirror image has its corners in two uv islands"
             )
+        if done_text(folder) == "no-mirror":
+            raise FaceHasNoMirror("a face on the negative side has no mirror face")
         values = numpy.loadtxt(folder / OUTPUT_NAME, dtype=numpy.float64, ndmin=2)
         if values.shape != uvs.shape:
             raise EngineError(

@@ -9,6 +9,7 @@ from .guides import painted_weight_by_vertex
 from .no_bpy.mesh import bounding_box_diagonal, transform_positions
 from .no_bpy.proxy import TransferMirror
 from .no_bpy.symmetry import (
+    FaceHasNoMirror,
     FaceSpansCharts,
     faces_mirror,
     mirrored_uvs,
@@ -289,7 +290,7 @@ class MirrorUVs:
                 self.axis,
                 self.tolerance,
             )
-        except FaceSpansCharts:
+        except (FaceSpansCharts, FaceHasNoMirror):
             logger.add_error(
                 f"{output.name}: symmetry skipped, its faces don't mirror across"
                 f" the {self.axis} axis"

@@ -4,6 +4,7 @@ from uvgami_cli._pytest_plugin import corners_and_totals
 
 from no_bpy import EngineError
 from no_bpy.symmetry import (
+    FaceHasNoMirror,
     FaceSpansCharts,
     faces_mirror,
     mirrored_uvs,
@@ -278,6 +279,26 @@ def test_mirrored_uvs_raise_when_no_chart_holds_a_face_s_mirror(tools, tmp_path)
             corners,
             totals,
             uvs,
+            numpy.zeros(3),
+            "X",
+            TOLERANCE,
+        )
+
+
+def test_mirrored_uvs_raise_when_a_face_is_missing_on_one_side(tools, tmp_path):
+    # a strip from x -2 to 2 without its quad from x 0 to 1
+    coords = [(x, y, 0) for y in (0, 1) for x in (-2, -1, 0, 1, 2)]
+    positions, corners, totals = mesh_arrays(
+        coords, [(0, 1, 6, 5), (1, 2, 7, 6), (3, 4, 9, 8)]
+    )
+    with pytest.raises(FaceHasNoMirror):
+        mirrored_uvs(
+            tools,
+            tmp_path,
+            positions,
+            corners,
+            totals,
+            positions[corners, :2],
             numpy.zeros(3),
             "X",
             TOLERANCE,
