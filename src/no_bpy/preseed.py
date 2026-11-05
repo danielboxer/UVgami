@@ -37,7 +37,8 @@ ENGINE_INPUT_STEM = "mesh"
 SURFACE_MODE_CODES = {"ORGANIC": 1, "HARD": 2, "AUTO": 3}
 
 SegmentRegions = collections.namedtuple(
-    "SegmentRegions", "surface_modes border_edges region_count labels"
+    "SegmentRegions",
+    "surface_modes border_edges region_count labels fine_labels hand_edited",
 )
 
 # exposure only breaks ties

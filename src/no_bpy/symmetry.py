@@ -75,6 +75,34 @@ def partner_map(partner):
     return {v: int(m) for v, m in enumerate(partner.tolist()) if m >= 0}
 
 
+def face_partners(corners, totals, vertex_partners):
+    starts = face_starts(totals)
+    partners = numpy.full(len(totals), -1, dtype=numpy.int64)
+    for size in numpy.unique(totals).tolist():
+        faces = numpy.flatnonzero(totals == size)
+        rows = corners[starts[faces][:, None] + numpy.arange(size)]
+        face_of_vertices = {
+            tuple(row): face
+            for row, face in zip(numpy.sort(rows, axis=1).tolist(), faces.tolist())
+        }
+        mirrored = vertex_partners[rows]
+        complete = (mirrored >= 0).all(axis=1)
+        mirrored_rows = numpy.sort(mirrored[complete], axis=1).tolist()
+        for face, row in zip(faces[complete].tolist(), mirrored_rows):
+            partners[face] = face_of_vertices.get(tuple(row), -1)
+    return partners
+
+
+def region_partners(labels, face_partners):
+    mirrored = face_partners >= 0
+    pairs = numpy.stack([labels[mirrored], labels[face_partners[mirrored]]], axis=1)
+    pairs, counts = numpy.unique(
+        pairs[(pairs > 0).all(axis=1)], axis=0, return_counts=True
+    )
+    # dict keeps the last value per key
+    return dict(pairs[numpy.argsort(counts, kind="stable")].tolist())
+
+
 def start_symmetric_axis(
     command, workdir, positions, corners, totals, center, tolerance
 ):

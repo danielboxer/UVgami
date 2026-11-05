@@ -1,5 +1,6 @@
 import importlib
 import sys
+import time
 
 import bmesh
 import bpy
@@ -19,10 +20,16 @@ from blender_fixtures import (
 )
 
 segmentation = importlib.import_module(addon.src.__name__ + ".segmentation")
-# segment_edit = addon.src.ops.segmentation
-# auto_preview = addon.src.ops.auto_preview
-# merge_region = addon.src.no_bpy.segmentation.merge_region
+symmetry = importlib.import_module(addon.src.__name__ + ".symmetry")
+segment_edit = addon.src.ops.segmentation
+SegmentationRun = addon.src.ops.auto_preview.SegmentationRun
+SettingsCopy = addon.src.unwrap.manager.SettingsCopy
+ToolsCommand = addon.src.no_bpy.engine_run.ToolsCommand
+active_engine = addon.src.engines.active_engine
+applied_matrix = addon.src.utils.mesh.applied_matrix
 SURFACE_MODE_CODES = addon.src.no_bpy.SURFACE_MODE_CODES
+edge_face_pairs = addon.src.no_bpy.segmentation.edge_face_pairs
+pair_borders = addon.src.no_bpy.segmentation.pair_borders
 
 # the dumbbell fixture's bulbs meet a straight neck of this radius around the x axis
 NECK_RADIUS = 0.3
@@ -219,49 +226,153 @@ def test_a_missing_segment_binary_stops_the_unwrap(
     assert manager.results == []
 
 
-# def test_stored_labels_drive_the_segment_work_without_the_engine(load_obj):
-#     (dumbbell,) = load_obj("dumbbell")
-#     mesh = dumbbell.data
-#     centers = numpy.array([polygon.center.x for polygon in mesh.polygons])
-#     labels = numpy.where(centers < 0, 1, 2).astype(numpy.int64)
-#     segmentation.write_region_labels(mesh, labels)
+def test_stored_borders_drive_the_segment_work_without_the_engine(load_obj):
+    (dumbbell,) = load_obj("dumbbell")
+    mesh = dumbbell.data
+    centers = numpy.array([polygon.center.x for polygon in mesh.polygons])
+    fine = numpy.where(centers < 0, 1, 2).astype(numpy.int64)
+    corners, totals = addon.src.utils.mesh.loop_vertices_and_face_sizes(mesh)
+    border = pair_borders(edge_face_pairs(corners, totals), fine)[(1, 2)]
+    border_edges = sorted(map(tuple, border.tolist()))
+    flags = numpy.array(
+        [tuple(sorted(edge.vertices)) in set(border_edges) for edge in mesh.edges]
+    )
+    segmentation.write_regions(mesh, fine, flags, numpy.zeros(len(flags), dtype=bool))
 
-#     result = segmentation.segment_work(
-#         mesh, ["no-such-segment-engine.exe"], "ORGANIC"
-#     ).result()
+    stored = segmentation.stored_regions(mesh)
+    assert stored.fine_labels.tolist() == fine.tolist()
+    assert sorted(map(tuple, stored.border_edges.tolist())) == border_edges
 
-#     assert result.labels.tolist() == labels.tolist()
-#     assert result.region_count == 2
-#     # the border is one ring of the neck
-#     border_x = {
-#         round(mesh.vertices[v].co.x, 5) for edge in result.border_edges for v in edge
-#     }
-#     assert len(border_x) == 1
+    missing = ToolsCommand(["no-such-segment-engine.exe"], None)
+    positions = addon.src.utils.mesh.vertex_position_array(mesh)
+    result = segmentation.segment_work(
+        mesh, positions, missing, "ORGANIC", fine_cut=False
+    ).result()
+    assert result.hand_edited
+    assert result.region_count == 2
+    assert sorted(result.border_edges) == border_edges
 
-#     segmentation.clear_region_labels(mesh)
-#     assert segmentation.REGION_ATTRIBUTE not in mesh.attributes
-#     assert not segmentation.region_labels(mesh).any()
+    segmentation.clear_regions(mesh)
+    assert segmentation.stored_regions(mesh) is None
 
 
-# def test_the_region_editor_draws_each_region_and_writes_its_labels(load_obj):
-#     (dumbbell,) = load_obj("dumbbell")
-#     mesh = dumbbell.data
-#     session = segment_edit.EditSession(dumbbell, ["no-such-segment-engine.exe"])
-#     assert not session.labels.any()
-#     centers = numpy.array([polygon.center.x for polygon in mesh.polygons])
-#     labels = numpy.where(centers < 0, 1, 2).astype(numpy.int64)
+def dumbbell_segments(dumbbell):
+    props = bpy.context.scene.uvgami
+    props.optcuts.mode = "ORGANIC"
+    props.symmetry = False
+    engine = active_engine(props.engine)
+    run = SegmentationRun(
+        dumbbell.data,
+        applied_matrix(dumbbell),
+        engine,
+        SettingsCopy(props),
+        False,
+        fine_cut=True,
+    )
+    while not run.done():
+        time.sleep(0.05)
+    _, segments = run.result()
+    run.close()
+    return segments
 
-#     session.set_labels(labels)
 
-#     preview = auto_preview._previews[dumbbell.name]
-#     assert "2 regions" in preview.summary
-#     assert [shape.kind for shape in preview.shapes] == ["TRIS", "TRIS", "LINES"]
-#     assert segmentation.region_labels(mesh).tolist() == labels.tolist()
+@needs_engine
+@needs_tools
+def test_the_region_editor_joins_the_bulbs_and_the_unwrap_keeps_it_whole(
+    load_obj, unwrap, outputs
+):
+    (dumbbell,) = load_obj("dumbbell")
+    segments = dumbbell_segments(dumbbell)
+    assert segments.region_count >= 2
 
-#     session.set_labels(merge_region(session.labels, session.face_pairs, 1))
+    segment_edit.start_session(dumbbell, segments, {})
+    session = segment_edit._session
+    assert session.part_count == segments.region_count
+    assert len(session.on) >= 1
+    # every fine region is one of the engine's regions or inside one
+    assert len(numpy.unique(session.fine)) >= segments.region_count
+    for pair in list(session.on):
+        session.toggle(pair)
+    assert session.part_count == 1
+    assert len(segmentation.stored_regions(dumbbell.data).border_edges) == 0
+    segment_edit.stop_segment_edit()
+    assert segment_edit._session is None
 
-#     assert segmentation.region_labels(mesh).tolist() == [2] * len(labels)
-#     assert [shape.kind for shape in auto_preview._previews[dumbbell.name].shapes] == [
-#         "TRIS"
-#     ]
-#     auto_preview.stop_auto_preview()
+    unwrap()
+
+    assert manager.error_messages == []
+    assert len(manager.results) == 1
+    assert island_count(outputs()[OUTPUT]) == 1
+
+
+def hovered_loops(session):
+    return (
+        session._loops_through(int(session.fine[face]), *sorted(corners[:2]))
+        for face, corners in enumerate(session.face_corners)
+    )
+
+
+@needs_tools
+def test_a_clicked_loop_splits_its_region_and_a_second_click_removes_it(load_obj):
+    (dumbbell,) = load_obj("dumbbell")
+    segment_edit.start_session(dumbbell, dumbbell_segments(dumbbell), {})
+    session = segment_edit._session
+    parts = session.part_count
+    (candidate,) = next(loops for loops in hovered_loops(session) if loops)
+
+    session.add_loops((candidate,))
+    after_adding = session.part_count
+    stored_loop = segmentation.stored_loop_edges(dumbbell.data)
+    session.toggle((candidate.split_region, int(session.fine.max())))
+    after_removal = session.part_count
+
+    segment_edit.stop_segment_edit()
+    assert len(stored_loop) == len(candidate.edges)
+    assert after_adding == parts + 1
+    assert after_removal == parts
+    assert len(segmentation.stored_loop_edges(dumbbell.data)) == 0
+    assert segmentation.stored_regions(dumbbell.data) is not None
+
+
+@needs_tools
+def test_the_mirrored_border_and_loop_change_with_the_clicked_one(load_obj):
+    (dumbbell,) = load_obj("dumbbell")
+    segments = dumbbell_segments(dumbbell)
+    center, _ = symmetry.bounding_box_center_and_diagonal(dumbbell.data)
+    partners = symmetry.mesh_mirror_partners(dumbbell.data, center, "X")
+    segment_edit.start_session(dumbbell, segments, partners)
+    session = segment_edit._session
+    pair = next(pair for pair in session.borders if session._mirrored_border(pair))
+    mirrored = session._mirrored_border(pair)
+    was_on = pair in session.on
+
+    session.toggle(pair)
+    toggled = (pair in session.on, mirrored in session.on)
+    parts = session.part_count
+    loops = next(loops for loops in hovered_loops(session) if len(loops) == 2)
+    session.add_loops(loops)
+    after_adding = session.part_count
+
+    segment_edit.stop_segment_edit()
+    assert toggled == (not was_on, not was_on)
+    assert after_adding == parts + 2
+
+
+@needs_tools
+def test_a_region_draws_its_quad_loops_and_the_nearest_one_is_picked(load_obj):
+    (dumbbell,) = load_obj("dumbbell")
+    segment_edit.start_session(dumbbell, dumbbell_segments(dumbbell), {})
+    session = segment_edit._session
+    regions = numpy.unique(session.fine).tolist()
+    region = next(region for region in regions if session._drawn_loops(region))
+    drawn = session._drawn_loops(region)
+    tail, head = drawn.edges[0].tolist()
+    middle = (session.positions[tail] + session.positions[head]) / 2
+
+    index = session._nearest_drawn_loop(drawn, None, None, middle)
+    (candidate,) = drawn.candidates[index]
+
+    segment_edit.stop_segment_edit()
+    first_loop = drawn.edges[drawn.loop_of_edge == drawn.loop_of_edge[0], 0]
+    assert index == drawn.loop_of_edge[0]
+    assert sorted(candidate.vertices) == sorted(first_loop.tolist())

@@ -1,15 +1,18 @@
+from collections import namedtuple
+
 import bmesh
 import numpy
 from mathutils.kdtree import KDTree
 
 from .no_bpy.mesh import bounding_box_diagonal
-from .no_bpy.segmentation import segment_job
+from .no_bpy.segmentation import segment_job, stored_segment_job
 
 # from .no_bpy.segmentation import split_loop_job, split_region_job
 from .no_bpy.worker import WorkerProcess
 from .part_overrides import KEEP_ATTRIBUTE, face_values, surface_modes
 from .proxy import part_triangles
 from .utils.mesh import (
+    edge_vertex_pairs,
     loop_vertices_and_face_sizes,
     new_bmesh,
     set_bmesh,
@@ -17,33 +20,75 @@ from .utils.mesh import (
 )
 from .utils.paths import get_extension_dir_path
 
-# # hand edited region numbers per face from one up, zero outside the regions
-# REGION_ATTRIBUTE = "uvgami_region"
+# fine region numbers per face from one up, zero outside the regions, written by Edit Regions
+REGION_ATTRIBUTE = "uvgami_region"
+# the edges between fine regions that stay seams
+BORDER_ATTRIBUTE = "uvgami_region_border"
+# the edges of loops Edit Regions split a fine region along
+LOOP_ATTRIBUTE = "uvgami_region_loop"
+
+StoredRegions = namedtuple("StoredRegions", "fine_labels border_edges")
 
 
-# # object mode only, an edit mode mesh reads stale values
-# def region_labels(mesh):
-#     labels = numpy.zeros(len(mesh.polygons), dtype=numpy.int32)
-#     attribute = mesh.attributes.get(REGION_ATTRIBUTE)
-#     if attribute is not None and attribute.domain == "FACE":
-#         attribute.data.foreach_get("value", labels)
-#     return labels.astype(numpy.int64)
+def stored_regions(mesh):
+    regions = mesh.attributes.get(REGION_ATTRIBUTE)
+    borders = mesh.attributes.get(BORDER_ATTRIBUTE)
+    if regions is None or borders is None:
+        return None
+    fine_labels = numpy.zeros(len(mesh.polygons), dtype=numpy.int32)
+    # object mode only, an edit mode mesh reads stale values
+    regions.data.foreach_get("value", fine_labels)
+    flags = numpy.zeros(len(mesh.edges), dtype=bool)
+    borders.data.foreach_get("value", flags)
+    return StoredRegions(
+        fine_labels.astype(numpy.int64),
+        numpy.sort(edge_vertex_pairs(mesh)[flags], axis=1),
+    )
 
 
-# def write_region_labels(mesh, labels):
-#     attribute = mesh.attributes.get(REGION_ATTRIBUTE) or mesh.attributes.new(
-#         REGION_ATTRIBUTE, "INT", "FACE"
-#     )
-#     attribute.data.foreach_set("value", labels.astype(numpy.int32))
+def stored_loop_edges(mesh):
+    loops = mesh.attributes.get(LOOP_ATTRIBUTE)
+    if loops is None:
+        return numpy.zeros((0, 2), dtype=numpy.int64)
+    flags = numpy.zeros(len(mesh.edges), dtype=bool)
+    loops.data.foreach_get("value", flags)
+    return numpy.sort(edge_vertex_pairs(mesh)[flags], axis=1)
 
 
-# def clear_region_labels(mesh):
-#     attribute = mesh.attributes.get(REGION_ATTRIBUTE)
-#     if attribute is not None:
-#         mesh.attributes.remove(attribute)
+def write_regions(mesh, fine_labels, border_flags, loop_flags):
+    regions = mesh.attributes.get(REGION_ATTRIBUTE) or mesh.attributes.new(
+        REGION_ATTRIBUTE, "INT", "FACE"
+    )
+    regions.data.foreach_set("value", fine_labels.astype(numpy.int32))
+    borders = mesh.attributes.get(BORDER_ATTRIBUTE) or mesh.attributes.new(
+        BORDER_ATTRIBUTE, "BOOLEAN", "EDGE"
+    )
+    borders.data.foreach_set("value", border_flags)
+    loops = mesh.attributes.get(LOOP_ATTRIBUTE) or mesh.attributes.new(
+        LOOP_ATTRIBUTE, "BOOLEAN", "EDGE"
+    )
+    loops.data.foreach_set("value", loop_flags)
 
 
-def segment_work(mesh, positions, segment_command, unset_mode):
+def clear_regions(mesh):
+    for name in (REGION_ATTRIBUTE, BORDER_ATTRIBUTE, LOOP_ATTRIBUTE):
+        attribute = mesh.attributes.get(name)
+        if attribute is not None:
+            mesh.attributes.remove(attribute)
+
+
+def segment_work(mesh, positions, segment_command, unset_mode, *, fine_cut):
+    stored = stored_regions(mesh)
+    if stored is not None:
+        return WorkerProcess(
+            stored_segment_job,
+            segment_command,
+            get_extension_dir_path() / "segment",
+            positions,
+            *loop_vertices_and_face_sizes(mesh),
+            surface_modes(mesh, unset_mode),
+            *stored,
+        )
     return WorkerProcess(
         segment_job,
         segment_command,
@@ -52,7 +97,7 @@ def segment_work(mesh, positions, segment_command, unset_mode):
         *loop_vertices_and_face_sizes(mesh),
         surface_modes(mesh, unset_mode),
         face_values(mesh, KEEP_ATTRIBUTE) != 0,
-        # region_labels(mesh),
+        fine_cut=fine_cut,
     )
 
 

@@ -6,10 +6,12 @@ from no_bpy import EngineError
 from no_bpy.symmetry import (
     FaceHasNoMirror,
     FaceSpansCharts,
+    face_partners,
     faces_mirror,
     mirrored_uvs,
     mutual_mirror_partners,
     partner_map,
+    region_partners,
     start_symmetric_axis,
     symmetric_regions,
 )
@@ -313,6 +315,19 @@ def test_faces_mirror_only_when_every_face_has_a_mirror_face():
 
     assert faces_mirror(*mesh_arrays(coords, same_diagonal)[1:], partners)
     assert not faces_mirror(*mesh_arrays(coords, other_diagonal)[1:], partners)
+
+
+def test_face_and_region_partners_pair_mirrored_faces_and_skip_the_rest():
+    coords = mirrored_coords(QUAD_COORDS) + ASYMMETRIC_TRIANGLE
+    partners = numpy.array([4, 5, 6, 7, 0, 1, 2, 3, -1, -1, -1])
+    faces = [(0, 1, 2), (0, 2, 3), (4, 6, 5), (4, 7, 6), (8, 9, 10)]
+    _, corners, totals = mesh_arrays(coords, faces)
+
+    mirrored_faces = face_partners(corners, totals, partners)
+    assert mirrored_faces.tolist() == [2, 3, 0, 1, -1]
+
+    labels = numpy.array([1, 1, 2, 2, 3])
+    assert region_partners(labels, mirrored_faces) == {1: 2, 2: 1}
 
 
 def quad_row(face_count):

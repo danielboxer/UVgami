@@ -56,12 +56,11 @@ from .src.ops.part_overrides import (
     UVGAMI_PG_part_overrides,
     stop_part_overrides,
 )
-
-# from .src.ops.segmentation import (
-#     UVGAMI_OT_edit_regions,
-#     UVGAMI_OT_reset_regions,
-#     stop_segment_edit,
-# )
+from .src.ops.segmentation import (
+    UVGAMI_OT_edit_regions,
+    UVGAMI_OT_stop_edit_regions,
+    stop_segment_edit,
+)
 from .src.ops.start import UVGAMI_OT_start
 from .src.ops.stop import (
     UVGAMI_OT_cancel,
@@ -108,8 +107,8 @@ classes = (
     UVGAMI_OT_exit_part_overrides,
     UVGAMI_OT_preview_auto_settings,
     UVGAMI_OT_clear_auto_preview,
-    # UVGAMI_OT_edit_regions,
-    # UVGAMI_OT_reset_regions,
+    UVGAMI_OT_edit_regions,
+    UVGAMI_OT_stop_edit_regions,
     UVGAMI_OT_pack,
     UVGAMI_OT_unwrap_island,
     UVGAMI_OT_relax_island,
@@ -145,7 +144,7 @@ def _on_load_pre(*args):
     # load_post runs after the old file's objects are gone
     manager.shutdown()
     stop_part_overrides()
-    # stop_segment_edit()
+    stop_segment_edit()
     stop_auto_preview()
 
 
@@ -162,7 +161,7 @@ def register():
 def unregister():
     manager.shutdown()
     stop_part_overrides()
-    # stop_segment_edit()
+    stop_segment_edit()
     stop_auto_preview()
     if _on_load_pre in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(_on_load_pre)

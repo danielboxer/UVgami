@@ -3,11 +3,10 @@ import bpy
 from ..engines import ENGINES, active_engine, installed_engines
 from ..ops.auto_preview import draw_auto_preview
 from ..ops.part_overrides import is_editing, selected_part_count
+from ..ops.segmentation import draw_segment_edit
 from ..unwrap.job import Result
 from ..unwrap.logger import logger
 from ..unwrap.manager import manager
-
-# from ..ops.segmentation import draw_segment_edit
 from ..utils.paths import read_manifest
 from ..utils.ui import count_label, draw_active
 from .props import SETTING_ICONS_AND_LABELS, fix_settings, unwrap_settings
@@ -57,11 +56,6 @@ def draw_queue(box):
     hours, minutes = divmod(minutes, 60)
     clock = f"{hours}:{minutes:02}:{seconds:02}" if hours else f"{minutes}:{seconds:02}"
     row.label(text=f"UV unwrap in progress {clock}")
-
-    if manager.is_viewer_active:
-        viewer_ui = box.box().row()
-        viewer_ui.alignment = "CENTER"
-        viewer_ui.label(text="Press ESC to exit viewer")
 
     jobs, singles = _jobs_and_singles(active_unwraps)
     rows = (
@@ -419,12 +413,14 @@ class UVGAMI_PT_advanced(EnginePanel, bpy.types.Panel):
         split.prop(props, "transfer_uvs")
 
         if engine.supports_regions:
-            split = box.split(factor=0.7)
+            splits_regions = engine.splits_regions(props)
+            regions = box.box() if splits_regions else box
+            split = regions.split(factor=0.7)
             split.active = not engine.uses_import_uvs(props)
             _setting_label(split, "split_regions")
             split.prop(props, "split_regions")
-        # if engine.splits_regions(props):
-        #     draw_segment_edit(box, context)
+            if splits_regions:
+                draw_segment_edit(regions)
 
         if engine.supports_symmetry:
             split = box.split(factor=0.7)

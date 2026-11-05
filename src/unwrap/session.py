@@ -503,6 +503,7 @@ class SessionBuilder:
             world_positions(obj.data, applied_matrix(obj)),
             self.segment_command,
             self.engine.unset_surface_mode(props),
+            fine_cut=False,
         )
         return self._wait(
             worker,

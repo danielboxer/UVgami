@@ -1,3 +1,8 @@
+import functools
+from collections import namedtuple
+
+import numpy
+
 from .engine_run import (
     INTEGER,
     new_run_folder,
@@ -6,8 +11,13 @@ from .engine_run import (
     start_run,
     write_obj,
 )
-from .mesh import faces_from_arrays
-from .preseed import SegmentRegions, write_modes
+from .mesh import (
+    faces_from_arrays,
+    find_root,
+    next_corners_in_face,
+    undirected_edge_keys,
+)
+from .preseed import SegmentRegions, resolved_surface_modes, write_modes
 
 # from collections import namedtuple
 # from .engine_run import EngineError, stdout_path
@@ -22,8 +32,7 @@ OUTPUT_NAME = "regions.bin"
 # DONE_PREFIX = "done: "
 # PIECE_PREFIX = "piece: "
 
-# # (face, face, (low, high) vertex pair) per edge two faces share
-# EdgeFacePairs = namedtuple(
+# # EdgeFacePairs = namedtuple(
 #     "EdgeFacePairs",
 #     [
 #         "first",
@@ -39,14 +48,20 @@ OUTPUT_NAME = "regions.bin"
 # SplitRegion = namedtuple("SplitRegion", ["labels", "piece"])
 
 
-def _read_regions(path, face_count):
+def _read_regions(path, face_count, *, fine_cut):
     take = packed_reader(path.read_bytes())
     region_count, border_count = take(INTEGER, 2).tolist()
     surface_modes = take(INTEGER, face_count)
     labels = take(INTEGER, face_count)
     edges = take(INTEGER, 2 * border_count).reshape(-1, 2).tolist()
+    fine_labels = take(INTEGER, face_count) if fine_cut else None
     return SegmentRegions(
-        surface_modes, [tuple(edge) for edge in edges], region_count, labels
+        surface_modes,
+        [tuple(edge) for edge in edges],
+        region_count,
+        labels,
+        fine_labels,
+        hand_edited=False,
     )
 
 
@@ -95,50 +110,90 @@ def _read_regions(path, face_count):
 #     return EngineRun(process, folder, labels_path, len(faces), _read_labels)
 
 
-# def edge_face_pairs(
-#     # positions,
-#     corners,
-#     totals,
-# ):
-#     face_of_corner = numpy.repeat(numpy.arange(len(totals)), totals)
-#     next_corner = following_corners(totals)
-#     low = numpy.minimum(corners, corners[next_corner])
-#     high = numpy.maximum(corners, corners[next_corner])
-#     keys = edge_keys(corners, corners[next_corner])
-#     order = numpy.argsort(keys, kind="stable")
-#     shared = keys[order][:-1] == keys[order][1:]
-#     first = face_of_corner[order[:-1][shared]]
-#     second = face_of_corner[order[1:][shared]]
-#     distinct = first != second
-#     first, second = first[distinct], second[distinct]
-#     edge_corners = order[:-1][shared][distinct]
-#     edges = numpy.stack([low[edge_corners], high[edge_corners]], axis=1)
-#     # lengths = numpy.linalg.norm(positions[edges[:, 0]] - positions[edges[:, 1]], axis=1)
-#     return EdgeFacePairs(first, second, edges)
-#
-#
-# def border_edges(face_pairs, labels):
-#     differ = labels[face_pairs.first] != labels[face_pairs.second]
-#     # an edge with three or more faces is listed once per face pair
-#     edges = numpy.unique(face_pairs.edges[differ], axis=0)
-#     return [tuple(edge) for edge in edges.tolist()]
+# (face, face, (low, high) vertex pair) per edge two faces share
+EdgeFacePairs = namedtuple("EdgeFacePairs", "first second edges")
 
 
-# # the clicked region joins the neighbor it shares the longest border with
-# def merge_region(labels, face_pairs, region):
-#     inside = labels == region
-#     across = inside[face_pairs.first] != inside[face_pairs.second]
-#     neighbors = numpy.where(
-#         inside[face_pairs.first], labels[face_pairs.second], labels[face_pairs.first]
-#     )[across]
-#     lengths = face_pairs.lengths[across]
-#     in_region = neighbors > 0
-#     if not in_region.any():
-#         raise EngineError("the region touches no other region")
-#     shared = numpy.bincount(neighbors[in_region], weights=lengths[in_region])
-#     merged = labels.copy()
-#     merged[inside] = int(numpy.argmax(shared))
-#     return merged
+def edge_face_pairs(corners, totals):
+    face_of_corner = numpy.repeat(numpy.arange(len(totals)), totals)
+    next_corner = next_corners_in_face(totals)
+    low = numpy.minimum(corners, corners[next_corner])
+    high = numpy.maximum(corners, corners[next_corner])
+    keys = undirected_edge_keys(corners, corners[next_corner])
+    order = numpy.argsort(keys, kind="stable")
+    shared = keys[order][:-1] == keys[order][1:]
+    first = face_of_corner[order[:-1][shared]]
+    second = face_of_corner[order[1:][shared]]
+    distinct = first != second
+    first, second = first[distinct], second[distinct]
+    edge_corners = order[:-1][shared][distinct]
+    edges = numpy.stack([low[edge_corners], high[edge_corners]], axis=1)
+    return EdgeFacePairs(first, second, edges)
+
+
+def pair_borders(face_pairs, fine_labels):
+    first, second = fine_labels[face_pairs.first], fine_labels[face_pairs.second]
+    between = (first != second) & (first > 0) & (second > 0)
+    low = numpy.minimum(first, second)[between]
+    high = numpy.maximum(first, second)[between]
+    edges = face_pairs.edges[between]
+    borders = {}
+    for pair in numpy.unique(numpy.stack([low, high], axis=1), axis=0).tolist():
+        on_pair = (low == pair[0]) & (high == pair[1])
+        # an edge with three or more faces is listed once per face pair
+        borders[tuple(pair)] = numpy.unique(edges[on_pair], axis=0)
+    return borders
+
+
+def pair_edges(borders, pairs):
+    edges = [borders[pair] for pair in sorted(pairs)]
+    if not edges:
+        return []
+    return [
+        tuple(edge) for edge in numpy.unique(numpy.concatenate(edges), axis=0).tolist()
+    ]
+
+
+def pairs_between_regions(borders, labels, fine_labels):
+    region_of_fine = {}
+    for fine, region in zip(fine_labels.tolist(), labels.tolist()):
+        region_of_fine.setdefault(fine, region)
+    return {
+        pair for pair in borders if region_of_fine[pair[0]] != region_of_fine[pair[1]]
+    }
+
+
+def joined_labels(fine_labels, borders, on_pairs):
+    parent = list(range(int(fine_labels.max()) + 1))
+    for low, high in borders:
+        if (low, high) not in on_pairs:
+            parent[find_root(parent, high)] = find_root(parent, low)
+    roots = numpy.array([find_root(parent, fine) for fine in range(len(parent))])
+    segmented = fine_labels > 0
+    joined_roots, dense = numpy.unique(
+        roots[fine_labels[segmented]], return_inverse=True
+    )
+    labels = numpy.zeros(len(fine_labels), dtype=numpy.int64)
+    labels[segmented] = dense + 1
+    return labels, len(joined_roots)
+
+
+def on_pairs_with_edges(borders, edges):
+    flagged = set(map(tuple, numpy.asarray(edges).reshape(-1, 2).tolist()))
+    return {
+        pair
+        for pair, pair_edges in borders.items()
+        if any(tuple(edge) in flagged for edge in pair_edges.tolist())
+    }
+
+
+def nested_fine_labels(labels, fine_labels):
+    span = int(fine_labels.max()) + 1
+    pairs = numpy.where(fine_labels > 0, labels * span + fine_labels, 0)
+    _, dense = numpy.unique(pairs[pairs > 0], return_inverse=True)
+    nested = numpy.zeros(len(fine_labels), dtype=numpy.int64)
+    nested[pairs > 0] = dense + 1
+    return nested
 
 
 def segment_job(
@@ -150,6 +205,8 @@ def segment_job(
     surface_modes,
     kept_faces,
     # stored_labels=None,
+    *,
+    fine_cut,
     cancelled=None,
 ):
     faces = faces_from_arrays(corners, totals)
@@ -164,15 +221,44 @@ def segment_job(
     # if stored_labels is not None and stored_labels.any():
     #     labels[segmented] = stored_labels[segmented]
     output_path = folder / OUTPUT_NAME
+    fine_flags = ["--fine"] if fine_cut else []
     run = start_run(
         folder,
-        [*command.args, "segment", input_path, output_path],
+        [*command.args, "segment", input_path, output_path, *fine_flags],
         command.env,
         output_path,
         len(faces),
-        _read_regions,
+        functools.partial(_read_regions, fine_cut=fine_cut),
     )
     return poll_run(run, cancelled)
+
+
+def stored_segment_job(
+    command,
+    workdir,
+    positions,
+    corners,
+    totals,
+    surface_modes,
+    fine_labels,
+    border_edges,
+    cancelled=None,
+):
+    faces = faces_from_arrays(corners, totals)
+    resolved = resolved_surface_modes(
+        command, workdir, positions.tolist(), faces, surface_modes, cancelled
+    )
+    borders = pair_borders(edge_face_pairs(corners, totals), fine_labels)
+    on_pairs = on_pairs_with_edges(borders, border_edges)
+    labels, region_count = joined_labels(fine_labels, borders, on_pairs)
+    return SegmentRegions(
+        resolved,
+        pair_edges(borders, on_pairs),
+        region_count,
+        labels,
+        fine_labels,
+        hand_edited=True,
+    )
 
 
 # # splits the region at a node of the engine's merge tree

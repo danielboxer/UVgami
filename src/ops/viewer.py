@@ -48,6 +48,17 @@ def _schedule_workspace_trim(window):
     bpy.app.timers.register(tick, first_interval=0.0)
 
 
+def _draw_viewer_status(header, context):
+    header.layout.label(icon="EVENT_LEFT_ARROW")
+    header.layout.label(icon="EVENT_RIGHT_ARROW")
+    header.layout.separator()
+    header.layout.label(text="Switch Unwrap")
+    header.layout.label(icon="MOUSE_LMB")
+    header.layout.label(icon="EVENT_ESC")
+    header.layout.separator()
+    header.layout.label(text="Exit")
+
+
 class UVGAMI_OT_view_unwrap(bpy.types.Operator):
     bl_idname = "uvgami.view_unwrap"
     bl_label = "View Unwrap"
@@ -94,7 +105,7 @@ class UVGAMI_OT_view_unwrap(bpy.types.Operator):
 
         start_viewer_draw()
         self._show(unwrap)
-        self.report({"INFO"}, "Click to exit viewer")
+        workspace.status_text_set(_draw_viewer_status)
         context.window_manager.modal_handler_add(self)
         return {"RUNNING_MODAL"}
 
@@ -132,6 +143,8 @@ class UVGAMI_OT_view_unwrap(bpy.types.Operator):
 
             # both ops are deferred a tick but process in order
             workspace = bpy.data.workspaces.get(VIEWER_WORKSPACE)
+            if workspace is not None:
+                workspace.status_text_set(None)
             if workspace is not None and context.window.workspace == workspace:
                 bpy.ops.workspace.delete()
             restore = bpy.data.workspaces.get(self.old_workspace)

@@ -154,24 +154,31 @@ def start_symmetry_check(engine, mesh, painted):
 
 def mirror_segmentation(positions, corners, totals, segmentation, symmetry):
     mirrored = symmetry is not None and symmetry.kind in ("BISECT", "WHOLE")
-    if not mirrored or not segmentation.border_edges:
+    if not mirrored or not segmentation.border_edges or segmentation.hand_edited:
         return symmetry, segmentation
-    regions = symmetric_regions(
-        tools_command(),
-        mirror_workdir(),
-        positions,
-        corners,
-        totals,
-        segmentation.labels,
-        symmetry.axis,
-        symmetry.center,
-        symmetry.tolerance,
-    )
+
+    def mirrored_regions(labels):
+        return symmetric_regions(
+            tools_command(),
+            mirror_workdir(),
+            positions,
+            corners,
+            totals,
+            labels,
+            symmetry.axis,
+            symmetry.center,
+            symmetry.tolerance,
+        )
+
+    regions = mirrored_regions(segmentation.labels)
     segmentation = segmentation._replace(
         border_edges=regions.border_edges,
         region_count=regions.region_count,
         labels=regions.labels,
     )
+    if segmentation.fine_labels is not None:
+        fine = mirrored_regions(segmentation.fine_labels)
+        segmentation = segmentation._replace(fine_labels=fine.labels)
     return symmetry._replace(kept_side=regions.kept_side), segmentation
 
 
