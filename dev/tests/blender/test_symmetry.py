@@ -5,7 +5,17 @@ import mathutils
 import mathutils.kdtree
 import numpy
 import pytest
-from blender_fixtures import addon, manager, needs_engine, needs_xatlas, uv_islands
+from blender_fixtures import (
+    addon,
+    cylinder_with_loose_cube,
+    is_loose_cube_face,
+    loose_cube_faces,
+    manager,
+    needs_engine,
+    needs_xatlas,
+    uv_islands,
+    without_loose_cube,
+)
 
 
 def uvs_by_vertex(mesh, faces=None):
@@ -382,6 +392,114 @@ def test_a_proxied_mesh_mirrors_the_half_run_cuts(
     assert set(results) == {addon.src.unwrap.job.Result.FINISHED}
     mesh = outputs()[f"{cylinder.name}_unwrapped"].data
     assert mirrored_seam_share(mesh) > 0.9
+
+
+def cylinder_faces_flagged(obj):
+    plan = addon.src.unwrap.job.start_unwrap_symmetry(
+        addon.src.engines.ENGINES["OPTCUTS"],
+        bpy.context.scene.uvgami,
+        obj.data,
+        painted=False,
+    ).result()
+    flagged = plan.symmetric_faces
+    cube = [polygon.index for polygon in loose_cube_faces(obj.data)]
+    assert not flagged[cube].any()
+    assert flagged.sum() == len(obj.data.polygons) - len(cube)
+    return plan
+
+
+def test_a_part_off_the_plane_is_left_out_of_the_plan():
+    obj = cylinder_with_loose_cube()
+    plan = cylinder_faces_flagged(obj)
+    assert plan[:2] == ("BISECT", "X")
+
+
+def test_the_cut_leaves_a_part_off_the_plane_whole():
+    obj = cylinder_with_loose_cube()
+    mesh = obj.data
+    cylinder = numpy.array([not is_loose_cube_face(p.center) for p in mesh.polygons])
+    vertex_count = len(mesh.vertices)
+
+    addon.src.symmetry.cut_on_axis(
+        obj, mathutils.Vector((0, 0, 0)), "X", 1e-4, 1, cylinder
+    )
+
+    assert len(loose_cube_faces(mesh)) == 6
+    assert len(mesh.vertices) < vertex_count
+    kept = [v for v in mesh.vertices if not is_loose_cube_face(v.co)]
+    assert all(v.co.x >= -1e-4 for v in kept)
+
+
+# a cube with uvs has more than one uv per axis
+def assert_cube_unwrapped(mesh):
+    layer = mesh.uv_layers.active
+    uvs = {
+        (round(layer.data[i].uv.x, 4), round(layer.data[i].uv.y, 4))
+        for polygon in loose_cube_faces(mesh)
+        for i in polygon.loop_indices
+    }
+    assert len(uvs) > 4
+
+
+@needs_engine
+def test_a_part_off_the_plane_stays_whole_while_the_rest_is_bisected(unwrap, outputs):
+    obj = cylinder_with_loose_cube()
+    props = bpy.context.scene.uvgami
+    props.pack_after_unwrap = False
+    cylinder_faces_flagged(obj)
+    unwrap()
+
+    assert manager.error_messages == []
+    assert manager.summary_failed is False, manager.summary
+    mesh = outputs()[f"{obj.name}_unwrapped"].data
+    assert len(mesh.vertices) == len(obj.data.vertices)
+    assert len(loose_cube_faces(mesh)) == 6
+    assert_cube_unwrapped(mesh)
+    assert_welded_across_x(without_loose_cube(mesh))
+
+
+@needs_engine
+def test_a_part_off_the_plane_keeps_its_own_cuts_on_a_whole_mesh(unwrap, outputs):
+    obj = cylinder_with_loose_cube()
+    source = obj.data
+    _, diagonal = addon.src.symmetry.bounding_box_center_and_diagonal(source)
+    source.vertices[0].co += mathutils.Vector((1, 1, 1)) * 0.001 * diagonal
+    props = bpy.context.scene.uvgami
+    props.optcuts.mode = "ORGANIC"
+    props.pack_after_unwrap = False
+    plan = cylinder_faces_flagged(obj)
+    assert plan.kind == "WHOLE"
+    unwrap()
+
+    assert manager.error_messages == []
+    assert manager.summary_failed is False, manager.summary
+    mesh = outputs()[f"{obj.name}_unwrapped"].data
+    assert len(mesh.vertices) == len(source.vertices)
+    assert len(loose_cube_faces(mesh)) == 6
+    assert_cube_unwrapped(mesh)
+    assert mirrored_seam_share(without_loose_cube(mesh)) > 0.9
+
+
+@needs_engine
+@needs_xatlas
+def test_xatlas_leaves_a_part_off_the_plane_alone(unwrap, outputs):
+    obj = cylinder_with_loose_cube()
+    props = bpy.context.scene.uvgami
+    props.pack_after_unwrap = False
+    engine = addon.src.engines.ENGINES["XATLAS"]
+    plan = addon.src.unwrap.job.start_unwrap_symmetry(
+        engine, props, obj.data, painted=False
+    ).result()
+    assert plan[:2] == ("MIRROR_UVS", "X")
+    unwrap("XATLAS")
+
+    assert manager.error_messages == []
+    assert manager.summary_failed is False, manager.summary
+    mesh = outputs()[f"{obj.name}_unwrapped"].data
+    # xatlas returns the cube's quads as triangles
+    assert len({v for p in loose_cube_faces(mesh) for v in p.vertices}) == 8
+    assert_cube_unwrapped(mesh)
+    assert_negative_side_mirrored(without_loose_cube(mesh))
 
 
 # def test_hard_surface_keeps_its_seams_and_welds_the_plane(load_obj, unwrap, outputs):

@@ -229,12 +229,12 @@ def build_preview(name, mesh, engine, props, symmetry, plane, segments):
     kept = face_values(mesh, KEEP_ATTRIBUTE) != 0
     part_count = len(part_counts.part_labels)
     parts = count_label(part_count, "part")
+    loop_vertices, totals = loop_vertices_and_face_sizes(mesh)
+    face_labels = part_counts.vertex_labels[loop_vertices[face_starts(totals)]]
 
     if engine.supports_hard_surface:
         hard = segments.surface_modes == SURFACE_MODE_CODES["HARD"]
-        parts += (
-            f": {mode_counts(mesh, part_counts.vertex_labels, part_count, kept, hard)}"
-        )
+        parts += f": {mode_counts(face_labels, part_count, kept, hard)}"
         mesh.calc_loop_triangles()
         corners, triangle_faces = lifted_triangles(mesh, positions, 0.0)
         for faces, color in (
@@ -273,11 +273,15 @@ def build_preview(name, mesh, engine, props, symmetry, plane, segments):
         shapes.append(
             Shape("LINES", plane, PLANE_OUTLINE, (*color, 0.9), 0.0, LINE_WIDTH)
         )
-        lines.append(
+        line = (
             f"Mostly symmetrical on {symmetry.axis}"
             if symmetry.kind == "WHOLE"
             else f"Symmetrical on {symmetry.axis}"
         )
+        left_out = len(numpy.unique(face_labels[~symmetry.symmetric_faces]))
+        if left_out:
+            line += f", {count_label(left_out, 'part')} not mirrored"
+        lines.append(line)
     elif engine.uses_symmetry(props) and len(positions) > 0:
         lines.append("Not symmetrical")
 
@@ -287,9 +291,7 @@ def build_preview(name, mesh, engine, props, symmetry, plane, segments):
     return Preview(shapes, lines)
 
 
-def mode_counts(mesh, labels, part_count, kept, hard):
-    corners, totals = loop_vertices_and_face_sizes(mesh)
-    face_labels = labels[corners[face_starts(totals)]]
+def mode_counts(face_labels, part_count, kept, hard):
     hard_count = len(numpy.unique(face_labels[hard]))
     kept_count = len(numpy.unique(face_labels[kept]))
     organic_count = part_count - hard_count - kept_count

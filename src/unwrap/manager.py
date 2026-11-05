@@ -522,7 +522,18 @@ class UnwrapManager:
 
         symmetrize_job = unwrap.symmetrize_job
         if symmetrize_job is not None:
-            symmetrize_job.finish(output, unwrap.matrix)
+            symmetric = numpy.concatenate(
+                [
+                    numpy.full(piece.export.vertex_count, piece.symmetric)
+                    for piece in pieces
+                ]
+            )
+            if len(symmetric) != len(output.data.vertices):
+                raise RuntimeError(
+                    f"the output has {len(output.data.vertices)} vertices"
+                    f" for {len(symmetric)} exported"
+                )
+            symmetrize_job.finish(output, unwrap.matrix, symmetric)
 
         if any(piece.preseeded for piece in pieces):
             face_count = len(output.data.polygons)

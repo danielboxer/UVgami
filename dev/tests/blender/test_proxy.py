@@ -12,6 +12,7 @@ proxy_trigger_faces = addon.src.proxy.proxy_trigger_faces
 parts_for_auto_proxy = addon.src.proxy.parts_for_auto_proxy
 triangle_count = addon.src.proxy.triangle_count
 mutual_mirror_partners = addon.src.symmetry.mesh_mirror_partners
+write_symmetric_faces = addon.src.utils.mesh.write_symmetric_faces
 
 PROXY_FACES = 500
 SURFACE_MODE_CODES = addon.src.no_bpy.SURFACE_MODE_CODES
@@ -112,11 +113,15 @@ def test_a_part_at_the_face_count_keeps_its_faces():
 def test_a_mirrored_proxy_has_a_partner_for_every_vertex():
     obj = add_dense_sphere("sphere")
     make_proxy(obj, PROXY_FACES)
+    every_face = numpy.ones(len(obj.data.polygons), dtype=bool)
+    write_symmetric_faces(obj.data, every_face)
     center = mathutils.Vector((0, 0, 0))
     assert len(mutual_mirror_partners(obj.data, center, "X")) < len(obj.data.vertices)
     faces = len(obj.data.polygons)
 
-    plan = addon.src.symmetry.SymmetryPlan("BISECT", "X", center, 1e-4, None, 1)
+    plan = addon.src.symmetry.SymmetryPlan(
+        "BISECT", "X", center, 1e-4, None, 1, every_face
+    )
     source_faces = mirror_proxy(obj, plan)
 
     partners = mutual_mirror_partners(obj.data, center, "X")
@@ -124,3 +129,27 @@ def test_a_mirrored_proxy_has_a_partner_for_every_vertex():
     # each kept face and its mirror image come from one decimated face
     uses = numpy.bincount(source_faces, minlength=faces)
     assert set(uses[uses > 0].tolist()) == {2}
+
+
+def test_a_mirrored_proxy_leaves_an_unflagged_part_alone():
+    obj = join([add_dense_sphere("sphere"), add_cube("cube", location=(5, 0, 0))])
+    make_proxy(obj, PROXY_FACES)
+    mesh = obj.data
+    cube = numpy.array([polygon.center.x > 3 for polygon in mesh.polygons])
+    assert cube.sum() == 6
+    write_symmetric_faces(mesh, ~cube)
+    center = mathutils.Vector((0, 0, 0))
+    plan = addon.src.symmetry.SymmetryPlan("BISECT", "X", center, 1e-4, None, 1, ~cube)
+
+    source_faces = mirror_proxy(obj, plan)
+
+    cube_faces = [polygon for polygon in mesh.polygons if polygon.center.x > 3]
+    assert len(cube_faces) == 6
+    assert len({v for polygon in cube_faces for v in polygon.vertices}) == 8
+    sphere_vertices = [v.index for v in mesh.vertices if v.co.x < 3]
+    partners = mutual_mirror_partners(mesh, center, "X")
+    assert all(v in partners for v in sphere_vertices)
+    # the cube's six faces are their own sources, each kept sphere face sources a mirrored pair
+    uses = numpy.bincount(source_faces, minlength=len(cube))
+    assert (uses[cube] == 1).all()
+    assert set(uses[~cube].tolist()) == {0, 2}

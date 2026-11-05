@@ -2,6 +2,7 @@ import importlib
 import pathlib
 
 import background_blender
+import bmesh
 import bpy
 import pytest
 import timer_pump
@@ -115,6 +116,50 @@ def add_dense_sphere(name, location=(0, 0, 0)):
         ring_count=32,
         location=location,
     )
+
+
+# a loose cube inside the cylinder's bounding box and off its mirror plane
+LOOSE_CUBE_CENTER = (0.5, 0.5, 0.5)
+LOOSE_CUBE_SIZE = 0.3
+
+
+def cylinder_with_loose_cube():
+    # the cylinder obj fixture's triangles don't mirror, which sends it whole instead of bisected
+    cylinder = add_primitive(
+        "cylinder",
+        bpy.ops.mesh.primitive_cylinder_add,
+        vertices=48,
+        depth=3,
+        end_fill_type="TRIFAN",
+    )
+    cube = add_cube("cube", size=LOOSE_CUBE_SIZE, location=LOOSE_CUBE_CENTER)
+    obj = join([cylinder, cube])
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    return obj
+
+
+# within the cube's own box, the cylinder wall passes 0.2 outside it
+def is_loose_cube_face(center):
+    return all(
+        abs(value - target) <= LOOSE_CUBE_SIZE / 2 + 1e-4
+        for value, target in zip(center, LOOSE_CUBE_CENTER)
+    )
+
+
+def loose_cube_faces(mesh):
+    return [polygon for polygon in mesh.polygons if is_loose_cube_face(polygon.center)]
+
+
+# a copy of the mesh without the loose cube, for checks that walk every vertex's mirror
+def without_loose_cube(mesh):
+    copy = mesh.copy()
+    bm = bmesh.new()
+    bm.from_mesh(copy)
+    cube = [face for face in bm.faces if is_loose_cube_face(face.calc_center_median())]
+    bmesh.ops.delete(bm, geom=cube, context="FACES")
+    bm.to_mesh(copy)
+    bm.free()
+    return copy
 
 
 def select(objects):

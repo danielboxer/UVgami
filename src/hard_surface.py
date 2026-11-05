@@ -8,6 +8,7 @@ from .no_bpy.island_repair import finish_uvs
 from .no_bpy.mesh import corners_of_faces, undirected_edge_keys
 from .no_bpy.worker import WorkerProcess
 from .utils.mesh import (
+    activate_uv_layer,
     edge_vertex_pairs,
     face_uvs,
     loop_starts,
@@ -107,8 +108,7 @@ def _apply_preseed(mesh, result):
     if result is None:
         return False
     apply_seams(mesh, result.seams)
-    if not mesh.uv_layers:
-        mesh.uv_layers.new()
+    activate_uv_layer(mesh)
     apply_loop_uvs(mesh, result.uvs, result.flattened_faces)
     return True
 

@@ -10,9 +10,10 @@ from .hard_surface import apply_seams
 from .no_bpy import SURFACE_MODE_CODES, fit_uvs_keeping_area
 from .no_bpy.mesh import face_starts, lowest_index_part_labels
 from .no_bpy.proxy import dense_subset, start_proxy_transfer
-from .symmetry import cut_on_axis
+from .symmetry import cut_on_axis, mirror_geometry, part_geometry
 from .unwrap.job import Transfer, apply_island_uvs_and_seams, island_edges_on_mesh
 from .utils.mesh import (
+    activate_uv_layer,
     check_exists,
     corner_uvs,
     edge_vertex_pairs,
@@ -21,6 +22,7 @@ from .utils.mesh import (
     new_bmesh,
     set_bmesh,
     set_loop_uvs,
+    symmetric_faces,
     triangulate_mesh,
     vertex_position_array,
 )
@@ -154,14 +156,21 @@ def mirror_proxy(obj, symmetry):
     center = Vector(symmetry.center)
 
     def mirror():
-        cut_on_axis(obj, center, symmetry.axis, symmetry.tolerance, symmetry.kept_side)
+        cut_on_axis(
+            obj,
+            center,
+            symmetry.axis,
+            symmetry.tolerance,
+            symmetry.kept_side,
+            symmetric_faces(obj.data),
+        )
         bm = new_bmesh(obj)
-        bmesh.ops.mirror(
+        mirror_geometry(
             bm,
-            geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
-            matrix=Matrix.Translation(-center),
-            merge_dist=symmetry.tolerance,
-            axis=symmetry.axis,
+            part_geometry(bm, symmetric_faces(obj.data)),
+            symmetry.axis,
+            Matrix.Translation(-center),
+            symmetry.tolerance,
         )
         set_bmesh(bm, obj)
 
@@ -360,8 +369,7 @@ class ProxyUVs(Transfer):
         seams, uvs = result
         data = target.data
         apply_seams(data, seams)
-        if not data.uv_layers:
-            data.uv_layers.new()
+        activate_uv_layer(data)
         set_loop_uvs(data, uvs)
         return 0
 

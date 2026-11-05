@@ -63,6 +63,10 @@ def all_hard(faces):
     return [SURFACE_MODE_CODES["HARD"]] * len(faces)
 
 
+def every_face_symmetric(faces):
+    return numpy.ones(len(faces), dtype=bool)
+
+
 def uv_sphere(rings=16, segments=32):
     verts = [(0.0, 0.0, 1.0)]
     for ring in range(1, rings):
@@ -147,7 +151,12 @@ def test_preseed_mirrors_close_the_seam_set(tmp_path, engines, unit_cube):
     # the unit cube is symmetric across x = 0.5
     mirror = dict(enumerate([1, 0, 3, 2, 5, 4, 7, 6]))
     seams, _, _ = run_preseed(
-        engines, tmp_path, verts, faces, all_hard(faces), plane=(0, mirror)
+        engines,
+        tmp_path,
+        verts,
+        faces,
+        all_hard(faces),
+        plane=(0, mirror, every_face_symmetric(faces)),
     )
     assert seams
     assert {sorted_pair(mirror[a], mirror[b]) for a, b in seams} == seams
@@ -158,15 +167,24 @@ SymmetricPreseed = collections.namedtuple(
 )
 
 
-def symmetric_preseed(engines, tmp_path, positions, faces, surface_modes):
+def symmetric_preseed(
+    engines, tmp_path, positions, faces, surface_modes, symmetric=None
+):
     low, high = positions.min(axis=0), positions.max(axis=0)
     center = (low + high) / 2
     diagonal = numpy.linalg.norm(high - low)
     # drifted off an exact mirror, as a mesh that ships whole is
     positions[0] += 0.001 * diagonal
     partners = mutual_mirror_partners(engines[0], tmp_path, positions, center, "X")
+    if symmetric is None:
+        symmetric = every_face_symmetric(faces)
     seams, _, flattened = run_preseed(
-        engines, tmp_path, positions, faces, surface_modes, plane=(0, partners)
+        engines,
+        tmp_path,
+        positions,
+        faces,
+        surface_modes,
+        plane=(0, partners, symmetric),
     )
     return SymmetricPreseed(seams, flattened, partners)
 
@@ -388,3 +406,34 @@ def ngon_capped_cylinder(sides=32, height=2.0):
 def test_default_cylinder_reads_hard(classify_hard):
     verts, faces = ngon_capped_cylinder()
     assert classify_hard(verts, faces).all()
+
+
+@pytest.mark.smoke
+def test_symmetric_preseed_leaves_a_part_outside_the_mask_alone(
+    tmp_path, engines, fixture_mesh
+):
+    cylinder, cylinder_faces = fixture_mesh("cylinder")
+    cube, cube_faces = fixture_mesh("cube")
+    # the cube sits off the plane on one side, inside the cylinder's bounding box
+    positions = numpy.concatenate(
+        [numpy.array(cylinder), numpy.array(cube) * 0.3 + [0.5, 0.5, 0.5]]
+    )
+    faces = cylinder_faces + [[v + len(cylinder) for v in face] for face in cube_faces]
+    modes = numpy.array(
+        [SURFACE_MODE_CODES["ORGANIC"]] * len(cylinder_faces)
+        + [SURFACE_MODE_CODES["HARD"]] * len(cube_faces)
+    )
+    symmetric = numpy.array([True] * len(cylinder_faces) + [False] * len(cube_faces))
+
+    seams, flattened, partners = symmetric_preseed(
+        engines, tmp_path, positions, faces, modes, symmetric
+    )
+
+    assert len(flattened) == len(faces)
+    cube_vertices = set(range(len(cylinder), len(positions)))
+    cube_seams = {(a, b) for a, b in seams if a in cube_vertices}
+    cylinder_seams = {(a, b) for a, b in seams if a not in cube_vertices}
+    # the cube keeps the placed seams of a hard part, the cylinder mirrors its half run
+    assert cube_seams
+    assert all(b in cube_vertices for _, b in cube_seams)
+    assert mirrored_share(cylinder_seams, partners) > 0.9

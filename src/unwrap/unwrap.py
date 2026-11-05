@@ -44,10 +44,12 @@ class Unwrap:
         transfer_uvs_job=None,
         segment_weld_job=None,
         preseeded: bool = False,
+        symmetric: bool = False,
     ):
         self.name = name
         self.input_name = input_name
         self.preseeded = preseeded
+        self.symmetric = symmetric
 
         self.path = path
         self.output_path = engine_output_path(self.path)

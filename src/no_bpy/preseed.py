@@ -12,6 +12,7 @@ from .engine_run import (
     write_obj,
 )
 from .mesh import faces_from_arrays
+from .symmetry import write_face_mask
 from .worker import remove_folder
 
 ENGINE_INPUT_STEM = "mesh"
@@ -171,10 +172,11 @@ def preseed_job(
         write_modes(folder / f"{ENGINE_INPUT_STEM}_modes", surface_modes)
         plane_args = []
         if plane is not None:
-            axis, partners = plane
+            axis, partners, symmetric = plane
             (folder / f"{ENGINE_INPUT_STEM}_partners").write_text(
                 "".join(f"{vertex} {image}\n" for vertex, image in partners.items())
             )
+            write_face_mask(folder / f"{ENGINE_INPUT_STEM}_symmetric", symmetric)
             _write_weights(folder / f"{ENGINE_INPUT_STEM}_painted", weights)
             halves = folder / HALVES_NAME
             halves_args = [

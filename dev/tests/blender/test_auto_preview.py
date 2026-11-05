@@ -1,6 +1,6 @@
 import bpy
 import pytest
-from blender_fixtures import addon, needs_tools
+from blender_fixtures import addon, cylinder_with_loose_cube, needs_tools
 
 auto_preview = addon.src.ops.auto_preview
 
@@ -44,6 +44,15 @@ def test_preview_draws_the_symmetry_plane(preview):
 
     assert any(line.startswith("Symmetrical on") for line in result.lines)
     assert (*auto_preview.AXIS_COLORS["X"], 0.9) in shape_colors(result)
+
+
+def test_preview_counts_the_parts_left_out_of_the_mirror(preview):
+    cylinder_with_loose_cube()
+    bpy.context.scene.uvgami.split_regions = False
+
+    result = preview()
+
+    assert "Symmetrical on X, 1 part not mirrored" in result.lines
 
 
 def test_preview_colors_a_beveled_cube_hard_surface(load_obj, preview):

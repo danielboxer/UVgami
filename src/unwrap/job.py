@@ -15,6 +15,7 @@ from ..no_bpy.uv_transfer import TransferError, transfer_exact_job
 from ..no_bpy.worker import WorkerProcess
 from ..symmetry import start_symmetry_check
 from ..utils.mesh import (
+    activate_uv_layer,
     check_exists,
     in_object_mode,
     loop_uvs,
@@ -237,8 +238,7 @@ class TransferUVs(Transfer):
             return len(plan.split_faces)
 
         data = target.data
-        if not data.uv_layers:
-            data.uv_layers.new(name="UVMap")
+        activate_uv_layer(data)
 
         coords = loop_uvs(data)
         coords[list(plan.loop_uvs)] = list(plan.loop_uvs.values())

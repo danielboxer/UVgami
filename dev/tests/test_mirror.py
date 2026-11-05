@@ -89,9 +89,15 @@ def symmetric_cloud(count, seed=1):
     return numpy.concatenate([half, half * [-1.0, 1.0, 1.0]])
 
 
+# one face over the whole cloud, so it is one loose part
+def one_part(coords):
+    return [list(range(len(coords)))]
+
+
 def test_symmetric_axis_takes_the_first_axis_the_vertices_mirror_across(axis_of):
     cube = [(x, y, z) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)]
-    assert axis_of(cube, [(0, 1, 3, 2)], (0, 0, 0))[:2] == ("X", True)
+    # a quad on each x face, since a vertex on no face belongs to no part
+    assert axis_of(cube, [(0, 1, 3, 2), (4, 5, 7, 6)], (0, 0, 0))[:2] == ("X", True)
 
 
 def test_symmetric_axis_ignores_the_triangulation(axis_of):
@@ -115,7 +121,7 @@ def test_symmetric_axis_flags_a_face_across_the_plane(axis_of):
 def test_symmetric_axis_matches_a_dense_cloud_exactly(axis_of):
     coords = symmetric_cloud(2000)
     center = (coords.min(axis=0) + coords.max(axis=0)) / 2
-    assert axis_of(coords, [], center)[:2] == ("X", True)
+    assert axis_of(coords, one_part(coords), center)[:2] == ("X", True)
 
 
 def test_symmetric_axis_calls_a_cloud_with_moved_vertices_approximate(axis_of):
@@ -124,12 +130,12 @@ def test_symmetric_axis_calls_a_cloud_with_moved_vertices_approximate(axis_of):
     diagonal = numpy.linalg.norm(coords.max(axis=0) - coords.min(axis=0))
     # a few vertices off their mirror by more than the exact cell, within the loose one
     coords[:20, 1] += 3 * MATCH_CELL * diagonal
-    assert axis_of(coords, [], center)[:2] == ("X", False)
+    assert axis_of(coords, one_part(coords), center)[:2] == ("X", False)
 
     # too many vertices moved out of the loose cell and no axis is left
     moved = int(len(coords) * (1 - SYMMETRY_SHARE)) + 1
     coords[:moved, 1] += 3 * SYMMETRY_CELL * diagonal
-    assert axis_of(coords, [], center) is None
+    assert axis_of(coords, one_part(coords), center) is None
 
 
 def test_symmetric_axis_prefers_an_exact_axis_over_an_earlier_approximate_one(axis_of):
@@ -142,7 +148,7 @@ def test_symmetric_axis_prefers_an_exact_axis_over_an_earlier_approximate_one(ax
     # moved with their y partners, so y stays an exact mirror and x does not
     coords[:10, 0] += 3 * MATCH_CELL * diagonal
     coords[half : half + 10, 0] += 3 * MATCH_CELL * diagonal
-    assert axis_of(coords, [], center)[:2] == ("Y", True)
+    assert axis_of(coords, one_part(coords), center)[:2] == ("Y", True)
 
 
 def test_symmetric_axis_accepts_drift_within_the_match_cell(axis_of):
@@ -152,7 +158,36 @@ def test_symmetric_axis_accepts_drift_within_the_match_cell(axis_of):
     # a quarter cell per coordinate on both partners keeps each pair inside a cell
     generator = numpy.random.default_rng(3)
     coords += generator.uniform(-0.25, 0.25, coords.shape) * MATCH_CELL * diagonal
-    assert axis_of(coords, [], center)[:2] == ("X", True)
+    assert axis_of(coords, one_part(coords), center)[:2] == ("X", True)
+
+
+ASYMMETRIC_TRIANGLE = [(3.0, 2.0, 0.0), (3.5, 2.1, 0.0), (3.2, 2.9, 0.0)]
+
+
+def test_symmetric_axis_leaves_a_lopsided_part_out(axis_of):
+    coords = WING_COORDS + ASYMMETRIC_TRIANGLE
+    faces = [(0, 1, 2), (3, 5, 4), (6, 7, 8)]
+
+    found = axis_of(coords, faces, (0, 0, 0))
+
+    assert found[:3] == ("X", True, False)
+    assert found.symmetric.tolist() == [True] * 6 + [False] * 3
+    assert partner_map(found.partners) == {0: 3, 1: 4, 2: 5, 3: 0, 4: 1, 5: 2}
+
+
+def test_symmetric_axis_keeps_the_gate_per_part(axis_of):
+    # the wings mirror, the cloud part pairs under the share even with the wings counted
+    cloud = symmetric_cloud(200, seed=5)
+    moved = int(len(cloud) * (1 - SYMMETRY_SHARE)) + 1
+    diagonal = numpy.linalg.norm(cloud.max(axis=0) - cloud.min(axis=0))
+    cloud[:moved, 1] += 3 * SYMMETRY_CELL * diagonal
+    coords = [*WING_COORDS, *map(tuple, cloud.tolist())]
+    faces = [(0, 1, 2), (3, 5, 4), list(range(6, len(coords)))]
+
+    found = axis_of(coords, faces, (0, 0, 0))
+
+    assert found[:2] == ("X", True)
+    assert found.symmetric.tolist() == [True] * 6 + [False] * len(cloud)
 
 
 def test_mirror_partners_pairs_only_vertices_that_point_at_each_other(partners_of):
@@ -198,10 +233,47 @@ def test_mirrored_uvs_flip_the_positive_half_past_its_right_edge(tools, tmp_path
     uvs = numpy.where(negative[:, None], 9.0, numpy.stack([x + 2, y], axis=1))
 
     mirrored = mirrored_uvs(
-        tools, tmp_path, positions, corners, totals, uvs, numpy.zeros(3), "X", TOLERANCE
+        tools,
+        tmp_path,
+        positions,
+        corners,
+        totals,
+        uvs,
+        numpy.zeros(3),
+        "X",
+        TOLERANCE,
+        numpy.ones(len(totals), dtype=bool),
     )
 
     # the positive half spans u 2 to 3, its mirror image lands on 3 to 4
+    expected = numpy.where(negative[:, None], numpy.stack([4 + x, y], axis=1), uvs)
+    numpy.testing.assert_allclose(mirrored, (expected - [2.0, 0.0]) / 2.0)
+
+
+def test_mirrored_uvs_leave_a_part_outside_the_mask_alone(tools, tmp_path):
+    coords = SPLIT_QUADS_COORDS + [(-1.0, 3.0, 0.0), (-2.0, 3.0, 0.0), (-1.0, 4.0, 0.0)]
+    faces = SPLIT_QUADS_FACES + [[7, 8, 9]]
+    positions, corners, totals = mesh_arrays(coords, faces)
+    negative = numpy.arange(len(corners)) < 6
+    x, y = positions[corners, 0], positions[corners, 1]
+    # the lone triangle keeps the uvs it came with
+    uvs = numpy.where(negative[:, None], 9.0, numpy.stack([x + 2, y], axis=1))
+    uvs[-3:] = [[2.5, 0.5], [2.6, 0.5], [2.5, 0.6]]
+    symmetric = numpy.array([True] * 4 + [False])
+
+    mirrored = mirrored_uvs(
+        tools,
+        tmp_path,
+        positions,
+        corners,
+        totals,
+        uvs,
+        numpy.zeros(3),
+        "X",
+        TOLERANCE,
+        symmetric,
+    )
+
     expected = numpy.where(negative[:, None], numpy.stack([4 + x, y], axis=1), uvs)
     numpy.testing.assert_allclose(mirrored, (expected - [2.0, 0.0]) / 2.0)
 
@@ -223,6 +295,7 @@ def test_mirrored_uvs_raise_when_a_vertex_has_no_mirror(tools, tmp_path):
             numpy.zeros(3),
             "X",
             TOLERANCE,
+            numpy.ones(len(totals), dtype=bool),
         )
 
 
@@ -252,7 +325,16 @@ def test_mirrored_uvs_take_a_face_from_the_one_chart_holding_all_its_corners(
     uvs = chart_uvs(positions, corners, totals, [0, 0, 0, 0, 1, -1, -1, -1, -1, -1])
 
     mirrored = mirrored_uvs(
-        tools, tmp_path, positions, corners, totals, uvs, numpy.zeros(3), "X", TOLERANCE
+        tools,
+        tmp_path,
+        positions,
+        corners,
+        totals,
+        uvs,
+        numpy.zeros(3),
+        "X",
+        TOLERANCE,
+        numpy.ones(len(totals), dtype=bool),
     )
 
     # chart 1 reaches u 7, every negative corner mirrors its chart 0 uv past it
@@ -284,6 +366,7 @@ def test_mirrored_uvs_raise_when_no_chart_holds_a_face_s_mirror(tools, tmp_path)
             numpy.zeros(3),
             "X",
             TOLERANCE,
+            numpy.ones(len(totals), dtype=bool),
         )
 
 
@@ -304,6 +387,7 @@ def test_mirrored_uvs_raise_when_a_face_is_missing_on_one_side(tools, tmp_path):
             numpy.zeros(3),
             "X",
             TOLERANCE,
+            numpy.ones(len(totals), dtype=bool),
         )
 
 
@@ -313,8 +397,21 @@ def test_faces_mirror_only_when_every_face_has_a_mirror_face():
     same_diagonal = [(0, 1, 2), (0, 2, 3), (4, 6, 5), (4, 7, 6)]
     other_diagonal = [(0, 1, 2), (0, 2, 3), (4, 7, 5), (5, 7, 6)]
 
-    assert faces_mirror(*mesh_arrays(coords, same_diagonal)[1:], partners)
-    assert not faces_mirror(*mesh_arrays(coords, other_diagonal)[1:], partners)
+    every_face = numpy.ones(len(same_diagonal), dtype=bool)
+
+    assert faces_mirror(*mesh_arrays(coords, same_diagonal)[1:], partners, every_face)
+    assert not faces_mirror(
+        *mesh_arrays(coords, other_diagonal)[1:], partners, every_face
+    )
+
+
+def test_faces_mirror_skips_faces_outside_the_mask():
+    coords = mirrored_coords(QUAD_COORDS) + ASYMMETRIC_TRIANGLE
+    partners = numpy.array([4, 5, 6, 7, 0, 1, 2, 3, -1, -1, -1])
+    faces = [(0, 1, 2), (0, 2, 3), (4, 6, 5), (4, 7, 6), (8, 9, 10)]
+    symmetric = numpy.array([True] * 4 + [False])
+
+    assert faces_mirror(*mesh_arrays(coords, faces)[1:], partners, symmetric)
 
 
 def test_face_and_region_partners_pair_mirrored_faces_and_skip_the_rest():
@@ -340,8 +437,10 @@ def quad_row(face_count):
 
 @pytest.fixture
 def mirror_regions(tools, tmp_path):
-    def run(coords, faces, labels):
+    def run(coords, faces, labels, symmetric=None):
         positions, corners, totals = mesh_arrays(coords, faces)
+        if symmetric is None:
+            symmetric = numpy.ones(len(faces), dtype=bool)
         return symmetric_regions(
             tools,
             tmp_path,
@@ -352,9 +451,26 @@ def mirror_regions(tools, tmp_path):
             "X",
             numpy.zeros(3),
             TOLERANCE,
+            symmetric,
         )
 
     return run
+
+
+def test_symmetric_regions_leave_a_part_outside_the_mask_alone(mirror_regions):
+    coords, faces = quad_row(4)
+    # a lone quad off the row, a region of its own with a label past the row's
+    coords += [(0.3, 5.0, 0.0), (0.6, 5.0, 0.0), (0.6, 6.0, 0.0), (0.3, 6.0, 0.0)]
+    faces.append((10, 11, 12, 13))
+    symmetric = numpy.array([True] * 4 + [False])
+
+    mirrored = mirror_regions(coords, faces, [5, 1, 1, 2, 3], symmetric)
+
+    assert mirrored.kept_side == 1
+    assert mirrored.labels[-1] == 3
+    assert mirrored.labels[2:4].tolist() == [1, 2]
+    assert mirrored.labels[0] not in (1, 2, 3, 5)
+    assert mirrored.region_count == 4
 
 
 def test_symmetric_regions_keeps_the_half_with_more_regions_then_shorter_borders(

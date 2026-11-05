@@ -65,6 +65,31 @@ def loop_starts(mesh):
     return starts
 
 
+SYMMETRIC_ATTRIBUTE = "uvgami_symmetric"
+
+
+def write_symmetric_faces(mesh, mask):
+    attribute = mesh.attributes.get(SYMMETRIC_ATTRIBUTE) or mesh.attributes.new(
+        SYMMETRIC_ATTRIBUTE, "INT", "FACE"
+    )
+    attribute.data.foreach_set("value", numpy.asarray(mask, dtype=numpy.int32))
+
+
+def symmetric_faces(mesh):
+    values = numpy.empty(len(mesh.polygons), dtype=numpy.int32)
+    mesh.attributes[SYMMETRIC_ATTRIBUTE].data.foreach_get("value", values)
+    return values == 1
+
+
+def activate_uv_layer(mesh):
+    if mesh.uv_layers.active is not None:
+        return
+    # joins onto a mesh without uvs keep the other mesh's layer with none active
+    mesh.uv_layers.active = (
+        mesh.uv_layers[0] if mesh.uv_layers else mesh.uv_layers.new()
+    )
+
+
 def loop_uvs(mesh):
     flat = numpy.empty(len(mesh.loops) * 2)
     mesh.uv_layers.active.data.foreach_get("uv", flat)

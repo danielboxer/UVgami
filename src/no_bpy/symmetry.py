@@ -17,7 +17,7 @@ LABELS_NAME = "labels.txt"
 UVS_NAME = "uvs.txt"
 OUTPUT_NAME = "output.txt"
 
-MirrorAxis = namedtuple("MirrorAxis", "axis exact crosses partners")
+MirrorAxis = namedtuple("MirrorAxis", "axis exact crosses partners symmetric")
 
 
 def _read_integers(folder):
@@ -33,12 +33,29 @@ def _plane_flags(center, axis=None, tolerance=None):
     return flags
 
 
+def write_face_mask(path, mask):
+    path.write_text(
+        "".join(f"{int(flag)}\n" for flag in numpy.asarray(mask, dtype=bool).tolist())
+    )
+
+
 def _start(
-    command, workdir, subcommand, positions, faces, flags, read, labels=None, uvs=None
+    command,
+    workdir,
+    subcommand,
+    positions,
+    faces,
+    flags,
+    read,
+    labels=None,
+    uvs=None,
+    symmetric=None,
 ):
     folder = new_run_folder(workdir)
     input_path = folder / INPUT_NAME
     write_obj(input_path, numpy.asarray(positions, dtype=numpy.float64).tolist(), faces)
+    if symmetric is not None:
+        write_face_mask(folder / f"{input_path.stem}_symmetric", symmetric)
     paths = [input_path]
     if labels is not None:
         paths.append(folder / LABELS_NAME)
@@ -57,10 +74,11 @@ def _start(
     )
 
 
-def faces_mirror(corners, totals, partners):
+def faces_mirror(corners, totals, partners, symmetric_faces):
     starts = face_starts(totals)
-    for size in numpy.unique(totals):
-        rows = corners[starts[totals == size][:, None] + numpy.arange(size)]
+    for size in numpy.unique(totals[symmetric_faces]):
+        chosen = (totals == size) & symmetric_faces
+        rows = corners[starts[chosen][:, None] + numpy.arange(size)]
         mirrored = partners[rows]
         if (mirrored < 0).any():
             return False
@@ -110,9 +128,14 @@ def start_symmetric_axis(
         words = done_text(folder).split()
         if words == ["none"]:
             return None
-        axis, exactness, crossing = words
+        axis, exactness, crossing, _ = words
+        partners, symmetric = _read_integers(folder).reshape(-1, 2).T
         return MirrorAxis(
-            axis, exactness == "exact", crossing == "crossing", _read_integers(folder)
+            axis,
+            exactness == "exact",
+            crossing == "crossing",
+            partners,
+            symmetric == 1,
         )
 
     faces = faces_from_arrays(corners, totals)
@@ -136,7 +159,16 @@ MirroredRegions = namedtuple(
 
 
 def symmetric_regions(
-    command, workdir, positions, corners, totals, labels, axis, center, tolerance
+    command,
+    workdir,
+    positions,
+    corners,
+    totals,
+    labels,
+    axis,
+    center,
+    tolerance,
+    symmetric,
 ):
     def read(folder):
         kept_side, region_count = map(int, done_text(folder).split())
@@ -152,7 +184,15 @@ def symmetric_regions(
     faces = faces_from_arrays(corners, totals)
     flags = _plane_flags(center, axis=axis, tolerance=tolerance)
     run = _start(
-        command, workdir, "mirror-regions", positions, faces, flags, read, labels=labels
+        command,
+        workdir,
+        "mirror-regions",
+        positions,
+        faces,
+        flags,
+        read,
+        labels=labels,
+        symmetric=symmetric,
     )
     return poll_run(run, None)
 
@@ -166,7 +206,16 @@ class FaceHasNoMirror(EngineError):
 
 
 def mirrored_uvs(
-    command, workdir, positions, corners, totals, uvs, center, axis, tolerance
+    command,
+    workdir,
+    positions,
+    corners,
+    totals,
+    uvs,
+    center,
+    axis,
+    tolerance,
+    symmetric,
 ):
     def read(folder):
         if done_text(folder) == "spans-charts":
@@ -184,5 +233,15 @@ def mirrored_uvs(
 
     faces = faces_from_arrays(corners, totals)
     flags = _plane_flags(center, axis=axis, tolerance=tolerance)
-    run = _start(command, workdir, "mirror-uvs", positions, faces, flags, read, uvs=uvs)
+    run = _start(
+        command,
+        workdir,
+        "mirror-uvs",
+        positions,
+        faces,
+        flags,
+        read,
+        uvs=uvs,
+        symmetric=symmetric,
+    )
     return poll_run(run, None)

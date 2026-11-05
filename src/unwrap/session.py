@@ -55,8 +55,10 @@ from ..utils.mesh import (
     new_bmesh,
     set_bmesh,
     set_loop_uvs,
+    symmetric_faces,
     triangulate,
     world_positions,
+    write_symmetric_faces,
 )
 from ..utils.paths import get_extension_dir_path, unused_input_path
 from ..utils.uvgami_tools import tools_command
@@ -222,6 +224,7 @@ class InputExporter:
         symmetrize_job = unwrap.symmetrize_job
         if (
             symmetrize_job is not None
+            and unwrap.symmetric
             and not unwrap.keeps_uvs
             and (unwrap.preseeded or not unwrap.has_uvs)
         ):
@@ -364,6 +367,13 @@ def invalid_piece_reason(obj, *, had_uv_layer):
 MeshInput = namedtuple("MeshInput", ["copy", "original", "name", "proxy_parts"])
 
 
+def piece_is_symmetric(piece):
+    flags = symmetric_faces(piece.data)
+    if flags.any() and not flags.all():
+        raise RuntimeError(f"{piece.name} mixes symmetric and asymmetric faces")
+    return bool(flags.all())
+
+
 def symmetry_job(symmetry):
     if symmetry is None or symmetry.kind == "WHOLE":
         return None
@@ -481,6 +491,9 @@ class SessionBuilder:
 
     def _start_segmenting_or_preseed(self, obj, symmetry):
         props = manager.props
+        # the proxy, the region split and the separation renumber faces and carry face attributes
+        if symmetry is not None:
+            write_symmetric_faces(obj.data, symmetry.symmetric_faces)
         if not self.engine.splits_regions(props):
             if self.inputs[obj].proxy_parts is None or props.proxy_mode != "AUTO":
                 return self._start_preseed(obj, symmetry)
@@ -569,7 +582,7 @@ class SessionBuilder:
                 partners = mesh_mirror_partners(
                     obj.data, symmetry.center, symmetry.axis
                 )
-            plane = ("XYZ".index(symmetry.axis), partners)
+            plane = ("XYZ".index(symmetry.axis), partners, symmetric_faces(obj.data))
 
         separate = functools.partial(
             self._separate,
@@ -634,6 +647,7 @@ class SessionBuilder:
             input_name=input_name,
             path=path,
             preseeded=preseeded and uses_uvs and not keeps_uvs,
+            symmetric=jobs["symmetrize_job"] is not None and piece_is_symmetric(obj),
             **jobs,
         )
         unwrap.has_uvs = uses_uvs
