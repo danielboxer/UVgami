@@ -5,6 +5,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+ENGINE_DOWNLOADS_URL = "https://uvgami.com/engine-downloads"
+
 _CHUNK = 1 << 20
 _ATTEMPTS = 4
 _BACKOFF = 2.0
@@ -58,7 +60,7 @@ DOWNLOAD_TIMEOUT_SECONDS = 30
 
 def _fetch(url, part, progress):
     resume_from = part.stat().st_size if part.is_file() else 0
-    request = urllib.request.Request(url)
+    request = urllib.request.Request(url, headers={"User-Agent": "UVgami"})
     if resume_from:
         request.add_header("Range", f"bytes={resume_from}-")
     with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:

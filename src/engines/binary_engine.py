@@ -11,7 +11,7 @@ from ..utils.engine_binaries import (
 )
 from ..utils.paths import get_extension_dir_path
 from . import Engine
-from .download import download_file, verify_sha256
+from .download import ENGINE_DOWNLOADS_URL, download_file, verify_sha256
 from .install_task import (
     DELETE_DESCRIPTION,
     DELETED_MESSAGE,
@@ -31,8 +31,6 @@ from .install_task import (
     task_state,
     version_below,
 )
-
-RELEASES_URL = "https://github.com/DanielBoxer/UVgami/releases"
 
 DOWNLOAD_PHASE = "Downloading engine"
 LICENSE_FILE = "LICENSE.txt"
@@ -114,10 +112,11 @@ class EngineRelease:
     def fetch_binary(self, install_dir):
         platform_tag = get_platform_tag()
         asset = f"{self.name}-engine-{self.version}-{platform_tag}.zip"
-        url = f"{RELEASES_URL}/download/{self.name}-v{self.version}/{asset}"
         archive_path = install_dir / asset
         task_state["phase"] = DOWNLOAD_PHASE
-        download_file(url, archive_path, progress=report_progress)
+        download_file(
+            f"{ENGINE_DOWNLOADS_URL}/{asset}", archive_path, progress=report_progress
+        )
         verify_sha256(archive_path, self.archive_sha256s[platform_tag])
 
         binary = install_dir / get_engine_binary_name(self.name)

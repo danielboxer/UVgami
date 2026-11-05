@@ -20,6 +20,7 @@ class RangeHandler(BaseHTTPRequestHandler):
         server = self.server
         byte_range = self.headers.get("Range")
         server.requests.append(byte_range)
+        server.user_agents.append(self.headers.get("User-Agent"))
         if len(server.requests) <= server.fail_416:
             self.send_response(416)
             self.send_header("Content-Range", f"bytes */{len(CONTENT)}")
@@ -53,6 +54,7 @@ class RangeHandler(BaseHTTPRequestHandler):
 def server():
     http_server = ThreadingHTTPServer(("127.0.0.1", 0), RangeHandler)
     http_server.requests = []
+    http_server.user_agents = []
     http_server.ignore_range = False
     http_server.drop_requests = 0
     http_server.fail_416 = 0
@@ -65,6 +67,12 @@ def server():
 def url_for(server):
     host, port = server.server_address
     return f"http://{host}:{port}/model.ckpt"
+
+
+def test_download_does_not_send_pythons_default_user_agent(server, tmp_path):
+    download.download_file(url_for(server), tmp_path / "model.ckpt", backoff=0)
+
+    assert server.user_agents == ["UVgami"]
 
 
 def test_resume_via_range(server, tmp_path):

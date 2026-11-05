@@ -18,4 +18,4 @@ tags = ["UV"]
 
 [permissions]
 files = "Import/export OBJ"
-network = "Download the unwrapping engines from GitHub releases"
+network = "Download the unwrapping engines"

@@ -77,13 +77,13 @@ jobs:
 
       - name: Download the published zip
         shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # bash 3.2 on the macos runners has no ${ENGINE^^}
           CONSTANT="$(echo "$ENGINE" | tr a-z A-Z)_VERSION"
           VERSION=$(grep -m1 "^$CONSTANT = " src/engines/$ENGINE/install.py | cut -d'"' -f2)
-          gh release download "$ENGINE-v$VERSION" --pattern "$ENGINE-engine-*-${{ matrix.platform.pkg_name }}.zip" --dir package
+          ZIP="$ENGINE-engine-$VERSION-${{ matrix.platform.pkg_name }}.zip"
+          mkdir -p package
+          curl -fsSL -A uvgami-ci -o "package/$ZIP" "https://uvgami.com/engine-downloads/$ZIP"
 
       - name: Check the zip against the pinned sha256
         shell: bash
@@ -214,14 +214,15 @@ jobs:
       - name: Download the engines
         if: matrix.platform.suite
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EXE: ${{ matrix.platform.os == 'windows-latest' && '.exe' || '' }}
         run: |
           mkdir -p engine-builds/$TAG
           for ENGINE in optcuts xatlas; do
             CONSTANT="$(echo "$ENGINE" | tr a-z A-Z)_VERSION"
             VERSION=$(grep -m1 "^$CONSTANT = " src/engines/$ENGINE/install.py | cut -d'"' -f2)
-            gh release download "$ENGINE-v$VERSION" --pattern "$ENGINE-engine-*-$TAG.zip" --dir package/$ENGINE
+            ZIP="$ENGINE-engine-$VERSION-$TAG.zip"
+            mkdir -p package/$ENGINE
+            curl -fsSL -A uvgami-ci -o "package/$ENGINE/$ZIP" "https://uvgami.com/engine-downloads/$ZIP"
             mkdir -p extracted/$ENGINE
             unzip -q package/$ENGINE/*.zip -d extracted/$ENGINE
             cp "$(find extracted/$ENGINE -type f -name "$ENGINE$EXE")" engine-builds/$TAG/

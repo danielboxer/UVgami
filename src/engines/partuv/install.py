@@ -1,16 +1,14 @@
 import functools
-import json
 import pathlib
 import platform
 import shutil
 import subprocess
 import tarfile
-import urllib.request
 import zipfile
 
 import bpy
 
-from ..download import download_file, with_retries
+from ..download import ENGINE_DOWNLOADS_URL, download_file
 from ..install_task import (
     DELETE_DESCRIPTION,
     DELETED_MESSAGE,
@@ -32,14 +30,17 @@ from .venv_commands import VENV_PYTHON, build_install_commands
 # must match partuv's pyproject.toml
 PARTUV_VERSION = "0.1.6"
 PARTUV_MINIMUM_VERSION = "0.1.0"
-PARTUV_RELEASE_API = f"https://api.github.com/repos/DanielBoxer/UVgami/releases/tags/partuv-v{PARTUV_VERSION}"
+PARTUV_WHEELS = {
+    "Windows": f"partuv-{PARTUV_VERSION}-cp311-cp311-win_amd64.whl",
+    # auditwheel sets the manylinux tag from the build runner's glibc
+    "Linux": f"partuv-{PARTUV_VERSION}-cp311-cp311-manylinux_2_35_x86_64.whl",
+}
 # Hugging Face's copy changes with its main branch
 CHECKPOINT_URL = "https://github.com/DanielBoxer/UVgami/releases/download/checkpoint/model_objaverse.ckpt"
 # partuv is an nvidia cuda wheel
 PARTUV_PLATFORMS = ("Windows", "Linux")
 GEOMETRIC_DOWNLOAD_SIZE = "200 MB"
 AI_DOWNLOAD_SIZE = "5 GB"
-PARTUV_PY_TAG = "cp311"
 UV_VERSION = "0.11.25"
 UV_ARCHIVES = {
     "Windows": "uv-x86_64-pc-windows-msvc.zip",
@@ -66,31 +67,6 @@ def partuv_update_pending():
 
 def partuv_too_old():
     return version_below(get_installed_partuv_version(), PARTUV_MINIMUM_VERSION)
-
-
-def find_wheel_url():
-    def fetch_release():
-        request = urllib.request.Request(
-            PARTUV_RELEASE_API, headers={"Accept": "application/vnd.github+json"}
-        )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.load(response)
-
-    release = with_retries(PARTUV_RELEASE_API, fetch_release)
-    # linux wheels ship as manylinux after auditwheel repair
-    wheel_platform = "win_amd64" if platform.system() == "Windows" else "x86_64"
-    for asset in release.get("assets", []):
-        name = asset["name"]
-        if (
-            name.startswith(f"partuv-{PARTUV_VERSION}-")
-            and PARTUV_PY_TAG in name
-            and name.endswith(f"{wheel_platform}.whl")
-        ):
-            return asset["browser_download_url"]
-    raise RuntimeError(
-        f"no partuv {PARTUV_VERSION} wheel for {PARTUV_PY_TAG} {wheel_platform} in the"
-        f" partuv-v{PARTUV_VERSION} release"
-    )
 
 
 def ensure_uv():
@@ -147,7 +123,9 @@ def run_venv_install(wheel_url, *, ai):
 
 
 def install_partuv(*, ai):
-    run_venv_install(find_wheel_url(), ai=ai)
+    run_venv_install(
+        f"{ENGINE_DOWNLOADS_URL}/{PARTUV_WHEELS[platform.system()]}", ai=ai
+    )
     target = get_partfield_checkpoint_path()
     if not ai or target.is_file():
         return
