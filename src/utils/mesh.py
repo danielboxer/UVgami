@@ -81,6 +81,24 @@ def symmetric_faces(mesh):
     return values == 1
 
 
+PAINTED_ATTRIBUTE = "uvgami_painted"
+
+
+def write_painted_faces(mesh, mask):
+    attribute = mesh.attributes.get(PAINTED_ATTRIBUTE) or mesh.attributes.new(
+        PAINTED_ATTRIBUTE, "BOOLEAN", "FACE"
+    )
+    attribute.data.foreach_set("value", numpy.asarray(mask, dtype=bool))
+
+
+def painted_faces(mesh):
+    values = numpy.zeros(len(mesh.polygons), dtype=bool)
+    attribute = mesh.attributes.get(PAINTED_ATTRIBUTE)
+    if attribute is not None:
+        attribute.data.foreach_get("value", values)
+    return values
+
+
 def activate_uv_layer(mesh):
     if mesh.uv_layers.active is not None:
         return

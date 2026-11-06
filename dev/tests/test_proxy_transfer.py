@@ -47,7 +47,13 @@ def dense_arrays(verts, faces, matrix=IDENTITY):
 
 
 def proxy_arrays(verts, faces, uvs, matrix=IDENTITY):
-    return {"positions": verts, "faces": faces, "corner_uvs": uvs, "matrix": matrix}
+    return {
+        "positions": verts,
+        "faces": faces,
+        "corner_uvs": uvs,
+        "matrix": matrix,
+        "painted_faces": [0] * len(faces),
+    }
 
 
 def uncut_proxy():
@@ -574,6 +580,48 @@ def test_transfer_seams_the_engine_tears_on_a_part_the_proxy_left_alone(transfer
 
     assert seams == {(y * SIDE + 3, (y + 1) * SIDE + 3) for y in range(GRID)}
     assert uv_pieces(uvs[: 3 * len(faces)], faces) == 2
+
+
+def test_transfer_keeps_the_engine_uvs_on_painted_faces(transfer):
+    verts, faces = quad_grid(GRID)
+    painted_columns = 3
+    painted = [
+        face for index, face in enumerate(faces) if index % GRID < painted_columns
+    ]
+    used = sorted({vertex for face in painted for vertex in face})
+    local = {vertex: index for index, vertex in enumerate(used)}
+    proxy_verts = [verts[vertex] for vertex in used]
+    proxy_faces = [[local[vertex] for vertex in face] for face in painted]
+    proxy_uvs = sheared_uvs(proxy_verts, proxy_faces)
+    start = len(proxy_verts)
+    proxy_verts += [
+        (painted_columns, 0.0, 0.0),
+        (GRID, 0.0, 0.0),
+        (GRID, GRID, 0.0),
+        (painted_columns, GRID, 0.0),
+    ]
+    proxy_faces += [[start, start + 1, start + 2], [start, start + 2, start + 3]]
+    proxy_uvs += [
+        [(SHIFT, 0.0), (SHIFT + 3.0, 0.0), (SHIFT + 3.0, GRID)],
+        [(SHIFT, 0.0), (SHIFT + 3.0, GRID), (SHIFT, GRID)],
+    ]
+    proxy = proxy_arrays(proxy_verts, proxy_faces, proxy_uvs)
+    proxy["painted_faces"] = [1] * len(painted) + [0, 0]
+    dense = dense_arrays(verts, faces)
+
+    seams, uvs = transfer(dense, proxy)
+
+    assert seams == column_seams(painted_columns)
+    painted_corners = numpy.array(
+        [index % GRID < painted_columns for index in range(len(faces))]
+    ).repeat(4)
+    positions = numpy.array(verts)[dense["corners"][painted_corners]]
+    expected = positions[:, :2] + numpy.outer(positions[:, 1], [0.4, 0.0])
+    measured = uvs[painted_corners]
+    moved = measured - measured[0]
+    target = expected - expected[0]
+    scale = numpy.linalg.norm(moved) / numpy.linalg.norm(target)
+    numpy.testing.assert_allclose(moved, scale * target, atol=1e-9)
 
 
 def test_transfer_flattens_a_part_whose_engine_uvs_fold(transfer):

@@ -153,10 +153,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     )
     keep_quads: bpy.props.BoolProperty(
         name="",
-        description=(
-            "Keep quads and n-gons in the output."
-            " The engine never cuts a seam across a face, so every one is rebuilt"
-        ),
+        description="Keep quads and n-gons in the output",
         default=True,
     )
     max_cores: bpy.props.IntProperty(
@@ -175,16 +172,14 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     )
     area_expand: bpy.props.IntProperty(
         name="",
-        description=(
-            "Grow the selected area by this many face rings to affect a larger area"
-        ),
+        description="Grow the selected area by this many face rings",
         min=0,
         max=10,
         default=1,
     )
     stack_similar: bpy.props.BoolProperty(
         name="",
-        description="Stack repeated mesh pieces by only unwrapping one and copying it",
+        description="Unwrap repeated pieces once and stack the copies",
     )
     proxy_mode: bpy.props.EnumProperty(
         name="Proxy",
@@ -232,10 +227,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     )
     symmetry: bpy.props.BoolProperty(
         name="Symmetry",
-        description=(
-            "Mirror the UV map across the symmetry plane of a symmetrical mesh."
-            " Has no effect on a mesh that isn't symmetrical"
-        ),
+        description="Mirror the UV map on symmetrical meshes",
         default=True,
     )
     # sym_axes: bpy.props.EnumProperty(

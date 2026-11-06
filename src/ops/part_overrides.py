@@ -281,7 +281,7 @@ class UVGAMI_OT_edit_part_overrides(bpy.types.Operator):
     bl_idname = "uvgami.edit_part_overrides"
     bl_label = "Edit Parts"
     bl_description = (
-        "Select loose parts in Edit Mode and give them their own unwrap settings."
+        "Give selected loose parts different unwrap settings."
         " Clicking a face selects its whole part"
     )
 

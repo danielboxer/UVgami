@@ -20,6 +20,7 @@ from .utils.mesh import (
     face_vertices,
     loop_vertices_and_face_sizes,
     new_bmesh,
+    painted_faces,
     set_bmesh,
     set_loop_uvs,
     symmetric_faces,
@@ -341,6 +342,7 @@ def transfer_inputs(input_mesh, output):
         "matrix": numpy.array(output.matrix_world, dtype=numpy.float64),
         "faces": face_vertices(output_data),
         "corner_uvs": corner_uvs(output_data),
+        "painted_faces": painted_faces(output_data),
     }
     return dense, proxy
 

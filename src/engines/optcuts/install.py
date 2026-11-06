@@ -37,6 +37,7 @@ class OptcutsInstall(BinaryEngine):
     release = OPTCUTS
     supports_keep_quads = True
     supports_hard_surface = True
+    supports_painted_islands = True
     keeps_plane_vertices_on_u_zero = True
     supports_regions = True
     supports_symmetry = True

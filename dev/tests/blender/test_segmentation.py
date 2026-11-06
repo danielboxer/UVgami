@@ -369,10 +369,11 @@ def test_a_region_draws_its_quad_loops_and_the_nearest_one_is_picked(load_obj):
     tail, head = drawn.edges[0].tolist()
     middle = (session.positions[tail] + session.positions[head]) / 2
 
-    index = session._nearest_drawn_loop(drawn, None, None, middle)
-    (candidate,) = drawn.candidates[index]
+    nearest = session._nearest_drawn_loop(drawn, None, None, middle)
+    (candidate,) = drawn.candidates[nearest.index]
 
     segment_edit.stop_segment_edit()
     first_loop = drawn.edges[drawn.loop_of_edge == drawn.loop_of_edge[0], 0]
-    assert index == drawn.loop_of_edge[0]
+    assert nearest.index == drawn.loop_of_edge[0]
+    assert numpy.allclose(nearest.closest, middle)
     assert sorted(candidate.vertices) == sorted(first_loop.tolist())

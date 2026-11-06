@@ -368,6 +368,8 @@ class UVGAMI_PT_weights(bpy.types.Panel):
         row.operator("uvgami.clear_draw", icon="TRASH")
         row.operator("uvgami.exit_draw", icon="PANEL_CLOSE")
 
+        if active_engine(props.engine).supports_painted_islands:
+            return
         row = box.row()
         # weight_value only sets optcuts' -s seam avoidance flag
         row.active = props.avoid_seams

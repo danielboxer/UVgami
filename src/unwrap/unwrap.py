@@ -26,8 +26,9 @@ ExportData = collections.namedtuple(
         "face_smooth",
         "shading_modifiers",
         "overrides",
+        "painted_faces",
     ],
-    defaults=((), (), (), {}, (), (), {}),
+    defaults=((), (), (), {}, (), (), {}, ()),
 )
 
 

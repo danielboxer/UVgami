@@ -24,6 +24,7 @@ from ..utils.mesh import (
     face_vertices,
     mark_not_unwrapped,
     move_to_collection,
+    write_painted_faces,
 )
 from ..utils.paths import clear_io_dir, get_io_dir_paths, get_preferences
 from ..utils.ui import popup, set_status, switch_solid_color, tag_redraw
@@ -512,6 +513,8 @@ class UnwrapManager:
         self._restore_face_data(pieces, output, "material_index", "material_indices")
         self._restore_face_data(pieces, output, "use_smooth", "face_smooth")
         self._restore_overrides(pieces, output)
+        if unwrap.transfer_uvs_job is not None:
+            self._restore_painted_faces(pieces, output)
         add_shading_modifiers(output, export.shading_modifiers)
 
         if unwrap.preserve_job is not None:
@@ -685,6 +688,17 @@ class UnwrapManager:
                 name, OVERRIDE_ATTRIBUTES[name], "FACE"
             )
             attribute.data.foreach_set("value", values)
+
+    def _restore_painted_faces(self, pieces, output):
+        painted = numpy.concatenate([piece.export.painted_faces for piece in pieces])
+        if not painted.any():
+            return
+        if len(painted) != len(output.data.polygons):
+            raise RuntimeError(
+                f"the output has {len(output.data.polygons)} faces"
+                f" for {len(painted)} exported"
+            )
+        write_painted_faces(output.data, painted)
 
     def _restore_vertex_groups(self, pieces, output):
         combined = {}

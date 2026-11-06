@@ -80,6 +80,7 @@ LoopCandidate = namedtuple(
 )
 NO_LOOPS = ()
 DrawnLoops = namedtuple("DrawnLoops", "edges loop_of_edge candidates shape")
+NearestDrawnLoop = namedtuple("NearestDrawnLoop", "index closest")
 
 
 def closest_points_on_segments(starts, ends, point):
@@ -216,6 +217,13 @@ class EditSession:
         low, high = sorted((int(vertices[index]), int(following[index])))
         return int(self.fine[face]), low, high
 
+    def _hover_loop_under(self, face, point):
+        edge = self._edge_near(face, point)
+        if edge not in self.loop_candidates:
+            self.loop_candidates[edge] = self._loops_through(*edge)
+        self.hovered_loop_key = edge
+        self.hovered_loops = self.loop_candidates[edge]
+
     def hover(self, region, event):
         hovered_before, loops_before = self.hovered, self.hovered_loops
         region_before = self.hovered_region
@@ -228,22 +236,23 @@ class EditSession:
             drawn = self._drawn_loops(self.hovered_region)
             pair, closest = self.border_near(face, point)
             if drawn is not None:
-                index = self._nearest_drawn_loop(drawn, pair, closest, point)
-                if index is None:
+                nearest = self._nearest_drawn_loop(drawn, pair, closest, point)
+                if nearest is None:
                     self.hovered = pair
+                elif (
+                    self._pixels_apart(region, point, nearest.closest)
+                    <= BORDER_PICK_PIXELS
+                ):
+                    self.hovered_loop_key = (self.hovered_region, nearest.index)
+                    self.hovered_loops = drawn.candidates[nearest.index]
                 else:
-                    self.hovered_loop_key = (self.hovered_region, index)
-                    self.hovered_loops = drawn.candidates[index]
+                    self._hover_loop_under(face, point)
             elif pair is not None and (
                 self._pixels_apart(region, point, closest) <= BORDER_PICK_PIXELS
             ):
                 self.hovered = pair
             else:
-                edge = self._edge_near(face, point)
-                if edge not in self.loop_candidates:
-                    self.loop_candidates[edge] = self._loops_through(*edge)
-                self.hovered_loop_key = edge
-                self.hovered_loops = self.loop_candidates[edge]
+                self._hover_loop_under(face, point)
         self.hovered_mirror = None
         if self.hovered is not None:
             self.hovered_mirror = self._mirrored_border(self.hovered)
@@ -286,7 +295,7 @@ class EditSession:
         index = int(distances.argmin())
         if pair is not None and numpy.linalg.norm(closest - point) <= distances[index]:
             return None
-        return int(drawn.loop_of_edge[index])
+        return NearestDrawnLoop(int(drawn.loop_of_edge[index]), on_loops[index])
 
     def _mirrored_border(self, pair):
         low, high = (self.region_partners.get(region) for region in pair)
@@ -494,10 +503,8 @@ class UVGAMI_OT_edit_regions(bpy.types.Operator):
     bl_idname = "uvgami.edit_regions"
     bl_label = "Edit Regions"
     bl_description = (
-        "Turn the borders between the regions of the active mesh on or off by hand,"
-        " or split a region along an edge loop. Hover a region to highlight its"
-        " nearest border or the loop under the cursor, click to toggle it. On a"
-        " symmetrical mesh the mirrored border or loop changes too"
+        "Click a border to toggle it, or an edge loop to split a region."
+        " Mirrored on symmetrical meshes"
     )
     bl_options = {"REGISTER", "UNDO"}
 

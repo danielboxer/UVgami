@@ -22,6 +22,7 @@ class Engine:
     supports_import_uvs = False
     supports_proxy = False
     supports_hard_surface = False
+    supports_painted_islands = False
     keeps_plane_vertices_on_u_zero = False
     supports_regions = False
     supports_symmetry = False
@@ -71,6 +72,16 @@ class Engine:
             and self.supports_regions
             and not self.uses_import_uvs(props)
         )
+
+    def paint_is_seam_cost(self, props):
+        return (
+            props.avoid_seams
+            and self.supports_guided
+            and not self.supports_painted_islands
+        )
+
+    def paints_islands(self, props):
+        return props.avoid_seams and self.supports_painted_islands
 
     def uses_symmetry(self, props):
         return (

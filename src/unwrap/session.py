@@ -53,11 +53,13 @@ from ..utils.mesh import (
     mark_not_unwrapped,
     mesh_arrays,
     new_bmesh,
+    painted_faces,
     set_bmesh,
     set_loop_uvs,
     symmetric_faces,
     triangulate,
     world_positions,
+    write_painted_faces,
     write_symmetric_faces,
 )
 from ..utils.paths import get_extension_dir_path, unused_input_path
@@ -295,10 +297,8 @@ class InputExporter:
         return new_edges
 
     def _write_guide_file(self, obj, path, props, vertex_of_uv):
-        if not (
-            self.engine.supports_guided and props.avoid_seams
+        if not self.engine.paint_is_seam_cost(props):
             # (props.avoid_seams or props.reduce_stretching)
-        ):
             return
         weights = painted_weight_by_vertex(obj)
         if not weights:
@@ -351,6 +351,7 @@ class InputExporter:
             "vertex_count": len(obj.data.vertices),
             "shading_modifiers": get_shading_modifiers(obj),
             "overrides": read_overrides(obj.data),
+            "painted_faces": painted_faces(obj.data),
         }
 
 
@@ -482,18 +483,37 @@ class SessionBuilder:
             painted=paints_seams(obj, self.engine, props),
         )
         if check is None:
-            return self._start_segmenting_or_preseed(obj, None)
+            return self._start_painted_outline(obj, None)
         return self._wait(
             check,
             obj,
-            lambda task: self._start_segmenting_or_preseed(obj, task.result()),
+            lambda task: self._start_painted_outline(obj, task.result()),
         )
+
+    def _start_painted_outline(self, obj, symmetry):
+        if not self.engine.paints_islands(manager.props):
+            return self._start_segmenting_or_preseed(obj, symmetry)
+        from ..painted_islands import outline_work, weight_painted_faces
+
+        painted = weight_painted_faces(obj)
+        if not painted.any():
+            return self._start_segmenting_or_preseed(obj, symmetry)
+        return self._wait(
+            outline_work(obj, painted, symmetry),
+            obj,
+            functools.partial(self._finish_painted_outline, obj=obj, symmetry=symmetry),
+        )
+
+    def _finish_painted_outline(self, task, *, obj, symmetry):
+        write_painted_faces(obj.data, task.result())
+        return self._start_segmenting_or_preseed(obj, symmetry)
 
     def _start_segmenting_or_preseed(self, obj, symmetry):
         props = manager.props
         # the proxy, the region split and the separation renumber faces and carry face attributes
         if symmetry is not None:
-            write_symmetric_faces(obj.data, symmetry.symmetric_faces)
+            symmetric = numpy.asarray(symmetry.symmetric_faces, dtype=bool)
+            write_symmetric_faces(obj.data, symmetric & ~painted_faces(obj.data))
         if not self.engine.splits_regions(props):
             if self.inputs[obj].proxy_parts is None or props.proxy_mode != "AUTO":
                 return self._start_preseed(obj, symmetry)
@@ -538,42 +558,46 @@ class SessionBuilder:
         except (EngineError, WorkerError) as error:
             logger.add_error(f"{self.inputs[obj].name}: segmentation failed, {error}")
             return self._start_preseed(obj, symmetry)
-        border_positions = None
-        parts = None
-        border_edges = ()
         symmetry, segmentation = mirror_segmentation(
             *mesh_arrays(obj.data),
             segmentation,
             symmetry,
         )
-        if segmentation.border_edges:
-            from ..segmentation import split_on_borders
-
-            border_positions, parts = split_on_borders(obj, segmentation.border_edges)
-            border_edges = segmentation.border_edges
         return self._start_preseed(
             obj,
             symmetry,
             surface_modes=segmentation.surface_modes,
-            parts=parts,
-            border_positions=border_positions,
-            border_edges=border_edges,
+            border_edges=segmentation.border_edges,
         )
 
-    def _start_preseed(
-        self,
-        obj,
-        symmetry,
-        surface_modes=None,
-        parts=None,
-        border_positions=None,
-        border_edges=(),
-    ):
+    def _start_preseed(self, obj, symmetry, surface_modes=None, border_edges=()):
         props = manager.props
+        painted = painted_faces(obj.data)
+        if painted.any():
+            from ..no_bpy.painted_islands import borders_outside_paint, outline_edges
+
+            corners, totals = loop_vertices_and_face_sizes(obj.data)
+            border_edges = borders_outside_paint(corners, totals, painted, border_edges)
+            outline = outline_edges(corners, totals, painted)
+            # region borders often run along the paint outline
+            border_edges = sorted(
+                {tuple(sorted(edge)) for edge in border_edges}
+                | set(map(tuple, outline.tolist()))
+            )
+        border_positions = None
+        parts = None
+        if border_edges:
+            from ..segmentation import split_on_borders
+
+            border_positions, parts = split_on_borders(obj, border_edges)
         proxied = self.inputs[obj].proxy_parts is not None
         if proxied:
             if parts is None:
                 parts = self.inputs[obj].proxy_parts
+            if painted.any():
+                from ..painted_islands import parts_without_painted
+
+                parts = parts_without_painted(parts, obj.data, painted)
             surface_modes = self._make_proxy(obj, props, parts, surface_modes, symmetry)
         plane = None
         if symmetry is not None and symmetry.kind == "WHOLE":
@@ -642,6 +666,10 @@ class SessionBuilder:
             and obj.data.uv_layers.active is not None
         )
         keeps_uvs = piece_keeps_uvs(obj.data)
+        if self.engine.paints_islands(props):
+            from ..painted_islands import piece_is_painted
+
+            keeps_uvs = keeps_uvs or piece_is_painted(obj)
         unwrap = Unwrap(
             name=piece_name,
             input_name=input_name,
@@ -666,9 +694,56 @@ class SessionBuilder:
         border_positions,
         border_edges,
     ):
-        props = manager.props
         if symmetrize_job is not None:
             symmetrize_job.cut(obj)
+        separate = functools.partial(
+            self._separate_pieces,
+            obj,
+            preseeded=preseeded,
+            symmetrize_job=symmetrize_job,
+            had_uv_layer=had_uv_layer,
+            border_positions=border_positions,
+            border_edges=border_edges,
+        )
+        painted = painted_faces(obj.data)
+        if not painted.any():
+            return separate()
+        from ..painted_islands import flatten_work
+
+        return self._wait(
+            flatten_work(obj, painted, manager.props.priority),
+            obj,
+            functools.partial(
+                self._finish_painted_flatten,
+                obj=obj,
+                painted=painted,
+                separate=separate,
+            ),
+        )
+
+    def _finish_painted_flatten(self, task, *, obj, painted, separate):
+        from ..painted_islands import apply_painted_uvs
+
+        flattened = task.result()
+        if flattened.overlapping_islands:
+            logger.add_error(
+                f"{self.inputs[obj].name}: a painted area overlaps itself,"
+                " paint a smaller area"
+            )
+        apply_painted_uvs(obj.data, painted, flattened.corner_uvs)
+        return separate()
+
+    def _separate_pieces(
+        self,
+        obj,
+        *,
+        preseeded,
+        symmetrize_job,
+        had_uv_layer,
+        border_positions,
+        border_edges,
+    ):
+        props = manager.props
         has_uvs = preseeded or self.engine.uses_import_uvs(props)
         bpy.context.scene.collection.objects.link(obj)
         self.temp_collection.objects.unlink(obj)

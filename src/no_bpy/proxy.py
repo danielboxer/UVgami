@@ -79,6 +79,7 @@ def start_proxy_transfer(command, workdir, dense, proxy, *, border_edges, mirror
             numpy.asarray(mirror.partners, dtype=INTEGER),
             numpy.asarray(mirror.dropped, dtype=INTEGER),
         ]
+    arrays.append(numpy.asarray(proxy["painted_faces"], dtype=INTEGER))
 
     def read(data):
         take = packed_reader(data)

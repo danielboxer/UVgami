@@ -403,8 +403,8 @@ class UVGAMI_OT_preview_auto_settings(bpy.types.Operator):
     bl_idname = "uvgami.preview_auto_settings"
     bl_label = "Preview"
     bl_description = (
-        "Show the settings the unwrap uses for the active mesh: the mode of each part,"
-        " the region borders, the symmetry plane and the decimated parts"
+        "Show the part modes, region borders, symmetry plane"
+        " and low poly parts the unwrap uses"
     )
 
     @classmethod

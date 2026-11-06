@@ -121,10 +121,8 @@ MirrorPlan = collections.namedtuple("MirrorPlan", "axis whole partners symmetric
 
 
 def paints_seams(obj, engine, props):
-    return (
-        engine.supports_guided
-        and props.avoid_seams
-        and any(weight > 0 for weight in painted_weight_by_vertex(obj).values())
+    return engine.paint_is_seam_cost(props) and (
+        any(weight > 0 for weight in painted_weight_by_vertex(obj).values())
     )
 
 

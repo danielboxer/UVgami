@@ -25,10 +25,7 @@ SURFACE_MODE_LABELS = {mode: label for mode, label, _ in SURFACE_MODES}
 class UVGAMI_PG_optcuts(bpy.types.PropertyGroup):
     mode: bpy.props.EnumProperty(
         name="Mode",
-        description=(
-            "Whether seams are cut on sharp features or all placed by the engine."
-            " Edit Parts overrides this for single parts"
-        ),
+        description="Whether seams follow sharp features or are all placed by the engine",
         items=SURFACE_MODES,
         default="AUTO",
     )
@@ -93,7 +90,7 @@ class OptcutsEngine(OptcutsInstall):
         if plane is None and (surface_modes == SURFACE_MODE_CODES["ORGANIC"]).all():
             return None
         restrictions = None
-        if props.avoid_seams:
+        if self.paint_is_seam_cost(props):
             # optcuts puts fewer seams on vertices with a higher weight in this group
             painted = painted_weight_by_vertex(obj).items()
             restrictions = {
