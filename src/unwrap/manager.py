@@ -517,8 +517,12 @@ class UnwrapManager:
             self._restore_painted_faces(pieces, output)
         add_shading_modifiers(output, export.shading_modifiers)
 
-        if unwrap.preserve_job is not None:
-            unwrap.preserve_job.finish(output, added_edges)
+        preserve_job = next(
+            (piece.preserve_job for piece in pieces if piece.preserve_job is not None),
+            None,
+        )
+        if preserve_job is not None:
+            preserve_job.finish(output, added_edges)
 
         if unwrap.hide_job is not None:
             unwrap.hide_job.finish()

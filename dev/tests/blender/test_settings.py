@@ -7,6 +7,7 @@ from blender_fixtures import (
     add_cube,
     addon,
     island_count,
+    join,
     logger,
     manager,
     needs_engine,
@@ -109,6 +110,49 @@ def test_stack_similar_copies_the_twin_instead_of_unwrapping_it(unwrap, outputs)
     copies = [piece for piece, _ in manager.results if piece.copy_of is not None]
     assert len(engine_runs) == 1 and len(copies) == 1
     output = outputs()[f"{joined.name}_unwrapped"]
+    assert side_uvs(output, second=False) == side_uvs(output, second=True)
+
+
+def reverse_vertex_order(obj):
+    mesh = obj.data
+    count = len(mesh.vertices)
+    coordinates = [vertex.co.copy() for vertex in mesh.vertices]
+    faces = [tuple(polygon.vertices) for polygon in mesh.polygons]
+    new_index = [count - 1 - index for index in range(count)]
+    mesh.clear_geometry()
+    mesh.from_pydata(
+        list(reversed(coordinates)),
+        [],
+        [tuple(new_index[index] for index in face) for face in faces],
+    )
+    mesh.update()
+
+
+@needs_engine
+@pytest.mark.smoke
+def test_stack_similar_keeps_quads_on_a_reordered_copy(unwrap, outputs):
+    second = add_cube("b", location=(5, 0, 0))
+    reverse_vertex_order(second)
+    joined = join([add_cube("a"), second])
+    props = bpy.context.scene.uvgami
+    props.stack_similar = True
+    props.keep_quads = True
+    props.symmetry = False
+    props.split_regions = False
+
+    unwrap()
+
+    assert manager.summary == ["UV unwrap complete"]
+    assert manager.error_messages == []
+    copies = [piece for piece, _ in manager.results if piece.copy_of is not None]
+    assert len(copies) == 1
+    copy = copies[0]
+    assert copy.copy_reordered
+    assert copy.preserve_job is None
+    assert copy.join_job.members[-1] is copy
+    assert copy.copy_of.preserve_job is not None
+    output = outputs()[f"{joined.name}_unwrapped"]
+    assert {len(polygon.vertices) for polygon in output.data.polygons} == {4}
     assert side_uvs(output, second=False) == side_uvs(output, second=True)
 
 
