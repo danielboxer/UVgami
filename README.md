@@ -34,3 +34,7 @@ UVgami has three unwrapping engines, see the [docs](https://uvgami.com/docs/) fo
 - OptCuts (CPU): [OptCuts](https://github.com/liminchen/OptCuts) by Minchen Li et al. ([paper](https://www.cs.ubc.ca/labs/imager/tr/2018/OptCuts/))
 - xatlas (CPU): [xatlas](https://github.com/jpcy/xatlas) by Jonathan Young
 - PartUV (GPU): [PartUV](https://github.com/EricWang12/PartUV) by Zhaoning Wang et al. ([paper](https://arxiv.org/abs/2511.16659)). PartUV AI segmentation can't be used commercially (NVIDIA license)
+
+## License
+
+The UVgami add-on is GPL-3.0. The engine binaries provided as downloads (except PartUV) are under the [UVgami Engine License](https://uvgami.com/engine/LICENSE.txt) and are free to use, including commercially, when you unwrap with the add-on.

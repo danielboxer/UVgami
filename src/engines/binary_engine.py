@@ -200,7 +200,7 @@ class InstallEngineTask(InstallTask):
             self,
             event,
             title=f"{action} {self.release.label}",
-            message=self.release.download_size,
+            message=f"{self.release.download_size}. Under the UVgami Engine License.",
             confirm_text=action,
         )
 
