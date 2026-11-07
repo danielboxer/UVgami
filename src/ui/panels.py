@@ -264,7 +264,7 @@ def draw_concurrent(layout, props, engine):
 def draw_proxy(layout, props):
     row = layout.row()
     _setting_label(row, "proxy_mode")
-    row.prop(props, "proxy_mode", expand=True)
+    row.prop(props, "proxy_mode", text="")
 
 
 def draw_timeout(layout, props):
@@ -321,7 +321,7 @@ def draw_part_overrides(layout, context, engine):
     if engine.supports_hard_surface:
         row = settings.row()
         row.label(icon="MOD_BEVEL", text="Mode")
-        row.prop(overrides, "surface_mode", expand=True)
+        row.prop(overrides, "surface_mode", text="")
     # priority = settings.column(align=True)
     # priority.label(icon="SOLO_OFF", text="Priority")
     # priority.row(align=True).prop(overrides, "priority", expand=True)

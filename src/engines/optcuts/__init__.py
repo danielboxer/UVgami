@@ -56,7 +56,7 @@ class OptcutsEngine(OptcutsInstall):
             return
         row = layout.row()
         row.label(icon="MOD_BEVEL", text="Mode")
-        row.prop(props.optcuts, "mode", expand=True)
+        row.prop(props.optcuts, "mode", text="")
 
     def active_settings(self, props):
         if not self.supports_hard_surface:
