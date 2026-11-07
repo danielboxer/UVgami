@@ -140,6 +140,21 @@ class HideInput:
             self.input_mesh.hide_set(True)
 
 
+class CopyModifiers:
+    def __init__(self, input_mesh):
+        self.input_mesh = input_mesh
+
+    def finish(self, output):
+        if not check_exists(self.input_mesh):
+            return
+        with bpy.context.temp_override(
+            active_object=self.input_mesh,
+            object=self.input_mesh,
+            selected_editable_objects=[output],
+        ):
+            bpy.ops.object.make_links_data(type="MODIFIERS")
+
+
 class Transfer:
     repack_input = True
     allows_missing_pieces = True

@@ -88,6 +88,17 @@ def test_the_split_keeps_face_order_and_the_weld_closes_it(load_obj):
     assert len(mesh.vertices) == vertex_count
 
 
+def test_the_proxy_trigger_counts_each_region(load_obj):
+    (dumbbell,) = load_obj("dumbbell")
+    _, ring = neck_ring(dumbbell.data)
+    _, parts = segmentation.split_on_borders(dumbbell, ring)
+    largest_region = int(parts.triangle_counts.max())
+
+    assert len(parts.part_labels) == 2
+    assert largest_region < addon.src.proxy.triangle_count(dumbbell)
+    assert not addon.src.proxy.needs_proxy(dumbbell, largest_region, parts)
+
+
 def test_the_proxy_keeps_each_segment_mode(load_obj, proxy_target):
     (dumbbell,) = load_obj("dumbbell")
     mesh = dumbbell.data
@@ -140,6 +151,30 @@ def test_the_dumbbell_splits_on_the_neck_and_welds_back(load_obj, unwrap, output
     assert neck_seams
     # the pack after the unwrap fits every island in the unit square
     assert uvs_inside_unit_square(mesh)
+
+
+@needs_engine
+@needs_tools
+def test_a_mesh_with_every_region_under_the_trigger_skips_the_proxy(
+    load_obj, unwrap, outputs, proxy_target
+):
+    (dumbbell,) = load_obj("dumbbell")
+    dumbbell.modifiers.new("Subdivision", "SUBSURF")
+    vertex_count = len(dumbbell.data.vertices)
+    props = bpy.context.scene.uvgami
+    props.optcuts.mode = "ORGANIC"
+    props.symmetry = False
+    props.proxy_mode = "ON"
+    # the whole dumbbell is over the trigger and each region is under it
+    proxy_target(addon.src.proxy.triangle_count(dumbbell) - 1)
+    unwrap()
+
+    assert manager.error_messages == []
+    assert len(manager.results) >= 2
+    assert all(piece.transfer_uvs_job is None for piece, _ in manager.results)
+    output = outputs()[OUTPUT]
+    assert len(output.data.vertices) == vertex_count
+    assert [modifier.type for modifier in output.modifiers] == ["SUBSURF"]
 
 
 # symmetry stays on for the uv mirror after the unwrap

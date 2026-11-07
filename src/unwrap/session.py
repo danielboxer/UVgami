@@ -30,6 +30,7 @@ from ..proxy import (
     make_proxy,
     make_proxy_with_modes,
     mirror_proxy,
+    needs_proxy,
     parts_for_auto_proxy,
     proxy_trigger_faces,
 )
@@ -66,6 +67,7 @@ from ..utils.paths import get_extension_dir_path, unused_input_path
 from ..utils.uvgami_tools import tools_command
 from .handler import handle_start_error
 from .job import (
+    CopyModifiers,
     HideInput,
     Join,
     Preserve,
@@ -365,7 +367,9 @@ def invalid_piece_reason(obj, *, had_uv_layer):
     return None
 
 
-MeshInput = namedtuple("MeshInput", ["copy", "original", "name", "proxy_parts"])
+MeshInput = namedtuple(
+    "MeshInput", ["copy", "original", "name", "proxy_parts", "modifiers_cleared"]
+)
 
 
 def piece_is_symmetric(piece):
@@ -590,15 +594,23 @@ class SessionBuilder:
             from ..segmentation import split_on_borders
 
             border_positions, parts = split_on_borders(obj, border_edges)
-        proxied = self.inputs[obj].proxy_parts is not None
-        if proxied:
+        entry = self.inputs[obj]
+        if entry.proxy_parts is not None:
             if parts is None:
-                parts = self.inputs[obj].proxy_parts
+                parts = entry.proxy_parts
             if painted.any():
                 from ..painted_islands import parts_without_painted
 
                 parts = parts_without_painted(parts, obj.data, painted)
-            surface_modes = self._make_proxy(obj, props, parts, surface_modes, symmetry)
+            if surface_modes is not None and props.proxy_mode == "AUTO":
+                parts = parts_for_auto_proxy(parts, obj.data, surface_modes)
+            if needs_proxy(obj, proxy_trigger_faces(props), parts):
+                surface_modes = self._make_proxy(
+                    obj, props, parts, surface_modes, symmetry
+                )
+            else:
+                self.inputs[obj] = entry._replace(proxy_parts=None)
+        proxied = self.inputs[obj].proxy_parts is not None
         plane = None
         if symmetry is not None and symmetry.kind == "WHOLE":
             partners = symmetry.partners
@@ -635,8 +647,6 @@ class SessionBuilder:
         if surface_modes is None:
             make_proxy(obj, trigger_faces, parts)
         else:
-            if props.proxy_mode == "AUTO":
-                parts = parts_for_auto_proxy(parts, obj.data, surface_modes)
             surface_modes = make_proxy_with_modes(
                 obj, trigger_faces, parts, surface_modes
             )
@@ -796,6 +806,9 @@ class SessionBuilder:
             "symmetrize_job": symmetrize_job,
             "transfer_uvs_job": transfer_uvs_job,
             "segment_weld_job": weld_job,
+            "copy_modifiers_job": CopyModifiers(entry.original)
+            if entry.modifiers_cleared and transfer_uvs_job is None
+            else None,
         }
         claimed = manager.claimed_paths()
         for index, piece in enumerate(valid):

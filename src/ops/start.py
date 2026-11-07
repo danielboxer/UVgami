@@ -152,14 +152,23 @@ def prepare_meshes(context, engine):
         proxied = parts is not None and needs_proxy(
             copy_object, proxy_trigger_faces(props), parts
         )
-        if proxied or props.transfer_uvs:
+        modifiers_cleared = proxied or props.transfer_uvs
+        if modifiers_cleared:
             copy_object.modifiers.clear()
         else:
             applied, failed = _apply_modifiers(context, copy_object)
             applied_modifiers |= applied
             unapplied_modifiers += [f"{obj.name} {failure}" for failure in failed]
 
-        inputs.append(MeshInput(copy_object, obj, obj.name, parts if proxied else None))
+        inputs.append(
+            MeshInput(
+                copy_object,
+                obj,
+                obj.name,
+                parts if proxied else None,
+                modifiers_cleared=modifiers_cleared,
+            )
+        )
 
     reports = []
     if skipped:

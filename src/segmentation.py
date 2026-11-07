@@ -129,11 +129,6 @@ def segment_work(mesh, positions, segment_command, unset_mode, *, fine_cut):
 
 
 def split_on_borders(obj, border_edges):
-    mesh = obj.data
-    parts = part_triangles(mesh)
-    labels = parts.vertex_labels
-    corner_parts = labels[loop_vertices_and_face_sizes(mesh)[0]]
-
     bm = new_bmesh(obj)
     bm.verts.ensure_lookup_table()
     edges = [bm.edges.get((bm.verts[a], bm.verts[b])) for a, b in border_edges]
@@ -141,11 +136,7 @@ def split_on_borders(obj, border_edges):
     border_positions = numpy.array([tuple(vertex.co) for vertex in border_vertices])
     bmesh.ops.split_edges(bm, edges=edges)
     set_bmesh(bm, obj)
-
-    vertex_labels = numpy.zeros(len(mesh.vertices), dtype=labels.dtype)
-    vertex_labels[: len(labels)] = labels
-    vertex_labels[loop_vertices_and_face_sizes(mesh)[0]] = corner_parts
-    return border_positions, parts._replace(vertex_labels=vertex_labels)
+    return border_positions, part_triangles(obj.data)
 
 
 WELD_TOLERANCE = 1e-5

@@ -570,6 +570,9 @@ class UnwrapManager:
             weld_job.finish(output)
             self._pack_topology.pop(output, None)
 
+        if unwrap.copy_modifiers_job is not None:
+            unwrap.copy_modifiers_job.finish(output)
+
         edit_restore([output], show_seams)
 
         if unwrap.transfer_uvs_job is not None:

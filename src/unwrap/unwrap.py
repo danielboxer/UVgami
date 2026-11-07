@@ -44,6 +44,7 @@ class Unwrap:
         symmetrize_job=None,
         transfer_uvs_job=None,
         segment_weld_job=None,
+        copy_modifiers_job=None,
         preseeded: bool = False,
         symmetric: bool = False,
     ):
@@ -63,6 +64,7 @@ class Unwrap:
         self.symmetrize_job = symmetrize_job
         self.transfer_uvs_job = transfer_uvs_job
         self.segment_weld_job = segment_weld_job
+        self.copy_modifiers_job = copy_modifiers_job
 
         self.copy_of = None
         self.copy_matrix = None
