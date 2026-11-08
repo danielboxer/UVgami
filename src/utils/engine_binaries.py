@@ -11,10 +11,8 @@ def get_platform_tag():
         return "windows"
     if system == "Linux":
         return "linux"
-    if system == "Darwin":
-        if platform.machine().lower() == "arm64":
-            return "macos-arm64"
-        return "macos-x64"
+    if system == "Darwin" and platform.machine().lower() == "arm64":
+        return "macos-arm64"
     return None
 
 

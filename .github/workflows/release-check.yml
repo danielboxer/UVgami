@@ -22,7 +22,7 @@ jobs:
           ENGINE=uvgami-tools
           VERSION=$(grep -m1 "^UVGAMI_TOOLS_VERSION = " src/utils/uvgami_tools.py | cut -d'"' -f2)
           gh release download "$ENGINE-v$VERSION" -R "$ENGINE_RELEASE_REPO" --pattern "$ENGINE-engine-$VERSION-*.zip" --dir package
-          for TAG in windows linux macos-x64 macos-arm64; do
+          for TAG in windows linux macos-arm64; do
             BINARY=$ENGINE
             if [ "$TAG" = "windows" ]; then BINARY=$ENGINE.exe; fi
             mkdir -p "extracted/$TAG" "bin/$TAG"
@@ -58,8 +58,6 @@ jobs:
             pkg_name: linux
           - os: windows-latest
             pkg_name: windows
-          - os: macos-26-intel
-            pkg_name: macos-x64
           - os: macos-26
             pkg_name: macos-arm64
     runs-on: ${{ matrix.platform.os }}
@@ -147,24 +145,12 @@ jobs:
             binary: blender.exe
             suite: true
           # uv refuses macos (tool.uv.environments), so the bpy suite can't run there
-          - os: macos-26-intel
-            arch: macos-x64
-            archive: dmg
-            tag: macos-x64
-            binary: Blender.app/Contents/MacOS/Blender
-            suite: false
           - os: macos-26
             arch: macos-arm64
             archive: dmg
             tag: macos-arm64
             binary: Blender.app/Contents/MacOS/Blender
             suite: false
-        # blender 5 has no intel mac build
-        exclude:
-          - blender:
-              release: "5.2"
-            platform:
-              arch: macos-x64
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 30
     defaults:
