@@ -10,6 +10,7 @@ from no_bpy.painted_islands import (
     outline_edges,
     painted_flatten_job,
     painted_outline_job,
+    unpaint_closed_parts,
 )
 
 GRID = 6
@@ -91,6 +92,22 @@ def top_cells(verts, faces, cells):
         if all(point[2] == cells for point in points):
             top[(min(p[0] for p in points), min(p[1] for p in points))] = index
     return top
+
+
+def test_a_fully_painted_closed_part_is_unpainted():
+    cube_verts, cube_faces = quad_cube(2)
+    _, grid_faces = quad_grid(GRID)
+    offset = len(cube_verts)
+    faces = cube_faces + [[v + offset for v in face] for face in grid_faces]
+    corners, totals = corners_and_totals(faces)
+    painted = numpy.ones(len(faces), dtype=bool)
+    painted[len(cube_faces) :] = [index % GRID < 2 for index in range(len(grid_faces))]
+
+    kept = unpaint_closed_parts(corners, totals, painted)
+
+    expected = painted.copy()
+    expected[: len(cube_faces)] = False
+    assert kept.tolist() == expected.tolist()
 
 
 def test_outline_job_fits_the_paint_to_closed_edge_loops(tools, tmp_path):

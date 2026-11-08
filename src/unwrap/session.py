@@ -718,6 +718,20 @@ class SessionBuilder:
         painted = painted_faces(obj.data)
         if not painted.any():
             return separate()
+        from ..no_bpy.painted_islands import unpaint_closed_parts
+
+        open_painted = unpaint_closed_parts(
+            *loop_vertices_and_face_sizes(obj.data), painted
+        )
+        if (open_painted != painted).any():
+            logger.add_error(
+                f"{self.inputs[obj].name}: paint covers a whole closed part,"
+                " unwrapped it normally"
+            )
+            painted = open_painted
+            write_painted_faces(obj.data, painted)
+        if not painted.any():
+            return separate()
         from ..painted_islands import flatten_work
 
         return self._wait(

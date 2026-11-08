@@ -12,7 +12,12 @@ from .engine_run import (
     start_packed,
     start_run,
 )
-from .mesh import face_starts, lowest_index_part_labels, next_corners_in_face
+from .mesh import (
+    face_starts,
+    lowest_index_part_labels,
+    next_corners_in_face,
+    undirected_edge_keys,
+)
 from .symmetry import face_partners, mutual_mirror_partners
 
 PaintedFlatten = namedtuple("PaintedFlatten", "overlapping_islands corner_uvs")
@@ -41,6 +46,20 @@ def borders_outside_paint(corners, totals, painted, border_edges):
     return [
         edge for edge in border_edges if min(edge) * size + max(edge) in unpainted_keys
     ]
+
+
+def unpaint_closed_parts(corners, totals, painted):
+    corner_painted = numpy.repeat(painted, totals)
+    tails = corners[corner_painted]
+    heads = corners[next_corners_in_face(totals)][corner_painted]
+    keys = undirected_edge_keys(tails, heads)
+    unique, counts = numpy.unique(keys, return_counts=True)
+    on_outline = numpy.isin(keys, unique[counts == 1])
+    labels = lowest_index_part_labels(
+        int(corners.max()) + 1, numpy.stack([tails, heads], axis=1)
+    )
+    face_labels = labels[corners[face_starts(totals)]]
+    return painted & numpy.isin(face_labels, labels[tails[on_outline]])
 
 
 def _mesh_input(positions, corners, totals):
