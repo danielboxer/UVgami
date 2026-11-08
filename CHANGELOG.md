@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.4.0
+
+**New:**
+
+- Edit regions: Change segmentation regions by hand
+- Per-part symmetry
+- Proxy Auto option
+
+**Improvements:**
+
+- Improved seam restrictions and proxy
+- Segmentation and proxy speedups
+
+**Bug Fixes:**
+
+- Fix stack similar with keep quads
+- Fix some crashes
+
 ## 2.3.0
 
 **New:**
