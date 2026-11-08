@@ -9,12 +9,12 @@ from ..binary_engine import (
 
 PROXY_MODE_DEFAULT = "AUTO"
 # must match the optcuts engine VERSION
-OPTCUTS_VERSION = "1.23.1"
+OPTCUTS_VERSION = "1.24.0"
 OPTCUTS_MINIMUM_VERSION = "1.23.0"
 OPTCUTS_ARCHIVE_SHA256S = {
-    "windows": "c545846fd2c711cd9cef90b3e9940d7acc60d3f34f258c4fb30cb434c975d4bd",
-    "linux": "6ec848c160002968c8af7d76c0381f1331239822c5ca2d787f0d2912db4c5531",
-    "macos-arm64": "96c0983e6c0dc6e6d5ef88afbc556fa77819f9c96ad68ff9a5177409f6d966cd",
+    "windows": "c898c8e6d779296e754467542d3e4d1b8b3dcd9e21faeea834dfa24a30da1e88",
+    "linux": "08eb36a36b8c893f84551733399284084986b2a8b676b818b826f672c468deb6",
+    "macos-arm64": "76f07f451a0a2d87ebbc61f9c59d601a9bb97f207746a77e55d8cecb4d85fa01",
 }
 OPTCUTS = EngineRelease(
     "optcuts",
