@@ -1,9 +1,11 @@
 import bpy
 
 from ..engines import ENGINES, active_engine, installed_engines
+from ..no_bpy import SURFACE_MODE_CODES
 from ..ops.auto_preview import draw_auto_preview
 from ..ops.part_overrides import is_editing, selected_part_count
 from ..ops.segmentation import draw_segment_edit
+from ..part_overrides import KEEP_ATTRIBUTE, SURFACE_MODE_ATTRIBUTE, face_values
 from ..unwrap.job import Result
 from ..unwrap.logger import logger
 from ..unwrap.manager import manager
@@ -387,6 +389,20 @@ class UVGAMI_PT_weights(bpy.types.Panel):
         # row.operator("uvgami.seed_restrictions", text="Both").mode = "BOTH"
 
 
+def _no_organic_parts(context, engine, props):
+    if engine.unset_surface_mode(props) != "HARD":
+        return False
+    organic = SURFACE_MODE_CODES["ORGANIC"]
+    for obj in context.selected_objects:
+        if obj.type != "MESH":
+            continue
+        modes = face_values(obj.data, SURFACE_MODE_ATTRIBUTE)
+        kept = face_values(obj.data, KEEP_ATTRIBUTE) != 0
+        if ((modes == organic) & ~kept).any():
+            return False
+    return True
+
+
 class UVGAMI_PT_advanced(EnginePanel, bpy.types.Panel):
     bl_label = "Advanced"
     bl_space_type = "VIEW_3D"
@@ -416,13 +432,16 @@ class UVGAMI_PT_advanced(EnginePanel, bpy.types.Panel):
 
         if engine.supports_regions:
             splits_regions = engine.splits_regions(props)
+            no_organic_parts = _no_organic_parts(context, engine, props)
             regions = box.box() if splits_regions else box
             split = regions.split(factor=0.7)
-            split.active = not engine.uses_import_uvs(props)
+            split.active = not engine.uses_import_uvs(props) and not no_organic_parts
             _setting_label(split, "split_regions")
             split.prop(props, "split_regions")
             if splits_regions:
-                draw_segment_edit(regions)
+                edit = regions.column()
+                edit.active = not no_organic_parts
+                draw_segment_edit(edit)
 
         if engine.supports_symmetry:
             split = box.split(factor=0.7)
