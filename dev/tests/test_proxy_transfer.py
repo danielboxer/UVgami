@@ -451,6 +451,27 @@ def test_transfer_opens_a_closed_sphere_the_proxy_left_uncut(transfer):
     assert_no_flips_or_crossings(uvs, faces)
 
 
+TETRAHEDRON = (
+    [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)],
+    [[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]],
+)
+DOUBLE_SIDED_TRIANGLE = (
+    [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+    [[0, 1, 2], [0, 2, 1]],
+)
+
+
+@pytest.mark.parametrize("verts, faces", [TETRAHEDRON, DOUBLE_SIDED_TRIANGLE])
+def test_transfer_opens_a_closed_part_whose_vertices_all_share_edges(
+    transfer, verts, faces
+):
+    seams, uvs = transfer(dense_arrays(verts, faces), uncut_proxy())
+
+    assert len(seams) >= 2
+    assert uv_pieces(uvs, faces) == 1
+    assert_no_flips_or_crossings(uvs, faces)
+
+
 def test_transfer_cuts_a_torus_handle_the_proxy_left_uncut(transfer):
     verts, faces = torus()
 
