@@ -390,7 +390,14 @@ def symmetry_job(symmetry):
     )
 
 
-PendingWork = namedtuple("PendingWork", ["task", "obj", "finish"])
+PendingWork = namedtuple("PendingWork", ["task", "obj", "step", "finish"])
+PREPARATION_STEPS = (
+    "symmetry",
+    "painted outline",
+    "segmentation",
+    "preseed",
+    "painted flatten",
+)
 
 
 class SessionBuilder:
@@ -456,16 +463,20 @@ class SessionBuilder:
         if check_exists(obj):
             bpy.data.objects.remove(obj, do_unlink=True)
 
-    def _wait(self, task, obj, finish):
-        self.pending = PendingWork(task, obj, finish)
+    def _wait(self, task, obj, step, finish):
+        self.pending = PendingWork(task, obj, step, finish)
         return 0.1
 
     def _advance(self):
         if self.pending is not None:
-            task, obj, finish = self.pending
+            task, obj, step, finish = self.pending
+            step_index = PREPARATION_STEPS.index(step)
+            slot_count = len(PREPARATION_STEPS) + 1
             if not task.done():
+                self.preparing[obj].fraction = (step_index + task.progress) / slot_count
                 return 0.1
             self.pending = None
+            self.preparing[obj].fraction = (step_index + 1) / slot_count
             if obj in self.cancelled:
                 self.cancelled.discard(obj)
                 task.close()
@@ -491,6 +502,7 @@ class SessionBuilder:
         return self._wait(
             check,
             obj,
+            "symmetry",
             lambda task: self._start_painted_outline(obj, task.result()),
         )
 
@@ -505,6 +517,7 @@ class SessionBuilder:
         return self._wait(
             outline_work(obj, painted, symmetry),
             obj,
+            "painted outline",
             functools.partial(self._finish_painted_outline, obj=obj, symmetry=symmetry),
         )
 
@@ -531,6 +544,7 @@ class SessionBuilder:
             return self._wait(
                 worker,
                 obj,
+                "segmentation",
                 functools.partial(self._finish_classifying, obj=obj, symmetry=symmetry),
             )
         from ..segmentation import segment_work
@@ -545,6 +559,7 @@ class SessionBuilder:
         return self._wait(
             worker,
             obj,
+            "segmentation",
             functools.partial(self._finish_segmenting, obj=obj, symmetry=symmetry),
         )
 
@@ -635,6 +650,7 @@ class SessionBuilder:
         return self._wait(
             worker,
             obj,
+            "preseed",
             functools.partial(
                 self._finish_preseed, obj=obj, apply=apply, separate=separate
             ),
@@ -686,6 +702,7 @@ class SessionBuilder:
             path=path,
             preseeded=preseeded and uses_uvs and not keeps_uvs,
             symmetric=jobs["symmetrize_job"] is not None and piece_is_symmetric(obj),
+            had_preparation=True,
             **jobs,
         )
         unwrap.has_uvs = uses_uvs
@@ -737,6 +754,7 @@ class SessionBuilder:
         return self._wait(
             flatten_work(obj, painted, manager.props.priority),
             obj,
+            "painted flatten",
             functools.partial(
                 self._finish_painted_flatten,
                 obj=obj,

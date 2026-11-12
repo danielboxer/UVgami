@@ -15,11 +15,9 @@ from no_bpy import (
 )
 from no_bpy.engine_run import ToolsCommand
 from no_bpy.preseed import (
-    VISIBILITY_SHARE,
     _write_weights,
     classify_job,
     resolved_surface_modes,
-    restriction_weights,
 )
 from no_bpy.symmetry import mutual_mirror_partners
 
@@ -50,7 +48,6 @@ def run_preseed(engines, tmp_path, positions, faces, surface_modes, plane=None):
         tmp_path,
         numpy.asarray(positions, dtype=numpy.float64),
         *corners_and_totals(faces),
-        None,
         None,
         plane,
         numpy.asarray(surface_modes),
@@ -247,17 +244,6 @@ def classify_hard(tools, tmp_path):
         return resolved == SURFACE_MODE_CODES["HARD"]
 
     return run
-
-
-def test_restriction_weights_take_the_larger_of_paint_and_exposure():
-    exposure = {0: 1.0, 1: 0.5, 2: 0.0}
-    painted = {1: 1.0, 3: 0.2}
-    assert restriction_weights(painted, exposure) == {
-        0: VISIBILITY_SHARE,
-        1: 1.0,
-        3: 0.2,
-    }
-    assert restriction_weights(None, {2: 0.0}) is None
 
 
 def test_weights_sidecar_lists_vertex_weight_pairs(tmp_path):

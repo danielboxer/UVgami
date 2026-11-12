@@ -144,6 +144,10 @@ class SymmetryCheck:
     def done(self):
         return self.run.done()
 
+    @property
+    def progress(self):
+        return self.run.progress
+
     def cancel(self):
         self.run.close()
 

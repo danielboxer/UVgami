@@ -2,7 +2,6 @@ import functools
 
 import numpy
 
-from .guides import exposure_weights
 from .no_bpy import OptcutsRun, preseed_job
 from .no_bpy.island_repair import finish_uvs
 from .no_bpy.mesh import corners_of_faces, undirected_edge_keys
@@ -95,7 +94,6 @@ def preseed_work(obj, angle, split_target, engine_args, weights, surface_modes, 
         get_extension_dir_path() / "preseed",
         *mesh_arrays(mesh),
         weights,
-        exposure_weights(obj),
         plane,
         surface_modes,
         angle,

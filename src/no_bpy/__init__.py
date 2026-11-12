@@ -19,7 +19,6 @@ from .preseed import (
     OptcutsRun,
     preseed_job,
     resolved_surface_modes,
-    restriction_weights,
 )
 
 __all__ = [
@@ -34,7 +33,6 @@ __all__ = [
     "island_layout",
     "boxes_overlap",
     "sorted_pair",
-    "restriction_weights",
     "SURFACE_MODE_CODES",
     "preseed_job",
     "resolved_surface_modes",

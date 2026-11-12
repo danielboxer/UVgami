@@ -208,6 +208,7 @@ def segment_job(
     *,
     fine_cut,
     cancelled=None,
+    progress=None,
 ):
     faces = faces_from_arrays(corners, totals)
     folder = new_run_folder(workdir)
@@ -230,7 +231,7 @@ def segment_job(
         len(faces),
         functools.partial(_read_regions, fine_cut=fine_cut),
     )
-    return poll_run(run, cancelled)
+    return poll_run(run, cancelled, progress)
 
 
 def stored_segment_job(

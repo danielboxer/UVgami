@@ -47,11 +47,13 @@ class Unwrap:
         copy_modifiers_job=None,
         preseeded: bool = False,
         symmetric: bool = False,
+        had_preparation: bool = False,
     ):
         self.name = name
         self.input_name = input_name
         self.preseeded = preseeded
         self.symmetric = symmetric
+        self.had_preparation = had_preparation
 
         self.path = path
         self.output_path = engine_output_path(self.path)

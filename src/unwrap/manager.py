@@ -37,6 +37,7 @@ STATUS_SECONDS = 5
 DISPATCH_SECONDS = 0.1
 QUEUED_DISPATCH_SECONDS = 0.02
 TRANSFER_PROGRESS_SHARE = 0.4
+PREPARATION_PROGRESS_SHARE = 0.2
 # sidebar rebuilds during a click drop the click
 PANEL_REDRAW_SECONDS = 1.0
 
@@ -62,7 +63,15 @@ class SettingsCopy:
 PendingTransfer = namedtuple(
     "PendingTransfer", ["job", "output", "pack_index", "name", "started_at"]
 )
-Preparing = namedtuple("Preparing", ["name", "cancel"])
+
+
+class Preparing:
+    def __init__(self, name, cancel):
+        self.name = name
+        self.cancel = cancel
+        self.fraction = 0.0
+
+
 EngineFailure = namedtuple("EngineFailure", ["unwrap", "handle", "detail"])
 STOP_SECONDS = 180
 
@@ -369,23 +378,38 @@ class UnwrapManager:
     def _update_progress_bar(self):
         active = self.active
         pieces = active + [unwrap for unwrap, _ in self.results]
-        if not pieces:
+        if not pieces and not self.preparing:
             return
         engine = numpy.array(
             [unwrap.progress for unwrap in active]
             + [(1.0, 0.0, 0.0)] * len(self.results)
-        )
+        ).reshape(-1, 3)
         jobs = [unwrap.transfer_uvs_job for unwrap in pieces]
         has_transfer = numpy.array(
-            [job is not None and not job.settled for job in jobs]
+            [job is not None and not job.settled for job in jobs], dtype=bool
         )
         reported = {entry.job: entry.job.progress for entry in self.pending_transfers}
-        transferred = numpy.array([reported.get(job, 0.0) for job in jobs])
+        transferred = numpy.array([reported.get(job, 0.0) for job in jobs], dtype=float)
         share = TRANSFER_PROGRESS_SHARE * has_transfer
-        progress = engine * (1 - share)[:, None]
-        progress[:, 0] += share * transferred
-        progress[:, 2] += share * (1 - transferred)
-        progress = progress.mean(axis=0)
+        piece_progress = engine * (1 - share)[:, None]
+        piece_progress[:, 0] += share * transferred
+        piece_progress[:, 2] += share * (1 - transferred)
+
+        rows_by_object = {}
+        for unwrap, row in zip(pieces, piece_progress):
+            rows_by_object.setdefault(unwrap.input_name, []).append(row)
+        prepared = {unwrap.input_name for unwrap in pieces if unwrap.had_preparation}
+        share = PREPARATION_PROGRESS_SHARE
+        object_progress = []
+        for name, rows in rows_by_object.items():
+            row = numpy.mean(rows, axis=0)
+            if name in prepared:
+                row = share * numpy.array((1.0, 0.0, 0.0)) + (1 - share) * row
+            object_progress.append(row)
+        for entry in self.preparing:
+            done = share * entry.fraction
+            object_progress.append(numpy.array((done, 0.0, 1 - done)))
+        progress = numpy.mean(object_progress, axis=0)
         if get_preferences().show_progress_bar and not numpy.array_equal(
             progress, self.progress
         ):

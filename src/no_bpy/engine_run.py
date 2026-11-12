@@ -135,11 +135,17 @@ def write_obj(path, positions, faces):
         )
 
 
-def poll_run(run, cancelled):
+def poll_run(run, cancelled, progress=None):
+    reported = 0.0
     while run.poll() is None:
         if cancelled is not None and cancelled():
             run.close()
             raise Cancelled
+        if progress is not None:
+            fraction = run.progress
+            if fraction != reported:
+                reported = fraction
+                progress(fraction)
         time.sleep(POLL_INTERVAL)
     return run.result()
 

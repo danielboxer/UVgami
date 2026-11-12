@@ -42,21 +42,6 @@ SegmentRegions = collections.namedtuple(
     "surface_modes border_edges region_count labels fine_labels hand_edited",
 )
 
-# exposure only breaks ties
-VISIBILITY_SHARE = 0.1
-
-
-def restriction_weights(painted, exposure):
-    weights = {
-        vertex: VISIBILITY_SHARE * share
-        for vertex, share in (exposure or {}).items()
-        if share > 0
-    }
-    for vertex, weight in (painted or {}).items():
-        weights[vertex] = max(weights.get(vertex, 0.0), weight)
-    return weights or None
-
-
 HARDSURFACE_SEAMS_NAME = "seams.txt"
 RESOLVED_MODES_NAME = "modes.txt"
 HARDSURFACE_UVS_NAME = "uvs.txt"
@@ -153,22 +138,26 @@ def preseed_job(
     corners,
     totals,
     weights,
-    exposure,
     plane,
     surface_modes,
     angle,
     split_target,
     cancelled=None,
+    progress=None,
 ):
     faces = faces_from_arrays(corners, totals)
     folder = new_run_folder(workdir)
+    stage_count = 1
+
+    def stage_progress(stage):
+        if progress is None:
+            return None
+        return lambda fraction: progress((stage + fraction) / stage_count)
+
     try:
         obj_path = folder / f"{ENGINE_INPUT_STEM}.obj"
         write_obj(obj_path, positions.tolist(), faces)
-        _write_weights(
-            folder / f"{ENGINE_INPUT_STEM}_weights",
-            restriction_weights(weights, exposure),
-        )
+        _write_weights(folder / f"{ENGINE_INPUT_STEM}_weights", weights)
         write_modes(folder / f"{ENGINE_INPUT_STEM}_modes", surface_modes)
         plane_args = []
         if plane is not None:
@@ -193,6 +182,7 @@ def preseed_job(
                 ),
                 cancelled,
             )
+            stage_count = count + 1
             for index in range(count):
                 engine_args = [
                     *optcuts.engine_command,
@@ -203,7 +193,7 @@ def preseed_job(
                     *optcuts.engine_args,
                 ]
                 run = _start(folder, engine_args, optcuts.env, None, 0, _read_nothing)
-                poll_run(run, cancelled)
+                poll_run(run, cancelled, stage_progress(index))
             plane_args = ["--plane-axis", axis, "--halves", halves]
         uvs_path = folder / HARDSURFACE_UVS_NAME
         args = [
@@ -219,7 +209,7 @@ def preseed_job(
             *plane_args,
         ]
         run = _start(folder, args, command.env, uvs_path, len(faces), _read_hardsurface)
-        return poll_run(run, cancelled)
+        return poll_run(run, cancelled, stage_progress(stage_count - 1))
     finally:
         remove_folder(folder)
 

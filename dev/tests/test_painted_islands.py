@@ -188,3 +188,49 @@ def test_flatten_job_keeps_a_hole_open_without_flips(tools, optcuts, tmp_path):
     assert flattened.overlapping_islands == 0
     assert len(flattened.corner_uvs) == len(corners)
     assert (fan_areas(flattened.corner_uvs, totals) > 0).all()
+
+
+def test_flatten_job_flattens_an_island_with_one_flipped_face(tools, optcuts, tmp_path):
+    verts, faces = bumped_grid()
+    flipped = GRID + 2
+    faces[flipped] = faces[flipped][::-1]
+    corners, totals = corners_and_totals(faces)
+
+    flattened = painted_flatten_job(
+        tools,
+        optcuts,
+        tmp_path,
+        numpy.array(verts),
+        corners,
+        totals,
+        numpy.ones(len(faces), dtype=bool),
+    )
+
+    assert flattened.overlapping_islands == 0
+    areas = fan_areas(flattened.corner_uvs, totals)
+    flipped_triangles = slice(2 * flipped, 2 * flipped + 2)
+    assert (areas[flipped_triangles] < 0).all()
+    assert (numpy.delete(areas, flipped_triangles) > 0).all()
+
+
+def test_flatten_job_reports_an_island_with_a_fin_face_as_overlapping(
+    tools, optcuts, tmp_path
+):
+    verts, faces = bumped_grid()
+    shared = faces[GRID + 2][:2]
+    verts = verts + [(*verts[v][:2], 2.0) for v in shared[::-1]]
+    faces = faces + [[*shared, len(verts) - 2, len(verts) - 1]]
+    corners, totals = corners_and_totals(faces)
+
+    flattened = painted_flatten_job(
+        tools,
+        optcuts,
+        tmp_path,
+        numpy.array(verts),
+        corners,
+        totals,
+        numpy.ones(len(faces), dtype=bool),
+    )
+
+    assert flattened.overlapping_islands == 1
+    assert len(flattened.corner_uvs) == len(corners)
