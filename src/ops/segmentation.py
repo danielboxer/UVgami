@@ -79,7 +79,7 @@ LoopCandidate = namedtuple(
     "LoopCandidate", "split_region relabeled_faces vertices edges shape"
 )
 NO_LOOPS = ()
-DrawnLoops = namedtuple("DrawnLoops", "edges loop_of_edge candidates shape")
+DrawnLoops = namedtuple("DrawnLoops", "edges loop_of_edge loops shape")
 NearestDrawnLoop = namedtuple("NearestDrawnLoop", "index closest")
 
 
@@ -118,6 +118,9 @@ class EditSession:
             mesh, self.positions, 0.0
         )
         self.triangle_corners = self._world(triangle_corners)
+        self.loop_regions = {}
+        self.drawn_loops = {}
+        self.drawn_loop_batches = {}
         self._set_fine(nested_fine_labels(segments.labels, segments.fine_labels))
         if segments.hand_edited:
             self.on = on_pairs_with_edges(self.borders, segments.border_edges)
@@ -156,9 +159,12 @@ class EditSession:
         self.border_batches = {}
         self.loop_batches = {}
         self.loop_candidates = {}
-        self.loop_regions = {}
-        self.drawn_loops = {}
-        self.drawn_loop_batches = {}
+
+    def _forget_regions(self, regions):
+        for region in regions:
+            self.loop_regions.pop(region, None)
+            self.drawn_loops.pop(region, None)
+            self.drawn_loop_batches.pop(region, None)
 
     def _join_parts(self):
         self.joined, self.part_count = joined_labels(self.fine, self.borders, self.on)
@@ -230,6 +236,8 @@ class EditSession:
         self.hovered, self.hovered_region = None, None
         self.hovered_loop_key, self.hovered_loops = None, NO_LOOPS
         hit = self.hit_under(region, event)
+        if hit is not None and self.fine[hit[0]] == 0:
+            hit = None
         if hit is not None:
             face, point = hit
             self.hovered_region = int(self.fine[face])
@@ -243,8 +251,13 @@ class EditSession:
                     self._pixels_apart(region, point, nearest.closest)
                     <= BORDER_PICK_PIXELS
                 ):
-                    self.hovered_loop_key = (self.hovered_region, nearest.index)
-                    self.hovered_loops = drawn.candidates[nearest.index]
+                    key = (self.hovered_region, nearest.index)
+                    if key not in self.loop_candidates:
+                        self.loop_candidates[key] = self._loop_and_mirror(
+                            drawn.loops[nearest.index]
+                        )
+                    self.hovered_loop_key = key
+                    self.hovered_loops = self.loop_candidates[key]
                 else:
                     self._hover_loop_under(face, point)
             elif pair is not None and (
@@ -282,8 +295,7 @@ class EditSession:
             loop_of_edge = numpy.repeat(
                 numpy.arange(len(loops)), [len(loop) for loop in loops]
             )
-            candidates = [self._loop_and_mirror(loop) for loop in loops]
-            drawn = DrawnLoops(edges, loop_of_edge, candidates, shape)
+            drawn = DrawnLoops(edges, loop_of_edge, loops, shape)
         self.drawn_loops[region] = drawn
         return drawn
 
@@ -372,6 +384,7 @@ class EditSession:
         new_label = int(fine.max()) + 1
         fine[candidate.relabeled_faces] = new_label
         self.loop_edges.update(map(tuple, candidate.edges.tolist()))
+        self._forget_regions((candidate.split_region, new_label))
         self._set_fine(fine)
         self.on = on_pairs_with_edges(self.borders, on_edges)
         self.on.add((candidate.split_region, new_label))
@@ -401,6 +414,7 @@ class EditSession:
         for low, high in pairs:
             self.loop_edges -= set(map(tuple, self.borders[(low, high)].tolist()))
             fine = numpy.where(fine == high, low, fine)
+        self._forget_regions(region for pair in pairs for region in pair)
         self._set_fine(fine)
         self.on = on_pairs_with_edges(self.borders, on_edges)
 

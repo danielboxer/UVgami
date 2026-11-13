@@ -56,6 +56,29 @@ def capped_cylinder(triangles, jitter=0.0, ring_spacing=RING_SPACING):
     return positions, *corners_and_totals(faces)
 
 
+def torus():
+    positions = [
+        (
+            (2 + math.cos(tube_angle)) * math.cos(ring_angle),
+            (2 + math.cos(tube_angle)) * math.sin(ring_angle),
+            math.sin(tube_angle),
+        )
+        for ring_angle in (2 * math.pi * numpy.arange(RINGS) / RINGS).tolist()
+        for tube_angle in (2 * math.pi * numpy.arange(SEGMENTS) / SEGMENTS).tolist()
+    ]
+    faces = [
+        [
+            ring_vertex(ring, segment),
+            ring_vertex(ring, segment + 1),
+            ring_vertex((ring + 1) % RINGS, segment + 1),
+            ring_vertex((ring + 1) % RINGS, segment),
+        ]
+        for ring in range(RINGS)
+        for segment in range(SEGMENTS)
+    ]
+    return numpy.array(positions), *corners_and_totals(faces)
+
+
 def loop_region(mesh, in_region):
     return LoopRegion(EdgeLoops(*mesh), in_region, edge_face_pairs(*mesh[1:]))
 
@@ -163,3 +186,13 @@ def test_loops_split_the_region_in_two_and_stay_inside_it():
     assert upper[side].all()
     # the quad walk along the length leaves the region
     assert lengthwise is None
+
+
+def test_loops_around_a_torus_have_no_side():
+    mesh = torus()
+    region = loop_region(mesh, numpy.ones(len(mesh[2]), dtype=bool))
+
+    loops = EdgeLoops(*mesh).quad_loops(region)
+
+    assert len(loops) == RINGS + SEGMENTS
+    assert all(loop_side(region, loop) is None for loop in loops)

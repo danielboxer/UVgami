@@ -1,20 +1,23 @@
+import itertools
 import math
 from collections import namedtuple
 
 import numpy
 
 from .mesh import (
+    corners_of_faces,
     face_starts,
     faces_from_arrays,
-    lowest_index_part_labels,
+    find_root,
     next_corners_in_face,
     undirected_edge_keys,
 )
 
 Strip = namedtuple("Strip", "faces crossed_edges")
-Slice = namedtuple("Slice", "strip plane_distance length")
+Slice = namedtuple("Slice", "strip plane_distances length")
 COARSE_TILT_DEGREES = range(0, 180, 30)
 FINE_TILT_DEGREES = 10
+SLICE_START_CELLS_PER_REGION = 300
 
 
 def _unit(vector):
@@ -39,6 +42,24 @@ def _faces_of_edges(edge_of_corner, face_of_corner, face_counts):
         -1,
     )
     return first_faces, second_faces
+
+
+class PlaneDistances(dict):
+    def __init__(self, position_list, origin_vertex, direction):
+        super().__init__({origin_vertex: 0.0})
+        self.position_list = position_list
+        self.origin = position_list[origin_vertex]
+        self.direction = direction
+
+    def __missing__(self, vertex):
+        point = self.position_list[vertex]
+        origin, direction = self.origin, self.direction
+        distance = self[vertex] = (
+            (point[0] - origin[0]) * direction[0]
+            + (point[1] - origin[1]) * direction[1]
+            + (point[2] - origin[2]) * direction[2]
+        )
+        return distance
 
 
 class EdgeLoops:
@@ -151,15 +172,36 @@ class EdgeLoops:
 
     def sliced_loops(self, region):
         tails, heads = region.vertices[region.edges].T
+        cell_size = math.sqrt(
+            self.face_areas[region.faces].sum() / SLICE_START_CELLS_PER_REGION
+        )
+        cells = numpy.floor(
+            (region.positions - region.positions.min(axis=0)) / cell_size
+        ).astype(numpy.int64)
+        cell_of_vertex = dict(zip(region.vertices.tolist(), map(tuple, cells.tolist())))
+        covered_cells = set()
         covered = numpy.zeros(len(region.edges), dtype=bool)
         loops = []
         for index, (tail, head) in enumerate(zip(tails.tolist(), heads.tolist())):
-            if covered[index] or not (region.interior[tail] and region.interior[head]):
+            skipped = (
+                covered[index]
+                or cell_of_vertex[tail] in covered_cells
+                or not (region.interior[tail] and region.interior[head])
+            )
+            if skipped:
                 continue
             loop = self.find_loop(region, tail, head)
+            covered[region.edges_near(loop or [tail, head])] = True
             if loop is not None:
                 loops.append(loop)
-            covered[region.edges_near(loop or [tail, head])] = True
+                covered_cells.update(cell_of_vertex[vertex] for vertex in loop)
+                continue
+            x, y, z = cell_of_vertex[tail]
+            covered_cells.update(
+                itertools.product(
+                    range(x - 1, x + 2), range(y - 1, y + 2), range(z - 1, z + 2)
+                )
+            )
         return loops
 
     def find_loop(self, region, tail, head):
@@ -178,11 +220,76 @@ class EdgeLoops:
         return region.sliced_loop(tail, across, numpy.cross(surface_normal, across))
 
 
-class LoopRegion:
+FaceTree = namedtuple("FaceTree", "order position end child_of_pair")
+
+
+def _breadth_first_levels(root, neighbor_starts, neighbors, reached, parent_entry):
+    frontier = numpy.array([root])
+    reached[root] = True
+    levels = [frontier]
+    while True:
+        counts = neighbor_starts[frontier + 1] - neighbor_starts[frontier]
+        entries = numpy.repeat(
+            neighbor_starts[frontier] - face_starts(counts), counts
+        ) + numpy.arange(counts.sum())
+        entries = entries[~reached[neighbors[entries]]]
+        frontier, first = numpy.unique(neighbors[entries], return_index=True)
+        if len(frontier) == 0:
+            return levels
+        reached[frontier] = True
+        parent_entry[frontier] = entries[first]
+        levels.append(frontier)
+
+
+def _face_tree(face_count, face_pairs):
+    sources = numpy.concatenate([face_pairs[:, 0], face_pairs[:, 1]])
+    by_source = numpy.argsort(sources, kind="stable")
+    entry_sources = sources[by_source]
+    neighbor_starts = numpy.searchsorted(entry_sources, numpy.arange(face_count + 1))
+    neighbors = numpy.concatenate([face_pairs[:, 1], face_pairs[:, 0]])[by_source]
+    reached = numpy.zeros(face_count, dtype=bool)
+    parent_entry = numpy.full(face_count, -1, dtype=numpy.int64)
+    position = numpy.zeros(face_count, dtype=numpy.int64)
+    size = numpy.ones(face_count, dtype=numpy.int64)
+    placed = 0
+    for root in range(face_count):
+        if reached[root]:
+            continue
+        levels = _breadth_first_levels(
+            root, neighbor_starts, neighbors, reached, parent_entry
+        )
+        for level in reversed(levels[1:]):
+            numpy.add.at(size, entry_sources[parent_entry[level]], size[level])
+        position[root] = placed
+        placed += size[root]
+        for level in levels[1:]:
+            parents = entry_sources[parent_entry[level]]
+            by_parent = numpy.argsort(parents, kind="stable")
+            children, parents = level[by_parent], parents[by_parent]
+            sizes_before = numpy.cumsum(size[children]) - size[children]
+            first_sibling = numpy.maximum.accumulate(
+                numpy.where(
+                    numpy.diff(parents, prepend=-1) != 0,
+                    numpy.arange(len(children)),
+                    0,
+                )
+            )
+            position[children] = (
+                position[parents] + 1 + sizes_before - sizes_before[first_sibling]
+            )
+    order = numpy.empty(face_count, dtype=numpy.int64)
+    order[position] = numpy.arange(face_count)
+    child_of_pair = numpy.full(len(face_pairs), -1, dtype=numpy.int64)
+    children = numpy.flatnonzero(parent_entry >= 0)
+    child_of_pair[by_source[parent_entry[children]] % len(face_pairs)] = children
+    return FaceTree(order, position, position + size, child_of_pair)
+
+
+class FaceTreeRegion:
     def __init__(self, edge_loops, in_region, face_pairs):
         self.faces = numpy.flatnonzero(in_region)
         in_region_corners = in_region[edge_loops.face_of_corner]
-        self.vertices, corners = numpy.unique(
+        self.vertices, self.corners = numpy.unique(
             edge_loops.corners[in_region_corners], return_inverse=True
         )
         outside = numpy.bincount(
@@ -191,15 +298,53 @@ class LoopRegion:
         )
         interior = (outside == 0) & ~edge_loops.boundary
         self.interior = interior.tolist()
-        self.local_interior = interior[self.vertices].tolist()
+        self.local_interior = interior[self.vertices]
+        self.face_sizes = edge_loops.totals[self.faces]
+        self.corner_faces = numpy.repeat(numpy.arange(len(self.faces)), self.face_sizes)
+
+        inside = in_region[face_pairs.first] & in_region[face_pairs.second]
+        self.local_face_pairs = numpy.stack(
+            [
+                numpy.searchsorted(self.faces, face_pairs.first[inside]),
+                numpy.searchsorted(self.faces, face_pairs.second[inside]),
+            ],
+            axis=1,
+        )
+        pair_edge_keys = undirected_edge_keys(
+            face_pairs.edges[inside, 0], face_pairs.edges[inside, 1]
+        )
+        self.pairs_by_edge_key = numpy.argsort(pair_edge_keys)
+        self.sorted_pair_edge_keys = pair_edge_keys[self.pairs_by_edge_key]
+        self.tree = _face_tree(len(self.faces), self.local_face_pairs)
+
+        pair_vertices = numpy.searchsorted(self.vertices, face_pairs.edges[inside])
+        border_node = len(self.vertices)
+        pair_nodes = numpy.where(
+            interior[self.vertices][pair_vertices], pair_vertices, border_node
+        )
+        off_tree_pairs = numpy.flatnonzero(self.tree.child_of_pair < 0)
+        parent = list(range(border_node + 1))
+        closes_edge_cycle = []
+        for tail, head in pair_nodes[off_tree_pairs].tolist():
+            tail_root, head_root = find_root(parent, tail), find_root(parent, head)
+            closes_edge_cycle.append(tail_root == head_root)
+            parent[tail_root] = head_root
+        self.pairs_closing_edge_cycles = off_tree_pairs[
+            numpy.array(closes_edge_cycle, dtype=bool)
+        ]
+
+
+class LoopRegion(FaceTreeRegion):
+    def __init__(self, edge_loops, in_region, face_pairs):
+        super().__init__(edge_loops, in_region, face_pairs)
         self.positions = edge_loops.positions[self.vertices]
         self.position_list = self.positions.tolist()
 
-        totals = edge_loops.totals[self.faces]
+        totals = self.face_sizes
+        corners = self.corners
         self.mostly_quads = bool((totals == 4).mean() > 0.5)
-        self.corners = corners
+        self.face_corner_starts = face_starts(totals)
         next_corner_vertices = corners[next_corners_in_face(totals)]
-        self.corner_faces = numpy.repeat(numpy.arange(len(self.faces)), totals)
         keys, corner_edges, face_counts = numpy.unique(
             undirected_edge_keys(corners, next_corner_vertices),
             return_inverse=True,
@@ -215,21 +360,15 @@ class LoopRegion:
             face_counts == 2, second_faces, -1
         ).tolist()
         self.face_vertices = faces_from_arrays(corners, totals)
-        self.vertex_faces = [[] for _ in range(len(self.vertices))]
-        for face, ring in enumerate(self.face_vertices):
-            for vertex in ring:
-                self.vertex_faces[vertex].append(face)
-
-        inside = in_region[face_pairs.first] & in_region[face_pairs.second]
-        self.local_face_pairs = numpy.stack(
-            [
-                numpy.searchsorted(self.faces, face_pairs.first[inside]),
-                numpy.searchsorted(self.faces, face_pairs.second[inside]),
-            ],
-            axis=1,
+        self.corner_edges = corner_edges
+        self.next_corner_vertices = next_corner_vertices
+        self.corners_by_vertex = numpy.argsort(corners, kind="stable")
+        self.vertex_corner_counts = numpy.bincount(
+            corners, minlength=len(self.vertices)
         )
-        self.pair_edge_keys = undirected_edge_keys(
-            face_pairs.edges[inside, 0], face_pairs.edges[inside, 1]
+        self.vertex_corner_starts = face_starts(self.vertex_corner_counts)
+        self.vertex_faces = faces_from_arrays(
+            self.corner_faces[self.corners_by_vertex], self.vertex_corner_counts
         )
 
     def sliced_loop(self, tail, across, along):
@@ -243,7 +382,7 @@ class LoopRegion:
         best = slices[min(slices, key=lambda tilt: slices[tilt].length)]
         if best.strip is None:
             return None
-        loop = self._snapped_loop(tail, best.strip.faces, best.plane_distance)
+        loop = self._snapped_loop(tail, best.strip.faces, best.plane_distances)
         if loop is None:
             return None
         return self.vertices[loop].tolist()
@@ -251,29 +390,16 @@ class LoopRegion:
     def _slice(self, tail, across, along, tilt_degrees):
         tilt = math.radians(tilt_degrees)
         direction = (across * math.cos(tilt) + along * math.sin(tilt)).tolist()
-        origin = self.position_list[tail]
-        distances = {tail: 0.0}
-
-        def plane_distance(vertex):
-            distance = distances.get(vertex)
-            if distance is None:
-                point = self.position_list[vertex]
-                distance = distances[vertex] = (
-                    (point[0] - origin[0]) * direction[0]
-                    + (point[1] - origin[1]) * direction[1]
-                    + (point[2] - origin[2]) * direction[2]
-                )
-            return distance
-
-        strip = self._strip(tail, plane_distance)
+        plane_distances = PlaneDistances(self.position_list, tail, direction)
+        strip = self._strip(tail, plane_distances)
         if strip is None:
-            return Slice(strip, plane_distance, math.inf)
+            return Slice(strip, plane_distances, math.inf)
         tails, heads = self.edges[strip.crossed_edges].T
         tail_distances = numpy.array(
-            [plane_distance(vertex) for vertex in tails.tolist()]
+            [plane_distances[vertex] for vertex in tails.tolist()]
         )
         head_distances = numpy.array(
-            [plane_distance(vertex) for vertex in heads.tolist()]
+            [plane_distances[vertex] for vertex in heads.tolist()]
         )
         share = tail_distances / (tail_distances - head_distances)
         crossings = self.positions[tails] + share[:, None] * (
@@ -282,10 +408,10 @@ class LoopRegion:
         length = numpy.linalg.norm(
             crossings - numpy.roll(crossings, -1, axis=0), axis=1
         ).sum()
-        return Slice(strip, plane_distance, float(length))
+        return Slice(strip, plane_distances, float(length))
 
-    def _crossed_edges(self, face, plane_distance):
-        above = [plane_distance(vertex) >= 0 for vertex in self.face_vertices[face]]
+    def _crossed_edges(self, face, plane_distances):
+        above = [plane_distances[vertex] >= 0 for vertex in self.face_vertices[face]]
         return [
             edge
             for tail_above, head_above, edge in zip(
@@ -294,9 +420,9 @@ class LoopRegion:
             if tail_above != head_above
         ]
 
-    def _strip(self, tail, plane_distance):
+    def _strip(self, tail, plane_distances):
         for start_face in self.vertex_faces[tail]:
-            crossed = self._crossed_edges(start_face, plane_distance)
+            crossed = self._crossed_edges(start_face, plane_distances)
             if len(crossed) == 2:
                 break
         else:
@@ -313,86 +439,151 @@ class LoopRegion:
             face = second if first == face else first
             if face == start_face:
                 return Strip(strip, strip_edges)
-            crossed = self._crossed_edges(face, plane_distance)
+            crossed = self._crossed_edges(face, plane_distances)
             if len(crossed) != 2:
                 return None
             leaving = crossed[1] if crossed[0] == leaving else crossed[0]
             strip.append(face)
             strip_edges.append(leaving)
 
-    def edges_near(self, loop):
-        near = set()
-        for vertex in numpy.searchsorted(self.vertices, loop).tolist():
-            for face in self.vertex_faces[vertex]:
-                near.update(self.face_vertices[face])
-        edges = []
-        for vertex in near:
-            for face in self.vertex_faces[vertex]:
-                ring = self.face_vertices[face]
-                for tail, head, edge in zip(
-                    ring, ring[1:] + ring[:1], self.face_edges[face]
-                ):
-                    if tail in near and head in near:
-                        edges.append(edge)
-        return edges
-
-    def _snapped_loop(self, tail, strip, plane_distance):
-        points = self.position_list
-        allowed = self.local_interior
-
-        def step_cost(start, end):
-            a, b = points[start], points[end]
-            length = math.sqrt(
-                (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
+    def _vertex_corners(self, vertices):
+        return self.corners_by_vertex[
+            corners_of_faces(
+                self.vertex_corner_starts, self.vertex_corner_counts, vertices
             )
-            return length + abs(plane_distance(end))
+        ]
 
-        faces = [*strip, strip[0]]
-        best = {(0, tail): (0.0, None)}
-        for position, face in enumerate(faces):
-            ring = self.face_vertices[face]
-            if position > 0:
-                for vertex in ring:
-                    previous = best.get((position - 1, vertex))
-                    if previous is not None:
-                        best[(position, vertex)] = (previous[0], (position - 1, vertex))
-            changed = True
-            while changed:
-                changed = False
-                for index, vertex in enumerate(ring):
-                    following = ring[(index + 1) % len(ring)]
-                    for start, end in ((vertex, following), (following, vertex)):
-                        reached = best.get((position, start))
-                        if reached is None or not allowed[end]:
-                            continue
-                        cost = reached[0] + step_cost(start, end)
-                        if cost < best.get((position, end), (math.inf,))[0]:
-                            best[(position, end)] = (cost, (position, start))
-                            changed = True
-        node = (len(faces) - 1, tail)
-        if node not in best:
+    def edges_near(self, loop):
+        loop_corners = self._vertex_corners(numpy.searchsorted(self.vertices, loop))
+        loop_faces = self.corner_faces[loop_corners]
+        near_vertices = numpy.unique(
+            self.corners[
+                corners_of_faces(self.face_corner_starts, self.face_sizes, loop_faces)
+            ]
+        )
+        near = numpy.zeros(len(self.vertices), dtype=bool)
+        near[near_vertices] = True
+        ring_corners = self._vertex_corners(near_vertices)
+        return self.corner_edges[
+            ring_corners[near[self.next_corner_vertices[ring_corners]]]
+        ]
+
+    def _snapped_loop(self, tail, strip, plane_distances):
+        faces = numpy.array([*strip, strip[0]], dtype=numpy.int64)
+        sizes = self.face_sizes[faces]
+        node_starts = face_starts(sizes)
+        node_positions = numpy.repeat(numpy.arange(len(faces)), sizes)
+        node_vertices = self.corners[
+            self.face_corner_starts[faces][node_positions]
+            + numpy.arange(len(node_positions))
+            - node_starts[node_positions]
+        ]
+        next_nodes = next_corners_in_face(sizes)
+        next_vertices = node_vertices[next_nodes]
+        offsets = self.positions[node_vertices] - self.positions[next_vertices]
+        lengths = numpy.sqrt(
+            offsets[:, 0] ** 2 + offsets[:, 1] ** 2 + offsets[:, 2] ** 2
+        )
+        distances = numpy.abs(
+            [plane_distances[vertex] for vertex in node_vertices.tolist()]
+        )
+        allowed = self.local_interior
+        forward_costs = numpy.where(
+            allowed[next_vertices], lengths + distances[next_nodes], math.inf
+        ).tolist()
+        backward_costs = numpy.where(
+            allowed[node_vertices], lengths + distances, math.inf
+        ).tolist()
+
+        node_keys = node_positions * len(self.vertices) + node_vertices
+        by_key = numpy.argsort(node_keys)
+        previous_keys = node_keys - len(self.vertices)
+        found = numpy.minimum(
+            numpy.searchsorted(node_keys[by_key], previous_keys), len(by_key) - 1
+        )
+        previous_nodes = numpy.where(
+            node_keys[by_key][found] == previous_keys, by_key[found], -1
+        ).tolist()
+
+        node_count = len(node_vertices)
+        best = [math.inf] * node_count
+        came_from = [-1] * node_count
+        start = int(numpy.flatnonzero(node_vertices[: sizes[0]] == tail)[0])
+        best[start] = 0.0
+        ring_starts = [*node_starts.tolist(), node_count]
+        for position in range(len(faces)):
+            ring = range(ring_starts[position], ring_starts[position + 1])
+            for node in ring:
+                source = previous_nodes[node]
+                if source >= 0 and best[source] < math.inf:
+                    best[node] = best[source]
+                    came_from[node] = source
+            steps = list(zip(ring, [*ring[1:], ring[0]]))
+            # shortest paths with positive costs go one way round, so two laps each way cover them
+            for node, ahead in steps + steps:
+                cost = best[node] + forward_costs[node]
+                if cost < best[ahead]:
+                    best[ahead] = cost
+                    came_from[ahead] = node
+            for node, ahead in reversed(steps + steps):
+                cost = best[ahead] + backward_costs[node]
+                if cost < best[node]:
+                    best[node] = cost
+                    came_from[node] = ahead
+        last_ring = node_vertices[ring_starts[-2] :]
+        node = ring_starts[-2] + int(numpy.flatnonzero(last_ring == tail)[0])
+        if best[node] == math.inf:
             return None
+        vertices = node_vertices.tolist()
         loop = []
-        while node is not None:
-            if not loop or loop[-1] != node[1]:
-                loop.append(node[1])
-            node = best[node][1]
+        while node >= 0:
+            if not loop or loop[-1] != vertices[node]:
+                loop.append(vertices[node])
+            node = came_from[node]
         loop = loop[:0:-1]
         if len(loop) < 3 or len(set(loop)) != len(loop):
             return None
         return loop
 
 
-def loop_side(region, loop):
+def _far_side_spans(region, loop):
     loop = numpy.asarray(loop, dtype=numpy.int64)
-    joined = ~numpy.isin(
-        region.pair_edge_keys, undirected_edge_keys(loop, numpy.roll(loop, -1))
+    tree = region.tree
+    loop_pairs = region.pairs_by_edge_key[
+        numpy.searchsorted(
+            region.sorted_pair_edge_keys,
+            undirected_edge_keys(loop, numpy.roll(loop, -1)),
+        )
+    ]
+    children = tree.child_of_pair[loop_pairs]
+    children = children[children >= 0]
+    side_changes = numpy.sort(
+        numpy.concatenate([tree.position[children], tree.end[children]])
     )
-    parts = lowest_index_part_labels(len(region.faces), region.local_face_pairs[joined])
-    sides = numpy.unique(parts)
-    if len(sides) != 2:
+    # loops around a handle leave the region in one piece
+    checked_pairs = numpy.concatenate([loop_pairs, region.pairs_closing_edge_cycles])
+    on_far_side = (
+        numpy.searchsorted(
+            side_changes,
+            tree.position[region.local_face_pairs[checked_pairs]],
+            side="right",
+        )
+        % 2
+    )
+    sides_differ = on_far_side[:, 0] != on_far_side[:, 1]
+    if (sides_differ != numpy.isin(checked_pairs, loop_pairs)).any():
         return None
-    return region.faces[parts == sides[1]]
+    return side_changes.reshape(-1, 2)
+
+
+def loop_side(region, loop):
+    spans = _far_side_spans(region, loop)
+    if spans is None:
+        return None
+    far_side = numpy.concatenate(
+        [region.tree.order[start:end] for start, end in spans.tolist()]
+    )
+    return region.faces[numpy.sort(far_side)]
 
 
 # flat patches score 1 and hemisphere caps 2
@@ -436,17 +627,26 @@ def drawn_loops(edge_loops, region):
         )
         > 0
     )
+    area_before = numpy.concatenate(
+        [[0.0], numpy.cumsum(face_areas[region.tree.order])]
+    )
+    border_faces_before = numpy.concatenate(
+        [[0], numpy.cumsum(touches_border[region.tree.order])]
+    )
     loops, lengths = [], []
     for loop in candidates:
-        side = loop_side(region, loop)
-        if side is None:
+        spans = _far_side_spans(region, loop)
+        if spans is None:
             continue
-        in_side = numpy.isin(region.faces, side)
-        cap_areas = [
-            face_areas[faces].sum()
-            for faces in (in_side, ~in_side)
-            if not touches_border[faces].any()
-        ]
+        far_area = (area_before[spans[:, 1]] - area_before[spans[:, 0]]).sum()
+        far_border_faces = (
+            border_faces_before[spans[:, 1]] - border_faces_before[spans[:, 0]]
+        ).sum()
+        sides = (
+            (far_area, far_border_faces),
+            (area_before[-1] - far_area, border_faces_before[-1] - far_border_faces),
+        )
+        cap_areas = [area for area, border_faces in sides if border_faces == 0]
         points = edge_loops.positions[loop]
         following = numpy.roll(points, -1, axis=0)
         length = numpy.linalg.norm(points - following, axis=1).sum()

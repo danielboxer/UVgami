@@ -405,7 +405,7 @@ def test_a_region_draws_its_quad_loops_and_the_nearest_one_is_picked(load_obj):
     middle = (session.positions[tail] + session.positions[head]) / 2
 
     nearest = session._nearest_drawn_loop(drawn, None, None, middle)
-    (candidate,) = drawn.candidates[nearest.index]
+    (candidate,) = session._loop_and_mirror(drawn.loops[nearest.index])
 
     segment_edit.stop_segment_edit()
     first_loop = drawn.edges[drawn.loop_of_edge == drawn.loop_of_edge[0], 0]
