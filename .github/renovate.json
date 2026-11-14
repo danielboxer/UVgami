@@ -1,0 +1,28 @@
+{
+	"$schema": "https://docs.renovatebot.com/renovate-schema.json",
+	"extends": [
+		"config:recommended",
+		"helpers:pinGitHubActionDigests",
+		":configMigration",
+		"group:all",
+		"schedule:monthly"
+	],
+	"timezone": "America/Toronto",
+	"updateNotScheduled": false,
+	"enabledManagers": ["github-actions", "pep621"],
+	"minimumReleaseAge": "14 days",
+	"lockFileMaintenance": {
+		"enabled": true
+	},
+	"vulnerabilityAlerts": {
+		"labels": ["security"]
+	},
+	"packageRules": [
+		{
+			"description": "Ignore digest-only updates for GitHub Actions (only notify on tagged releases)",
+			"matchManagers": ["github-actions"],
+			"matchUpdateTypes": ["digest"],
+			"enabled": false
+		}
+	]
+}

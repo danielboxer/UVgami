@@ -22,6 +22,7 @@ module-name = "uvgami_cli"
 
 [tool.uv]
 environments = ["sys_platform == 'win32'", "sys_platform == 'linux'"]
+exclude-newer = "7 days"
 
 [tool.ruff]
 target-version = "py311"

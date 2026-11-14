@@ -9,12 +9,16 @@ on:
     paths:
       - blender_manifest.toml
 
+permissions: {}
+
 env:
   ADDON_NAME: "UVgami"
 
 jobs:
   check-version:
     uses: ./.github/workflows/check-version.yml
+    permissions:
+      contents: read
     with:
       file: blender_manifest.toml
 
@@ -22,10 +26,18 @@ jobs:
     needs: check-version
     if: needs.check-version.outputs.bumped == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Check addon version
         id: version
@@ -42,18 +54,32 @@ jobs:
   check:
     needs: prepare
     uses: ./.github/workflows/release-check.yml
-    secrets: inherit
+    permissions:
+      contents: read
+    secrets:
+      ENGINE_RELEASE_TOKEN: ${{ secrets.ENGINE_RELEASE_TOKEN }}
+      ENGINE_RELEASE_REPO: ${{ secrets.ENGINE_RELEASE_REPO }}
 
   package:
     needs: [prepare, check]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
       actions: read
+      id-token: write
+      attestations: write
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
 
     steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       # the zip the check installed
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -61,21 +87,28 @@ jobs:
           name: addon-zip
       - run: mv addon.zip ${ADDON_NAME}.zip
 
-      - name: Determine TAG
-        run: echo "TAG=${{ needs.prepare.outputs.tag }}" >> $GITHUB_ENV
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ env.ADDON_NAME }}.zip
 
       - name: Create release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ env.TAG }}
-        run: gh release create "$TAG" "${ADDON_NAME}.zip" --title "$TAG"
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          cp "$BUNDLE" "${ADDON_NAME}.zip.sigstore.json"
+          gh release create "$TAG" "${ADDON_NAME}.zip" "${ADDON_NAME}.zip.sigstore.json" --title "$TAG"
 
       # the site serves index.json as a blender extension repository
       - name: Update the extension index
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARCHIVE_URL: https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/${{ env.ADDON_NAME }}.zip
         run: |
           python dev/write_extension_index.py "${ADDON_NAME}.zip" "$ARCHIVE_URL" index.json
+          gh auth setup-git
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add index.json

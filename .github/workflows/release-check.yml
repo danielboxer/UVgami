@@ -3,6 +3,13 @@ name: Release check
 on:
   workflow_dispatch:
   workflow_call:
+    secrets:
+      ENGINE_RELEASE_TOKEN:
+        required: true
+      ENGINE_RELEASE_REPO:
+        required: true
+
+permissions: {}
 
 env:
   INCLUDED_FILES: "src LICENSE __init__.py blender_manifest.toml"
@@ -10,8 +17,16 @@ env:
 jobs:
   zip:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Download the bundled engine builds
         env:
@@ -40,8 +55,16 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
       - run: uv sync
       - run: uv run ruff check
@@ -62,11 +85,18 @@ jobs:
             pkg_name: macos-arm64
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 10
+    permissions:
+      contents: read
     env:
       ENGINE: ${{ matrix.engine }}
 
     steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       # uv refuses macos (tool.uv.environments), and the cli has no dependencies
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -153,15 +183,23 @@ jobs:
             suite: false
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 30
+    permissions:
+      contents: read
     defaults:
       run:
         shell: bash
     env:
       BLENDER_DIR: blender-${{ matrix.blender.version }}-${{ matrix.platform.arch }}
       TAG: ${{ matrix.platform.tag }}
+      BLENDER_BINARY: ${{ matrix.platform.binary }}
 
     steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         if: matrix.platform.suite
       - run: uv sync
@@ -225,14 +263,16 @@ jobs:
 
       # validate only reads the manifest
       - name: Validate the manifest
-        run: ${{ env.BLENDER_DIR }}/${{ matrix.platform.binary }} --factory-startup --command extension validate .
+        run: |
+          "$BLENDER_DIR/$BLENDER_BINARY" --factory-startup --command extension validate .
 
       # an empty user folder, like a first install
       - name: Install the zip
         run: |
           echo "BLENDER_USER_RESOURCES=$RUNNER_TEMP/blender-user" >> "$GITHUB_ENV"
-          BLENDER_USER_RESOURCES="$RUNNER_TEMP/blender-user" ${{ env.BLENDER_DIR }}/${{ matrix.platform.binary }} --factory-startup --command extension install-file -r user_default -e addon.zip
+          BLENDER_USER_RESOURCES="$RUNNER_TEMP/blender-user" "$BLENDER_DIR/$BLENDER_BINARY" --factory-startup --command extension install-file -r user_default -e addon.zip
 
       - name: Download the engines and unwrap a cube in the installed addon
-        run: ${{ env.BLENDER_DIR }}/${{ matrix.platform.binary }} -b --python-exit-code 1 --python dev/tests/blender/installed_addon.py -- bl_ext.user_default.uvgami
+        run: |
+          "$BLENDER_DIR/$BLENDER_BINARY" -b --python-exit-code 1 --python dev/tests/blender/installed_addon.py -- bl_ext.user_default.uvgami
 
