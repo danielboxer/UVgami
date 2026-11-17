@@ -14,6 +14,7 @@ from .proxy import part_triangles
 from .utils.mesh import (
     edge_vertex_pairs,
     loop_vertices_and_face_sizes,
+    material_indices,
     new_bmesh,
     set_bmesh,
     vertex_position_array,
@@ -77,7 +78,9 @@ def clear_regions(mesh):
             mesh.attributes.remove(attribute)
 
 
-def segment_work(mesh, positions, segment_command, unset_mode, *, fine_cut):
+def segment_work(
+    mesh, positions, segment_command, unset_mode, *, fine_cut, material_seams
+):
     stored = stored_regions(mesh)
     if stored is not None:
         return WorkerProcess(
@@ -98,6 +101,7 @@ def segment_work(mesh, positions, segment_command, unset_mode, *, fine_cut):
         surface_modes(mesh, unset_mode),
         face_values(mesh, KEEP_ATTRIBUTE) != 0,
         fine_cut=fine_cut,
+        material_indices=material_indices(mesh) if material_seams else None,
     )
 
 

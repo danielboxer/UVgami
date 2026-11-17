@@ -65,6 +65,12 @@ def loop_starts(mesh):
     return starts
 
 
+def material_indices(mesh):
+    indices = numpy.empty(len(mesh.polygons), dtype=numpy.int64)
+    mesh.polygons.foreach_get("material_index", indices)
+    return indices
+
+
 SYMMETRIC_ATTRIBUTE = "uvgami_symmetric"
 
 

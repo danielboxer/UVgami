@@ -5,7 +5,7 @@ from ...guides import painted_weight_by_vertex
 from ...hard_surface import preseed_work, seam_flags
 from ...no_bpy import SURFACE_MODE_CODES, uvs_collapsed_to_points
 from ...utils.io import print_stdin
-from ...utils.mesh import corner_uvs
+from ...utils.mesh import corner_uvs, material_indices
 from ...utils.ui import is_non_default, only_active
 from .. import EngineFailure
 from .flags import SPLIT_TARGETS, bound_and_weight_args
@@ -103,6 +103,9 @@ class OptcutsEngine(OptcutsInstall):
             engine_args=bound_and_weight_args(props.priority, props.weight_value),
             weights=restrictions,
             surface_modes=surface_modes,
+            material_indices=material_indices(obj.data)
+            if props.material_seams
+            else None,
             plane=plane,
         )
 

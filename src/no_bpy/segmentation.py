@@ -1,3 +1,4 @@
+import collections
 import functools
 from collections import namedtuple
 
@@ -17,7 +18,7 @@ from .mesh import (
     next_corners_in_face,
     undirected_edge_keys,
 )
-from .preseed import SegmentRegions, resolved_surface_modes, write_modes
+from .preseed import SegmentRegions, resolved_surface_modes, write_face_values
 
 # from collections import namedtuple
 # from .engine_run import EngineError, stdout_path
@@ -187,6 +188,66 @@ def on_pairs_with_edges(borders, edges):
     }
 
 
+# a material patch under this share of the segmented area joins a neighbor in its region
+SMALL_MATERIAL_PATCH_SHARE = 0.01
+
+
+def labels_split_by_material(labels, materials, face_pairs, face_areas):
+    parent = list(range(len(labels)))
+    first, second = face_pairs.first, face_pairs.second
+    joined = (labels[first] == labels[second]) & (materials[first] == materials[second])
+    for face, other in zip(first[joined].tolist(), second[joined].tolist()):
+        parent[find_root(parent, other)] = find_root(parent, face)
+    patches = numpy.array([find_root(parent, face) for face in range(len(parent))])
+    segmented = labels > 0
+    patch_areas = numpy.bincount(patches, weights=face_areas, minlength=len(labels))
+    small = patch_areas < SMALL_MATERIAL_PATCH_SHARE * face_areas[segmented].sum()
+    first_patch, second_patch = patches[first], patches[second]
+    touching = (
+        (first_patch != second_patch)
+        & (labels[first] == labels[second])
+        & segmented[first]
+    )
+    contacts = collections.Counter()
+    for a, b in zip(first_patch[touching].tolist(), second_patch[touching].tolist()):
+        if small[a] and not small[b]:
+            contacts[a, b] += 1
+        if small[b] and not small[a]:
+            contacts[b, a] += 1
+    neighbor_of = {}
+    for (patch, neighbor), count in contacts.items():
+        best = neighbor_of.get(patch)
+        if best is None or (count, -neighbor) > (contacts[patch, best], -best):
+            neighbor_of[patch] = neighbor
+    merged = numpy.array([neighbor_of.get(patch, patch) for patch in patches.tolist()])
+    _, dense = numpy.unique(merged[segmented], return_inverse=True)
+    split = numpy.zeros(len(labels), dtype=numpy.int64)
+    split[segmented] = dense + 1
+    return split
+
+
+def regions_split_by_material(regions, materials, face_pairs, face_areas):
+    labels = labels_split_by_material(regions.labels, materials, face_pairs, face_areas)
+    fine_labels = regions.fine_labels
+    if fine_labels is not None:
+        fine_labels = nested_fine_labels(labels, fine_labels)
+    first, second = labels[face_pairs.first], labels[face_pairs.second]
+    material_borders = (
+        (first != second)
+        & (first > 0)
+        & (second > 0)
+        & (materials[face_pairs.first] != materials[face_pairs.second])
+    )
+    border_edges = {tuple(sorted(edge)) for edge in regions.border_edges}
+    border_edges |= set(map(tuple, face_pairs.edges[material_borders].tolist()))
+    return regions._replace(
+        border_edges=sorted(border_edges),
+        region_count=len(numpy.unique(labels[labels > 0])),
+        labels=labels,
+        fine_labels=fine_labels,
+    )
+
+
 def nested_fine_labels(labels, fine_labels):
     span = int(fine_labels.max()) + 1
     pairs = numpy.where(fine_labels > 0, labels * span + fine_labels, 0)
@@ -207,6 +268,7 @@ def segment_job(
     # stored_labels=None,
     *,
     fine_cut,
+    material_indices=None,
     cancelled=None,
     progress=None,
 ):
@@ -214,7 +276,7 @@ def segment_job(
     folder = new_run_folder(workdir)
     input_path = folder / f"{INPUT_STEM}.obj"
     write_obj(input_path, positions.tolist(), faces)
-    write_modes(folder / f"{INPUT_STEM}_modes", surface_modes)
+    write_face_values(folder / f"{INPUT_STEM}_modes", surface_modes)
     if kept_faces.any():
         (folder / f"{INPUT_STEM}_kept").write_text(
             "".join(f"{int(kept)}\n" for kept in kept_faces.tolist())
@@ -231,7 +293,20 @@ def segment_job(
         len(faces),
         functools.partial(_read_regions, fine_cut=fine_cut),
     )
-    return poll_run(run, cancelled, progress)
+    regions = poll_run(run, cancelled, progress)
+    if material_indices is None:
+        return regions
+    points = positions[corners]
+    following = positions[corners[next_corners_in_face(totals)]]
+    vector_areas = numpy.zeros((len(totals), 3))
+    face_of_corner = numpy.repeat(numpy.arange(len(totals)), totals)
+    numpy.add.at(vector_areas, face_of_corner, numpy.cross(points, following))
+    return regions_split_by_material(
+        regions,
+        material_indices,
+        edge_face_pairs(corners, totals),
+        numpy.linalg.norm(vector_areas, axis=1) / 2,
+    )
 
 
 def stored_segment_job(

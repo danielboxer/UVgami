@@ -40,6 +40,7 @@ SETTING_ICONS_AND_LABELS = {
     "unwrap_timeout": IconAndLabel("TIME", "Timeout"),
     "keep_quads": IconAndLabel("MOD_TRIANGULATE", "Keep Quads"),
     "transfer_uvs": IconAndLabel("MOD_DATA_TRANSFER", "Transfer UVs"),
+    "material_seams": IconAndLabel("MATERIAL", "Material Seams"),
 }
 
 
@@ -73,6 +74,9 @@ def unwrap_settings(props):
             _setting_entry(props, "symmetry", supported=True),
             _setting_entry(props, "unwrap_timeout", supported=True),
             _setting_entry(props, "keep_quads", supported=engine.supports_keep_quads),
+            _setting_entry(
+                props, "material_seams", supported=engine.supports_material_seams
+            ),
             _setting_entry(props, "transfer_uvs", supported=True),
         )
     )
@@ -155,6 +159,10 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
         name="",
         description="Keep quads and n-gons in the output",
         default=True,
+    )
+    material_seams: bpy.props.BoolProperty(
+        name="",
+        description="Cut seams and split regions where the material changes",
     )
     max_cores: bpy.props.IntProperty(
         name="",

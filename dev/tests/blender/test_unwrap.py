@@ -192,3 +192,34 @@ def test_hard_surface_keeps_seams_off_the_diagonals(make_mesh, unwrap, outputs):
     assert diagonal_seams == 0
     # the two caps and the wall opened once
     assert island_count(next(iter(outputs().values()))) == 3
+
+
+def test_material_seams_split_the_wall_where_the_material_changes(
+    make_mesh, unwrap, outputs
+):
+    around, along = 24, 6
+    verts, faces = capped_quad_cylinder(around, along)
+    obj = make_mesh(
+        "cylinder", verts, faces, [[(0.0, 0.0)] * len(face) for face in faces]
+    )
+    for name in ("first", "second"):
+        obj.data.materials.append(bpy.data.materials.new(name))
+    wall = around * along
+    obj.data.polygons.foreach_set(
+        "material_index",
+        [
+            int(face < wall and face % around < around // 2)
+            for face in range(len(faces))
+        ],
+    )
+    props = bpy.context.scene.uvgami
+    props.optcuts.mode = "HARD"
+    props.material_seams = True
+    props.keep_quads = False
+    props.symmetry = False
+    unwrap()
+
+    assert manager.error_messages == []
+    assert manager.summary_failed is False, manager.summary
+    # the two caps and the wall's two halves
+    assert island_count(next(iter(outputs().values()))) == 4

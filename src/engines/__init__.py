@@ -26,6 +26,7 @@ class Engine:
     keeps_plane_vertices_on_u_zero = False
     supports_regions = False
     supports_symmetry = False
+    supports_material_seams = False
     has_install_controls = False
 
     def describe(self):

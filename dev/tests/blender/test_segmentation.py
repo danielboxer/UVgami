@@ -30,6 +30,7 @@ applied_matrix = addon.src.utils.mesh.applied_matrix
 SURFACE_MODE_CODES = addon.src.no_bpy.SURFACE_MODE_CODES
 edge_face_pairs = addon.src.no_bpy.segmentation.edge_face_pairs
 pair_borders = addon.src.no_bpy.segmentation.pair_borders
+loop_vertices_and_face_sizes = addon.src.utils.mesh.loop_vertices_and_face_sizes
 
 # the dumbbell fixture's bulbs meet a straight neck of this radius around the x axis
 NECK_RADIUS = 0.3
@@ -281,7 +282,7 @@ def test_stored_borders_drive_the_segment_work_without_the_engine(load_obj):
     missing = ToolsCommand(["no-such-segment-engine.exe"], None)
     positions = addon.src.utils.mesh.vertex_position_array(mesh)
     result = segmentation.segment_work(
-        mesh, positions, missing, "ORGANIC", fine_cut=False
+        mesh, positions, missing, "ORGANIC", fine_cut=False, material_seams=False
     ).result()
     assert result.hand_edited
     assert result.region_count == 2
@@ -338,6 +339,34 @@ def test_the_region_editor_joins_the_bulbs_and_the_unwrap_keeps_it_whole(
     assert manager.error_messages == []
     assert len(manager.results) == 1
     assert island_count(outputs()[OUTPUT]) == 1
+
+
+@needs_tools
+def test_material_seams_split_the_regions_on_the_material_borders(load_obj):
+    (dumbbell,) = load_obj("dumbbell")
+    mesh = dumbbell.data
+    for name in ("upper", "lower"):
+        mesh.materials.append(bpy.data.materials.new(name))
+    centers = numpy.empty(len(mesh.polygons) * 3)
+    mesh.polygons.foreach_get("center", centers)
+    # y above zero cuts both bulbs and the neck lengthwise
+    materials = (centers.reshape(-1, 3)[:, 1] > 0).astype(numpy.int64)
+    mesh.polygons.foreach_set("material_index", materials.tolist())
+    plain = dumbbell_segments(dumbbell)
+
+    bpy.context.scene.uvgami.material_seams = True
+    segments = dumbbell_segments(dumbbell)
+
+    assert segments.region_count > plain.region_count
+    labels = segments.labels
+    for region in numpy.unique(labels[labels > 0]).tolist():
+        assert len(numpy.unique(materials[labels == region])) == 1
+    pairs = edge_face_pairs(*loop_vertices_and_face_sizes(mesh))
+    on_border = (materials[pairs.first] != materials[pairs.second]) & (
+        labels[pairs.first] > 0
+    )
+    expected = set(map(tuple, pairs.edges[on_border].tolist()))
+    assert expected <= set(segments.border_edges)
 
 
 def hovered_loops(session):

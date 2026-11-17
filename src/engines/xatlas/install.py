@@ -35,4 +35,5 @@ class XatlasInstall(BinaryEngine):
     release = XATLAS
     supports_regions = True
     supports_symmetry = True
+    supports_material_seams = True
     classes = (UVGAMI_OT_install_xatlas, UVGAMI_OT_delete_engine)

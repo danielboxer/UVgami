@@ -40,4 +40,5 @@ class OptcutsInstall(BinaryEngine):
     keeps_plane_vertices_on_u_zero = True
     supports_regions = True
     supports_symmetry = True
+    supports_material_seams = True
     classes = (UVGAMI_OT_install_optcuts, UVGAMI_OT_delete_engine)

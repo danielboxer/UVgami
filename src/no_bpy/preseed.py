@@ -102,10 +102,8 @@ def _write_weights(path, weights):
         )
 
 
-def write_modes(path, surface_modes):
-    path.write_text(
-        "".join(f"{mode}\n" for mode in numpy.asarray(surface_modes).tolist())
-    )
+def write_face_values(path, values):
+    path.write_text("".join(f"{value}\n" for value in numpy.asarray(values).tolist()))
 
 
 def resolved_surface_modes(
@@ -118,7 +116,7 @@ def resolved_surface_modes(
     try:
         obj_path = folder / f"{ENGINE_INPUT_STEM}.obj"
         write_obj(obj_path, positions, faces)
-        write_modes(folder / f"{ENGINE_INPUT_STEM}_modes", surface_modes)
+        write_face_values(folder / f"{ENGINE_INPUT_STEM}_modes", surface_modes)
         modes_path = folder / RESOLVED_MODES_NAME
         args = [*command.args, "classify", obj_path, modes_path]
         run = _start(folder, args, command.env, modes_path, len(faces), _read_modes)
@@ -140,6 +138,7 @@ def preseed_job(
     weights,
     plane,
     surface_modes,
+    material_indices,
     angle,
     split_target,
     cancelled=None,
@@ -158,7 +157,11 @@ def preseed_job(
         obj_path = folder / f"{ENGINE_INPUT_STEM}.obj"
         write_obj(obj_path, positions.tolist(), faces)
         _write_weights(folder / f"{ENGINE_INPUT_STEM}_weights", weights)
-        write_modes(folder / f"{ENGINE_INPUT_STEM}_modes", surface_modes)
+        write_face_values(folder / f"{ENGINE_INPUT_STEM}_modes", surface_modes)
+        if material_indices is not None:
+            write_face_values(
+                folder / f"{ENGINE_INPUT_STEM}_materials", material_indices
+            )
         plane_args = []
         if plane is not None:
             axis, partners, symmetric = plane

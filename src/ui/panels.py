@@ -430,6 +430,11 @@ class UVGAMI_PT_advanced(EnginePanel, bpy.types.Panel):
         _setting_label(split, "transfer_uvs")
         split.prop(props, "transfer_uvs")
 
+        if engine.supports_material_seams:
+            split = box.split(factor=0.7)
+            _setting_label(split, "material_seams")
+            split.prop(props, "material_seams")
+
         if engine.supports_regions:
             splits_regions = engine.splits_regions(props)
             no_organic_parts = _no_organic_parts(context, engine, props)

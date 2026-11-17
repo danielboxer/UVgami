@@ -85,7 +85,16 @@ def apply_loop_uvs(mesh, uvs, faces):
     set_loop_uvs(mesh, coords)
 
 
-def preseed_work(obj, angle, split_target, engine_args, weights, surface_modes, plane):
+def preseed_work(
+    obj,
+    angle,
+    split_target,
+    engine_args,
+    weights,
+    surface_modes,
+    material_indices,
+    plane,
+):
     mesh = obj.data
     worker = WorkerProcess(
         preseed_job,
@@ -96,6 +105,7 @@ def preseed_work(obj, angle, split_target, engine_args, weights, surface_modes, 
         weights,
         plane,
         surface_modes,
+        material_indices,
         angle,
         split_target,
     )

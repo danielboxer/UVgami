@@ -51,6 +51,7 @@ def run_preseed(engines, tmp_path, positions, faces, surface_modes, plane=None):
         None,
         plane,
         numpy.asarray(surface_modes),
+        None,
         30,
         SPLIT_TARGET,
     )

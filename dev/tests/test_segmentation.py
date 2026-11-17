@@ -12,6 +12,7 @@ from no_bpy.segmentation import (
     # split_region_job,
     edge_face_pairs,
     joined_labels,
+    labels_split_by_material,
     nested_fine_labels,
     on_pairs_with_edges,
     pair_borders,
@@ -183,6 +184,38 @@ def test_joined_labels_skip_fine_labels_without_faces():
     labels, count = joined_labels(fine, borders, set(borders))
     assert labels.tolist() == [1, 1, 2, 2, 3]
     assert count == 3
+
+
+def test_material_split_makes_one_region_per_connected_patch():
+    _, corners, totals = strip_arrays()
+    fine = numpy.array([1, 1, 1, 0], dtype=numpy.int64)
+    # faces 0 and 2 share material 0 but not an edge, so they become two regions
+    materials = numpy.array([0, 1, 0, 0], dtype=numpy.int64)
+    areas = numpy.ones(4)
+    pairs = edge_face_pairs(corners, totals)
+    split = labels_split_by_material(fine, materials, pairs, areas)
+    assert split.tolist() == [1, 2, 3, 0]
+
+
+def test_a_small_material_patch_stays_with_its_neighbor():
+    _, corners, totals = strip_arrays()
+    fine = numpy.array([1, 1, 1, 1], dtype=numpy.int64)
+    materials = numpy.array([0, 0, 0, 1], dtype=numpy.int64)
+    pairs = edge_face_pairs(corners, totals)
+    small = numpy.array([1.0, 1.0, 1.0, 0.001])
+    assert labels_split_by_material(fine, materials, pairs, small).tolist() == [
+        1,
+        1,
+        1,
+        1,
+    ]
+    large = numpy.ones(4)
+    assert labels_split_by_material(fine, materials, pairs, large).tolist() == [
+        1,
+        1,
+        1,
+        2,
+    ]
 
 
 def test_nested_fine_labels_split_a_fine_region_the_coarse_cut_crosses():

@@ -100,6 +100,7 @@ class SegmentationRun:
                 tools_command(),
                 unset_mode,
                 fine_cut=self.fine_cut,
+                material_seams=self.props.material_seams,
             )
         if not self.engine.supports_hard_surface:
             return None

@@ -555,6 +555,7 @@ class SessionBuilder:
             self.segment_command,
             self.engine.unset_surface_mode(props),
             fine_cut=False,
+            material_seams=props.material_seams,
         )
         return self._wait(
             worker,
