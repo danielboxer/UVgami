@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from uvgami_cli import cli, optcuts
 from uvgami_cli._pytest_plugin import ONE_TRIANGLE_OBJ
-from uvgami_cli.common import REPO_ROOT, UnwrapError
+from uvgami_cli.common import UnwrapError
 
 
 def fake_engine_run(monkeypatch, engine_module):
@@ -36,32 +36,9 @@ def fake_xatlas(monkeypatch):
 
 @pytest.fixture
 def fake_partuv(monkeypatch):
-    pytest.importorskip("partuv")
-    import partuv.cli
+    from uvgami_cli import partuv
 
-    calls = {}
-
-    def fake_run(pairs, checkpoint, config, threshold, segmentation="ai", *, batch):
-        calls.update(
-            pairs=pairs,
-            checkpoint=checkpoint,
-            config=config,
-            threshold=threshold,
-            segmentation=segmentation,
-            batch=batch,
-        )
-        for _, output_path in pairs:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(ONE_TRIANGLE_OBJ)
-        return 0
-
-    def fake_resolve_checkpoint(flag):
-        calls["checkpoint_flag"] = flag
-        return str(flag) if flag else "fake.ckpt"
-
-    monkeypatch.setattr(partuv.cli, "run", fake_run)
-    monkeypatch.setattr(partuv.cli, "resolve_checkpoint", fake_resolve_checkpoint)
-    return calls
+    return fake_engine_run(monkeypatch, partuv)
 
 
 def test_default_output_name(triangle, fake_optcuts):
@@ -301,42 +278,51 @@ def test_partuv_dispatch(triangle, tmp_path, fake_partuv):
         ]
     )
     assert code == 0
-    assert fake_partuv["pairs"] == [(triangle, output)]
-    assert fake_partuv["batch"] is False
-    assert fake_partuv["threshold"] == 1.5
-    assert fake_partuv["segmentation"] == "geometric"
-    # geometric never resolves a checkpoint
-    assert fake_partuv["checkpoint"] is None
-    assert fake_partuv["config"] is None
+    input_path, output_path, args = fake_partuv[0]
+    assert (input_path, output_path) == (triangle, output)
+    assert args.threshold == 1.5
+    assert args.segmentation == "geometric"
+    assert args.checkpoint is None
 
 
-def test_partuv_ai_resolves_checkpoint(triangle, tmp_path, monkeypatch, fake_partuv):
-    # the env var keeps the CLI's repo-checkpoint fallback out of this test
+def test_partuv_ai_reads_the_checkpoint_variable(
+    triangle, tmp_path, monkeypatch, fake_partuv
+):
     monkeypatch.setenv("UVGAMI_PARTUV_CHECKPOINT", str(tmp_path / "env.ckpt"))
-    config = tmp_path / "config.yaml"
-    config.write_text("pamo: true\n")
-    code = cli.main(
-        ["unwrap", str(triangle), "--engine", "partuv", "--config", str(config)]
-    )
+    code = cli.main(["unwrap", str(triangle), "--engine", "partuv"])
     assert code == 0
-    assert fake_partuv["segmentation"] == "ai"
-    assert fake_partuv["threshold"] == 1.25
-    # with the env var set, partuv resolves the checkpoint itself
-    assert fake_partuv["checkpoint_flag"] is None
-    assert fake_partuv["checkpoint"] == "fake.ckpt"
-    assert fake_partuv["config"] == config
+    args = fake_partuv[0][2]
+    assert args.segmentation == "ai"
+    assert args.threshold == 1.25
+    assert args.checkpoint == tmp_path / "env.ckpt"
 
 
 def test_partuv_resolves_repo_checkpoint(triangle, monkeypatch, fake_partuv):
     monkeypatch.delenv("UVGAMI_PARTUV_CHECKPOINT", raising=False)
-    repo_checkpoint = REPO_ROOT / "engine-builds" / "model_objaverse.ckpt"
     original_is_file = Path.is_file
     monkeypatch.setattr(
-        Path, "is_file", lambda self: self == repo_checkpoint or original_is_file(self)
+        Path,
+        "is_file",
+        lambda self: self == cli.REPO_CHECKPOINT or original_is_file(self),
     )
     code = cli.main(["unwrap", str(triangle), "--engine", "partuv"])
     assert code == 0
-    assert fake_partuv["checkpoint"] == str(repo_checkpoint)
+    assert fake_partuv[0][2].checkpoint == cli.REPO_CHECKPOINT
+
+
+def test_partuv_ai_runs_partfield_with_the_partuv_binary():
+    from uvgami_cli import partuv
+
+    args = cli.build_parser().parse_args(
+        ["unwrap", "in.obj", "--engine", "partuv", "--checkpoint", "model.ckpt"]
+    )
+    cli._validate_partuv(args)
+    command = partuv.build_command(
+        args, Path("partuv.exe"), None, Path("in.obj"), Path("out.obj")
+    )
+    assert command[1:3] == ["-m", "partuv_partfield"]
+    assert command[command.index("--partuv-path") + 1] == "partuv.exe"
+    assert command[command.index("--checkpoint") + 1] == "model.ckpt"
 
 
 def test_xatlas_dispatch(triangle, tmp_path, fake_xatlas, capsys):
@@ -410,19 +396,16 @@ def test_checkpoint_rejected_for_geometric(triangle, tmp_path, capsys):
     assert "--checkpoint" in capsys.readouterr().err
 
 
-def test_partuv_error_maps_exit_code(triangle, monkeypatch, capsys):
-    pytest.importorskip("partuv")
-    import partuv.cli
-    from partuv.common import UnwrapError as PartuvError
-
-    def boom(flag):
-        raise PartuvError(3, "no checkpoint")
-
-    monkeypatch.setattr(partuv.cli, "resolve_checkpoint", boom)
+def test_partuv_without_a_checkpoint_reports_json(
+    triangle, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.delenv("UVGAMI_PARTUV_CHECKPOINT", raising=False)
+    monkeypatch.setattr(cli, "REPO_CHECKPOINT", tmp_path / "missing.ckpt")
     code = cli.main(["unwrap", str(triangle), "--engine", "partuv", "--json"])
-    assert code == 3
+    assert code == 2
     result = json.loads(capsys.readouterr().out)
-    assert result == {"status": "error", "exit_code": 3, "message": "no checkpoint"}
+    assert result["exit_code"] == 2
+    assert "no PartField checkpoint" in result["message"]
 
 
 def test_json_success_reports_partuv_engine(triangle, fake_partuv, capsys):

@@ -113,6 +113,16 @@ def test_other_engines_unwrap_the_cylinder(load_obj, unwrap, outputs, engine):
     assert has_uvs(outputs()["cylinder_unwrapped"])
 
 
+def test_partuv_tree_segmentation_unwraps_the_cylinder(load_obj, unwrap, outputs):
+    load_obj("cylinder")
+    bpy.context.scene.uvgami.partuv.segmentation = "TREE"
+
+    unwrap("PARTUV")
+
+    assert manager.error_messages == []
+    assert has_uvs(outputs()["cylinder_unwrapped"])
+
+
 def capped_quad_cylinder(around=24, along=6):
     verts = [
         (

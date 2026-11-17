@@ -68,7 +68,7 @@ def download_engines(engines):
         if engine.id == "PARTUV":
             install = importlib.import_module(engines.__name__ + ".partuv.install")
             # ai segmentation needs a gpu and the runners have none
-            install.install_partuv(ai=False)
+            install.PARTUV.install()
         else:
             engine.release.install()
 

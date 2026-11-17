@@ -137,7 +137,10 @@ class EngineRelease:
             for name in archive.namelist():
                 # optcuts and xatlas zips nest the licenses at different depths
                 parts = name.split("/")
-                if parts[-1] == LICENSE_FILE:
+                # windows loads a binary's dlls from the binary's folder
+                if parts[-1].endswith(".dll"):
+                    target = install_dir / parts[-1]
+                elif parts[-1] == LICENSE_FILE:
                     target = install_dir / LICENSE_FILE
                 elif LICENSES_FOLDER in parts[:-1] and parts[-1]:
                     target = install_dir / LICENSES_FOLDER / parts[-1]

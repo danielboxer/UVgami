@@ -1,204 +1,76 @@
-import functools
-import pathlib
-import platform
 import shutil
-import subprocess
-import tarfile
-import zipfile
 
 import bpy
 
-from ..download import ENGINE_DOWNLOADS_URL, download_file
+from ...utils.engine_binaries import get_platform_tag
+from ..binary_engine import EngineRelease, engine_install_root
 from ..install_task import (
     DELETE_DESCRIPTION,
     DELETED_MESSAGE,
     DOWNLOADED_MESSAGE,
     InstallTask,
     offline_error,
-    report_progress,
     task_state,
-    version_below,
 )
-from .paths import (
-    get_partfield_checkpoint_path,
-    get_partuv_venv_path,
-    get_partuv_venv_python,
-    get_uv_path,
+from .paths import get_partfield_checkpoint_path, get_partuv_venv_path, get_uv_path
+
+# must match the partuv engine VERSION and partuv-partfield's pyproject.toml
+PARTUV_VERSION = "0.2.0"
+PARTUV_MINIMUM_VERSION = "0.2.0"
+# TODO: fill in from the partuv 0.2.0 release zips
+PARTUV_ARCHIVE_SHA256S = {"windows": "", "linux": "", "macos-arm64": ""}
+PARTUV = EngineRelease(
+    "partuv",
+    "PartUV",
+    PARTUV_VERSION,
+    PARTUV_MINIMUM_VERSION,
+    "2 MB",
+    PARTUV_ARCHIVE_SHA256S,
 )
-from .venv_commands import VENV_PYTHON, build_install_commands
-
-# must match partuv's pyproject.toml
-PARTUV_VERSION = "0.1.6"
-PARTUV_MINIMUM_VERSION = "0.1.0"
-PARTUV_WHEELS = {
-    "Windows": f"partuv-{PARTUV_VERSION}-cp311-cp311-win_amd64.whl",
-    # auditwheel sets the manylinux tag from the build runner's glibc
-    "Linux": f"partuv-{PARTUV_VERSION}-cp311-cp311-manylinux_2_35_x86_64.whl",
-}
-# Hugging Face's copy changes with its main branch
-CHECKPOINT_URL = "https://github.com/DanielBoxer/UVgami/releases/download/checkpoint/model_objaverse.ckpt"
-# partuv is an nvidia cuda wheel
-PARTUV_PLATFORMS = ("Windows", "Linux")
-GEOMETRIC_DOWNLOAD_SIZE = "200 MB"
-AI_DOWNLOAD_SIZE = "5 GB"
-UV_VERSION = "0.11.25"
-UV_ARCHIVES = {
-    "Windows": "uv-x86_64-pc-windows-msvc.zip",
-    "Linux": "uv-x86_64-unknown-linux-gnu.tar.gz",
-}
-
-
-@functools.cache
-def get_installed_partuv_version():
-    venv = get_partuv_venv_path()
-    if platform.system() == "Windows":
-        site = venv / "Lib" / "site-packages"
-    else:
-        site = venv / "lib" / f"python{VENV_PYTHON}" / "site-packages"
-    dist_info = next(site.glob("partuv-*.dist-info"), None)
-    if dist_info is None:
-        return None
-    return dist_info.name[len("partuv-") : -len(".dist-info")]
-
-
-def partuv_update_pending():
-    return version_below(get_installed_partuv_version(), PARTUV_VERSION)
-
-
-def partuv_too_old():
-    return version_below(get_installed_partuv_version(), PARTUV_MINIMUM_VERSION)
-
-
-def ensure_uv():
-    uv = get_uv_path()
-    if uv.is_file():
-        return uv
-    archive_name = UV_ARCHIVES[platform.system()]
-    url = (
-        f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/{archive_name}"
-    )
-    uv.parent.mkdir(parents=True, exist_ok=True)
-    archive_path = uv.parent / archive_name
-    task_state["phase"] = "Downloading uv"
-    download_file(url, archive_path, progress=report_progress)
-    # uv archives nest the binary in a per-target folder
-    if archive_name.endswith(".zip"):
-        with zipfile.ZipFile(archive_path) as archive:
-            member = next(
-                name for name in archive.namelist() if name.endswith("uv.exe")
-            )
-            with archive.open(member) as source, open(uv, "wb") as destination:
-                shutil.copyfileobj(source, destination)
-    else:
-        with tarfile.open(archive_path) as archive:
-            member = next(
-                entry for entry in archive.getmembers() if entry.name.endswith("/uv")
-            )
-            with archive.extractfile(member) as source, open(uv, "wb") as destination:
-                shutil.copyfileobj(source, destination)
-        uv.chmod(0o755)
-    archive_path.unlink()
-    return uv
-
-
-def run_venv_install(wheel_url, *, ai):
-    uv = ensure_uv()
-    # uv prints no byte counts
-    task_state["phase"] = "Installing packages"
-    task_state["bytes_total"] = None
-    venv_python = get_partuv_venv_python()
-    commands = build_install_commands(
-        str(uv),
-        str(venv_python),
-        str(get_partuv_venv_path()),
-        wheel_url,
-        ai=ai,
-        create_venv=not venv_python.is_file(),
-    )
-    for command in commands:
-        result = subprocess.run(command, capture_output=True, text=True)
-        if result.returncode != 0:
-            tail = "\n".join(result.stderr.strip().splitlines()[-3:])
-            raise RuntimeError(f"{pathlib.Path(command[0]).name} failed: {tail}")
-
-
-def install_partuv(*, ai):
-    run_venv_install(
-        f"{ENGINE_DOWNLOADS_URL}/{PARTUV_WHEELS[platform.system()]}", ai=ai
-    )
-    target = get_partfield_checkpoint_path()
-    if not ai or target.is_file():
-        return
-    target.parent.mkdir(parents=True, exist_ok=True)
-    task_state["phase"] = "Downloading AI checkpoint"
-    download_file(CHECKPOINT_URL, target, progress=report_progress)
 
 
 def uninstall_partuv():
     task_state["phase"] = "Deleting engine"
-    venv = get_partuv_venv_path()
-    if venv.is_dir():
-        shutil.rmtree(venv)
+    for folder in (
+        engine_install_root(PARTUV.name),
+        get_partuv_venv_path(),
+        get_uv_path().parent,
+    ):
+        if folder.is_dir():
+            shutil.rmtree(folder)
     get_partfield_checkpoint_path().unlink(missing_ok=True)
-    uv_dir = get_uv_path().parent
-    if uv_dir.is_dir():
-        shutil.rmtree(uv_dir)
 
 
 class PartuvTask(InstallTask):
     owner = "partuv"
 
     def precheck(self):
-        if platform.system() not in PARTUV_PLATFORMS:
-            return "PartUV is only available on Windows and Linux"
+        if get_platform_tag() not in PARTUV_ARCHIVE_SHA256S:
+            return "PartUV is only available on Windows, Linux and Apple Silicon Macs"
         return None
 
 
 class UVGAMI_OT_install_partuv(PartuvTask, bpy.types.Operator):
     bl_idname = "uvgami.install_partuv"
     bl_label = "Download PartUV Engine"
+    bl_description = "Download the engine with geometric and tree segmentation"
     done_message = DOWNLOADED_MESSAGE
 
     def precheck(self):
         return super().precheck() or offline_error()
 
-    @classmethod
-    def description(cls, context, properties):
-        if properties.tier == "AI":
-            return (
-                f"Download the engine with AI segmentation, ~{AI_DOWNLOAD_SIZE}."
-                " Includes geometric. Needs an NVIDIA GPU"
-            )
-        return (
-            "Download the engine with geometric segmentation only, a much smaller"
-            " download. Needs an NVIDIA GPU"
-        )
-
     def invoke(self, context, event):
-        ai = self.tier == "AI"
-        action = "Update" if partuv_update_pending() else "Download"
+        action = "Update" if PARTUV.update_available() else "Download"
         return context.window_manager.invoke_confirm(
             self,
             event,
-            title=f"{action} PartUV AI" if ai else f"{action} PartUV",
-            message=f"{AI_DOWNLOAD_SIZE}. The NVIDIA AI model is non-commercial only"
-            if ai
-            else GEOMETRIC_DOWNLOAD_SIZE,
+            title=f"{action} PartUV",
+            message=f"{PARTUV.download_size}. Under the UVgami Engine License.",
             confirm_text=action,
         )
 
-    tier: bpy.props.EnumProperty(
-        items=(
-            ("GEOMETRIC", "Geometric", ""),
-            ("AI", "AI", ""),
-        ),
-        default="GEOMETRIC",
-        options={"HIDDEN"},
-    )
-
     def build_task(self):
-        ai = self.tier == "AI"
-        return lambda: install_partuv(ai=ai)
+        return PARTUV.install
 
 
 class UVGAMI_OT_uninstall_partuv(PartuvTask, bpy.types.Operator):

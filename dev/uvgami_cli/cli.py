@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .common import (
     EXIT_INVALID_INPUT,
-    EXIT_MISSING_RUNTIME,
+    REPO_ROOT,
     UnwrapError,
     log,
     unwrap_all,
@@ -123,7 +123,7 @@ def _add_partuv_args(group):
     )
     group.add_argument(
         "--segmentation",
-        choices=["ai", "geometric"],
+        choices=["ai", "geometric", "tree"],
         help="part segmentation, default: ai",
     )
     group.add_argument(
@@ -132,7 +132,12 @@ def _add_partuv_args(group):
         help="PartField model checkpoint, default: $UVGAMI_PARTUV_CHECKPOINT,"
         " then the local checkpoint at engine-builds/model_objaverse.ckpt",
     )
-    group.add_argument("--config", type=Path, help="default: packaged config.yaml")
+    group.add_argument(
+        "--config", type=Path, help="default: the config built into partuv"
+    )
+    group.add_argument(
+        "--partuv-path", type=Path, help="default: local engines/ binary"
+    )
 
 
 PARTUV_FLAGS = {
@@ -140,51 +145,43 @@ PARTUV_FLAGS = {
     "--segmentation": "segmentation",
     "--checkpoint": "checkpoint",
     "--config": "config",
+    "--partuv-path": "partuv_path",
 }
+REPO_CHECKPOINT = REPO_ROOT / "engine-builds" / "model_objaverse.ckpt"
 
 
 def _validate_partuv(args):
     args.segmentation = args.segmentation or "ai"
-    if args.segmentation == "geometric" and args.checkpoint is not None:
-        raise UnwrapError(
-            EXIT_INVALID_INPUT, "--checkpoint only applies to --segmentation ai"
-        )
     args.threshold = args.threshold if args.threshold is not None else 1.25
+    if args.segmentation != "ai":
+        if args.checkpoint is not None:
+            raise UnwrapError(
+                EXIT_INVALID_INPUT, "--checkpoint only applies to --segmentation ai"
+            )
+        return
+    if args.config is not None:
+        raise UnwrapError(
+            EXIT_INVALID_INPUT, "--config does not apply to --segmentation ai"
+        )
+    if args.checkpoint is None and "UVGAMI_PARTUV_CHECKPOINT" in os.environ:
+        args.checkpoint = Path(os.environ["UVGAMI_PARTUV_CHECKPOINT"])
+    if args.checkpoint is None and REPO_CHECKPOINT.is_file():
+        args.checkpoint = REPO_CHECKPOINT
+    if args.checkpoint is None:
+        raise UnwrapError(
+            EXIT_INVALID_INPUT,
+            "no PartField checkpoint: pass --checkpoint, set UVGAMI_PARTUV_CHECKPOINT,"
+            f" or place model_objaverse.ckpt in {REPO_CHECKPOINT.parent}",
+        )
 
 
 def run_partuv(args, pairs):
-    try:
-        import partuv.cli
-        import partuv.common
-    except ImportError as error:
-        raise UnwrapError(
-            EXIT_MISSING_RUNTIME,
-            f"the PartUV engine is not installed ({error});"
-            " install it from the engine source",
-        ) from error
-    # partuv raises its own UnwrapError class
-    try:
-        checkpoint = None
-        if args.segmentation == "ai":
-            checkpoint = args.checkpoint
-            if checkpoint is None and "UVGAMI_PARTUV_CHECKPOINT" not in os.environ:
-                # the editable install serves partuv from site-packages
-                repo_checkpoint = (
-                    Path(__file__).parents[2] / "engine-builds" / "model_objaverse.ckpt"
-                )
-                if repo_checkpoint.is_file():
-                    checkpoint = repo_checkpoint
-            checkpoint = partuv.cli.resolve_checkpoint(checkpoint)
-        return partuv.cli.run(
-            pairs,
-            checkpoint,
-            args.config,
-            args.threshold,
-            args.segmentation,
-            batch=len(pairs) > 1,
-        )
-    except partuv.common.UnwrapError as error:
-        raise UnwrapError(error.exit_code, str(error)) from error
+    from . import partuv
+
+    def unwrap_one(input_path, output_path):
+        partuv.run(input_path, output_path, args)
+
+    return unwrap_all(pairs, unwrap_one)
 
 
 ENGINE_SPECS = {

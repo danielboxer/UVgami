@@ -32,20 +32,9 @@ needs_xatlas = pytest.mark.skipif(
 )
 
 
-def _partuv_installed():
-    partuv = addon.src.engines.partuv
-    if not partuv.ENGINE.is_installed():
-        return False
-    repo = partuv.find_partuv_dev_repo()
-    venv = partuv.paths.get_partuv_venv_path() if repo is None else repo / ".venv"
-    return any(
-        next(venv.glob(pattern), None) is not None
-        for pattern in ("*/site-packages/partuv-*", "*/*/site-packages/partuv-*")
-    )
-
-
 needs_partuv = pytest.mark.skipif(
-    not _partuv_installed(), reason="partuv is not installed for this blender"
+    addon.src.utils.engine_binaries.get_dev_build_path("partuv") is None,
+    reason="no local partuv binary, and downloading one would need the network",
 )
 
 

@@ -32,10 +32,7 @@ extend-exclude = ["private"]
 extend-select = ["I", "UP"]
 
 [tool.pytest.ini_options]
-# pytest skips a testpath that is not there
-testpaths = ["dev/tests", "private/bench/tests", "private/engine/partuv/tests", "private/engine/uvgami-tools"]
+testpaths = ["dev/tests"]
 markers = ["smoke: runs the real engine binary"]
-# the partuv driver source must import for the wheel tests, with no built _core
-pythonpath = ["private/engine/partuv", "private/bench/src"]
 # the plugin keeps pytest from importing the blender addon root __init__.py
 addopts = "--import-mode=importlib -p uvgami_cli._pytest_plugin"
