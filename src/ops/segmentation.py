@@ -75,9 +75,7 @@ _session = None
 _segmentation_run = None
 _draw_handler = None
 
-LoopCandidate = namedtuple(
-    "LoopCandidate", "split_region relabeled_faces vertices edges shape"
-)
+LoopCandidate = namedtuple("LoopCandidate", "relabeled_faces vertices edges shape")
 NO_LOOPS = ()
 DrawnLoops = namedtuple("DrawnLoops", "edges loop_of_edge loops shape")
 NearestDrawnLoop = namedtuple("NearestDrawnLoop", "index closest")
@@ -130,7 +128,7 @@ class EditSession:
         self.hovered_mirror = None
         self.hovered_loop_key = None
         self.hovered_loops = NO_LOOPS
-        self.hovered_region = None
+        self.hovered_part = None
         self._join_parts()
 
     def _world(self, points):
@@ -157,17 +155,28 @@ class EditSession:
         }
         # gpu batches are made inside the draw handler, where the gpu context is
         self.border_batches = {}
-        self.loop_batches = {}
-        self.loop_candidates = {}
 
     def _forget_regions(self, regions):
-        for region in regions:
-            self.loop_regions.pop(region, None)
-            self.drawn_loops.pop(region, None)
-            self.drawn_loop_batches.pop(region, None)
+        regions = set(regions)
+        for cache in (self.loop_regions, self.drawn_loops, self.drawn_loop_batches):
+            for part_regions in [key for key in cache if regions.intersection(key)]:
+                del cache[part_regions]
 
     def _join_parts(self):
         self.joined, self.part_count = joined_labels(self.fine, self.borders, self.on)
+        part_of_region = numpy.zeros(int(self.fine.max()) + 1, dtype=numpy.int64)
+        part_of_region[self.fine] = self.joined
+        self.regions_of_part = [()] + [
+            tuple(numpy.flatnonzero(part_of_region == part).tolist())
+            for part in range(1, self.part_count + 1)
+        ]
+        current = set(self.regions_of_part)
+        for cache in (self.loop_regions, self.drawn_loops, self.drawn_loop_batches):
+            for part_regions in [key for key in cache if key not in current]:
+                del cache[part_regions]
+        # mirrored candidates go stale when a toggle changes the mirror's part
+        self.loop_candidates = {}
+        self.loop_batches = {}
         triangle_parts = self.joined[self.triangle_faces]
         self.fill_shapes = []
         for part in range(1, self.part_count + 1):
@@ -221,7 +230,7 @@ class EditSession:
         )
         index = int(numpy.linalg.norm(closest - point, axis=1).argmin())
         low, high = sorted((int(vertices[index]), int(following[index])))
-        return int(self.fine[face]), low, high
+        return self.regions_of_part[self.joined[face]], low, high
 
     def _hover_loop_under(self, face, point):
         edge = self._edge_near(face, point)
@@ -232,16 +241,16 @@ class EditSession:
 
     def hover(self, region, event):
         hovered_before, loops_before = self.hovered, self.hovered_loops
-        region_before = self.hovered_region
-        self.hovered, self.hovered_region = None, None
+        part_before = self.hovered_part
+        self.hovered, self.hovered_part = None, None
         self.hovered_loop_key, self.hovered_loops = None, NO_LOOPS
         hit = self.hit_under(region, event)
         if hit is not None and self.fine[hit[0]] == 0:
             hit = None
         if hit is not None:
             face, point = hit
-            self.hovered_region = int(self.fine[face])
-            drawn = self._drawn_loops(self.hovered_region)
+            self.hovered_part = self.regions_of_part[self.joined[face]]
+            drawn = self._drawn_loops(self.hovered_part)
             pair, closest = self.border_near(face, point)
             if drawn is not None:
                 nearest = self._nearest_drawn_loop(drawn, pair, closest, point)
@@ -251,7 +260,7 @@ class EditSession:
                     self._pixels_apart(region, point, nearest.closest)
                     <= BORDER_PICK_PIXELS
                 ):
-                    key = (self.hovered_region, nearest.index)
+                    key = (self.hovered_part, nearest.index)
                     if key not in self.loop_candidates:
                         self.loop_candidates[key] = self._loop_and_mirror(
                             drawn.loops[nearest.index]
@@ -272,13 +281,13 @@ class EditSession:
         return (
             self.hovered != hovered_before
             or self.hovered_loops is not loops_before
-            or self.hovered_region != region_before
+            or self.hovered_part != part_before
         )
 
-    def _drawn_loops(self, region):
-        if region in self.drawn_loops:
-            return self.drawn_loops[region]
-        loops = drawn_loops(self.edge_loops, self._loop_region(region))
+    def _drawn_loops(self, part_regions):
+        if part_regions in self.drawn_loops:
+            return self.drawn_loops[part_regions]
+        loops = drawn_loops(self.edge_loops, self._loop_region(part_regions))
         drawn = None
         if loops:
             edges = numpy.concatenate(
@@ -296,7 +305,7 @@ class EditSession:
                 numpy.arange(len(loops)), [len(loop) for loop in loops]
             )
             drawn = DrawnLoops(edges, loop_of_edge, loops, shape)
-        self.drawn_loops[region] = drawn
+        self.drawn_loops[part_regions] = drawn
         return drawn
 
     def _nearest_drawn_loop(self, drawn, pair, closest, point):
@@ -318,15 +327,15 @@ class EditSession:
             return None
         return mirrored
 
-    def _loop_region(self, region):
-        if region not in self.loop_regions:
-            self.loop_regions[region] = LoopRegion(
-                self.edge_loops, self.fine == region, self.face_pairs
+    def _loop_region(self, part_regions):
+        if part_regions not in self.loop_regions:
+            self.loop_regions[part_regions] = LoopRegion(
+                self.edge_loops, numpy.isin(self.fine, part_regions), self.face_pairs
             )
-        return self.loop_regions[region]
+        return self.loop_regions[part_regions]
 
-    def _loops_through(self, region, tail, head):
-        loop = self.edge_loops.find_loop(self._loop_region(region), tail, head)
+    def _loops_through(self, part_regions, tail, head):
+        loop = self.edge_loops.find_loop(self._loop_region(part_regions), tail, head)
         if loop is None:
             return NO_LOOPS
         return self._loop_and_mirror(loop)
@@ -353,8 +362,8 @@ class EditSession:
         return mirrored.tolist()
 
     def _loop_candidate(self, loop):
-        region = int(self.fine[self.face_of_vertex[loop[0]]])
-        loop_region = self._loop_region(region)
+        part = self.joined[self.face_of_vertex[loop[0]]]
+        loop_region = self._loop_region(self.regions_of_part[part])
         if not all(loop_region.interior[vertex] for vertex in loop):
             return None
         side = loop_side(loop_region, loop)
@@ -369,7 +378,7 @@ class EditSession:
             LINE_NUDGE,
             LINE_WIDTH / 2,
         )
-        return LoopCandidate(region, side, loop, numpy.sort(edges, axis=1), shape)
+        return LoopCandidate(side, loop, numpy.sort(edges, axis=1), shape)
 
     def add_loops(self, candidates):
         for hovered in candidates:
@@ -379,18 +388,38 @@ class EditSession:
         self._changed()
 
     def _split_along(self, candidate):
-        on_edges = pair_edges(self.borders, self.on)
+        on_edges = pair_edges(self.borders, self.on) + candidate.edges.tolist()
         fine = self.fine.copy()
-        new_label = int(fine.max()) + 1
-        fine[candidate.relabeled_faces] = new_label
+        far_side = numpy.zeros(len(fine), dtype=bool)
+        far_side[candidate.relabeled_faces] = True
+        split_regions = numpy.intersect1d(fine[far_side], fine[~far_side])
+        new_labels = numpy.arange(len(split_regions)) + int(fine.max()) + 1
+        relabeled = far_side & numpy.isin(fine, split_regions)
+        fine[relabeled] = new_labels[numpy.searchsorted(split_regions, fine[relabeled])]
         self.loop_edges.update(map(tuple, candidate.edges.tolist()))
-        self._forget_regions((candidate.split_region, new_label))
+        self._forget_regions([*split_regions.tolist(), *new_labels.tolist()])
         self._set_fine(fine)
         self.on = on_pairs_with_edges(self.borders, on_edges)
-        self.on.add((candidate.split_region, new_label))
+        self._join_parts()
 
     def _is_loop_border(self, pair):
         return set(map(tuple, self.borders[pair].tolist())) <= self.loop_edges
+
+    def _whole_loop(self, pair):
+        loop_pairs = {other for other in self.borders if self._is_loop_border(other)}
+        whole = {pair}
+        vertices = set(self.borders[pair].ravel().tolist())
+        while True:
+            touching = {
+                other
+                for other in loop_pairs - whole
+                if not vertices.isdisjoint(self.borders[other].ravel().tolist())
+            }
+            if not touching:
+                return whole
+            whole |= touching
+            for other in touching:
+                vertices.update(self.borders[other].ravel().tolist())
 
     def toggle(self, pair):
         pairs = {pair}
@@ -401,7 +430,7 @@ class EditSession:
         if same_kind:
             pairs.add(mirrored)
         if self._is_loop_border(pair):
-            self._remove_loops(sorted(pairs))
+            self._remove_loops(sorted(set().union(*map(self._whole_loop, pairs))))
         elif pair in self.on:
             self.on -= pairs
         else:
@@ -423,7 +452,7 @@ class EditSession:
         self.hovered_mirror = None
         self.hovered_loop_key = None
         self.hovered_loops = NO_LOOPS
-        self.hovered_region = None
+        self.hovered_part = None
         self._join_parts()
         self.write()
 
@@ -456,11 +485,11 @@ class EditSession:
             if pair not in self.border_batches:
                 self.border_batches[pair] = shape_batch(shape)
             items.append((shape._replace(color=color), self.border_batches[pair]))
-        drawn = self.drawn_loops.get(self.hovered_region)
+        drawn = self.drawn_loops.get(self.hovered_part)
         if drawn is not None:
-            if self.hovered_region not in self.drawn_loop_batches:
-                self.drawn_loop_batches[self.hovered_region] = shape_batch(drawn.shape)
-            items.append((drawn.shape, self.drawn_loop_batches[self.hovered_region]))
+            if self.hovered_part not in self.drawn_loop_batches:
+                self.drawn_loop_batches[self.hovered_part] = shape_batch(drawn.shape)
+            items.append((drawn.shape, self.drawn_loop_batches[self.hovered_part]))
         for index, loop in enumerate(self.hovered_loops):
             key = (self.hovered_loop_key, index)
             if key not in self.loop_batches:

@@ -342,7 +342,9 @@ def test_the_region_editor_joins_the_bulbs_and_the_unwrap_keeps_it_whole(
 
 def hovered_loops(session):
     return (
-        session._loops_through(int(session.fine[face]), *sorted(corners[:2]))
+        session._loops_through(
+            session.regions_of_part[session.joined[face]], *sorted(corners[:2])
+        )
         for face, corners in enumerate(session.face_corners)
     )
 
@@ -358,7 +360,9 @@ def test_a_clicked_loop_splits_its_region_and_a_second_click_removes_it(load_obj
     session.add_loops((candidate,))
     after_adding = session.part_count
     stored_loop = segmentation.stored_loop_edges(dumbbell.data)
-    session.toggle((candidate.split_region, int(session.fine.max())))
+    session.toggle(
+        next(pair for pair in session.borders if session._is_loop_border(pair))
+    )
     after_removal = session.part_count
 
     segment_edit.stop_segment_edit()
@@ -367,6 +371,53 @@ def test_a_clicked_loop_splits_its_region_and_a_second_click_removes_it(load_obj
     assert after_removal == parts
     assert len(segmentation.stored_loop_edges(dumbbell.data)) == 0
     assert segmentation.stored_regions(dumbbell.data) is not None
+
+
+def regions_split(session, candidate):
+    far_side = numpy.zeros(len(session.fine), dtype=bool)
+    far_side[candidate.relabeled_faces] = True
+    return numpy.intersect1d(session.fine[far_side], session.fine[~far_side])
+
+
+@needs_tools
+def test_a_loop_across_joined_regions_splits_their_part_until_clicked_again(
+    load_obj,
+):
+    (dumbbell,) = load_obj("dumbbell")
+    segment_edit.start_session(dumbbell, dumbbell_segments(dumbbell), {})
+    session = segment_edit._session
+    mesh = dumbbell.data
+    centers = numpy.empty(len(mesh.polygons) * 3)
+    mesh.polygons.foreach_get("center", centers)
+    # y above zero halves every region lengthwise, so the rings cross two regions
+    halves = (centers.reshape(-1, 3)[:, 1] > 0).astype(numpy.int64)
+    session._set_fine(numpy.where(session.fine > 0, session.fine * 2 - halves, 0))
+    session.on = set()
+    session._join_parts()
+    (candidate,) = next(
+        loops
+        for loops in hovered_loops(session)
+        if loops and len(regions_split(session, loops[0])) > 1
+    )
+
+    session.add_loops((candidate,))
+    near_side = numpy.ones(len(session.fine), dtype=bool)
+    near_side[candidate.relabeled_faces] = False
+    far_parts = numpy.unique(session.joined[candidate.relabeled_faces])
+    near_parts = numpy.unique(session.joined[near_side & (session.fine > 0)])
+    stored_loop = segmentation.stored_loop_edges(dumbbell.data)
+    after_adding = session.part_count
+    loop_borders = [pair for pair in session.borders if session._is_loop_border(pair)]
+    session.toggle(loop_borders[0])
+
+    segment_edit.stop_segment_edit()
+    assert after_adding == 2
+    assert len(far_parts) == 1
+    assert len(near_parts) == 1
+    assert len(stored_loop) == len(candidate.edges)
+    assert len(loop_borders) > 1
+    assert session.part_count == 1
+    assert len(segmentation.stored_loop_edges(dumbbell.data)) == 0
 
 
 @needs_tools
@@ -398,9 +449,10 @@ def test_a_region_draws_its_quad_loops_and_the_nearest_one_is_picked(load_obj):
     (dumbbell,) = load_obj("dumbbell")
     segment_edit.start_session(dumbbell, dumbbell_segments(dumbbell), {})
     session = segment_edit._session
-    regions = numpy.unique(session.fine).tolist()
-    region = next(region for region in regions if session._drawn_loops(region))
-    drawn = session._drawn_loops(region)
+    part = next(
+        part for part in session.regions_of_part[1:] if session._drawn_loops(part)
+    )
+    drawn = session._drawn_loops(part)
     tail, head = drawn.edges[0].tolist()
     middle = (session.positions[tail] + session.positions[head]) / 2
 
