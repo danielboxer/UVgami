@@ -15,9 +15,9 @@ SEAM_BORDER_TURN_DEGREES = {"LESS_STRETCH": 45, "BALANCED": 66, "FEWER_SEAMS": 7
 
 
 SURFACE_MODES = [
-    ("AUTO", "Auto", "Pick Organic or Hard Surface for each loose part by its shape"),
-    ("ORGANIC", "Organic", "Let the engine place every seam"),
-    ("HARD", "Hard Surface", "Cut seams on sharp features before the engine runs"),
+    ("AUTO", "Auto", "Pick Organic or Hard Surface for each loose part"),
+    ("ORGANIC", "Organic", "Use for objects with smooth curves and irregular shapes"),
+    ("HARD", "Hard Surface", "Use for objects with hard edges or mechanical parts"),
 ]
 SURFACE_MODE_LABELS = {mode: label for mode, label, _ in SURFACE_MODES}
 
@@ -35,10 +35,7 @@ class OptcutsEngine(OptcutsInstall):
     id = "OPTCUTS"
     enum_value = 0
     label = "Optcuts"
-    description = (
-        "Default CPU engine. Highest quality but can be slow."
-        " Includes the UV island operators"
-    )
+    description = "Default CPU engine. Highest quality but can be slow"
     icon = "UV"
     property_group = UVGAMI_PG_optcuts
     classes = (
