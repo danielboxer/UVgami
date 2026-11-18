@@ -177,7 +177,7 @@ def write_obj_with_planar_uvs(path, verts, faces):
 BumpPatch = collections.namedtuple("BumpPatch", "verts faces border")
 
 
-def write_bump_patch(path, size=12, height=0.3, width=0.05):
+def bump_patch(size, height, width):
     verts = []
     border = []
     for row in range(size + 1):
@@ -193,9 +193,61 @@ def write_bump_patch(path, size=12, height=0.3, width=0.05):
             corner = row * (size + 1) + column
             faces.append((corner, corner + 1, corner + size + 2))
             faces.append((corner, corner + size + 2, corner + size + 1))
-    write_obj_with_planar_uvs(path, verts, faces)
-    (path.parent / f"{path.stem}_fixed").write_text(",".join(map(str, border)))
     return BumpPatch(verts, faces, border)
+
+
+def write_bump_patch(path, size=12, height=0.3, width=0.05):
+    patch = bump_patch(size, height, width)
+    write_obj_with_planar_uvs(path, patch.verts, patch.faces)
+    (path.parent / f"{path.stem}_fixed").write_text(",".join(map(str, patch.border)))
+    return patch
+
+
+TwoCharts = collections.namedtuple("TwoCharts", "faces kept recut before")
+
+
+def write_two_charts(path):
+    bump = bump_patch(size=20, height=1.5, width=0.01)
+    verts = list(bump.verts)
+    uvs = [(x, y) for x, y, _ in bump.verts]
+    faces = list(bump.faces)
+    size = 6
+    start = len(verts)
+    for row in range(size + 1):
+        for column in range(size + 1):
+            x, y = column / size, row / size
+            verts.append((x + 2.0, y, 0.0))
+            # a 1.2 stretch measures about 4.07 against the 4.2 bound, the bump far over it
+            uvs.append((1.2 * x, y))
+    for row in range(size):
+        for column in range(size):
+            corner = start + row * (size + 1) + column
+            faces.append((corner, corner + 1, corner + size + 2))
+            faces.append((corner, corner + size + 2, corner + size + 1))
+    with path.open("w") as obj:
+        for x, y, z in verts:
+            obj.write(f"v {x!r} {y!r} {z!r}\n")
+        for u, v in uvs:
+            obj.write(f"vt {u!r} {v!r}\n")
+        for face in faces:
+            corners = " ".join(f"{corner + 1}/{corner + 1}" for corner in face)
+            obj.write(f"f {corners}\n")
+    return TwoCharts(
+        faces,
+        kept=range(start, len(verts)),
+        recut=range(len(bump.verts)),
+        before=lambda t: uvs[t],
+    )
+
+
+def largest_similarity_error(before, after, vertices):
+    # a uniform scale and a shift keep every distance ratio from one vertex
+    first = vertices[0]
+    inputs = [math.dist(before(first), before(t)) for t in vertices]
+    outputs = [math.dist(after(first), after(t)) for t in vertices]
+    scale = max(outputs) / max(inputs)
+    error = max(abs(out - scale * inp) for out, inp in zip(outputs, inputs))
+    return error / max(outputs)
 
 
 def read_output(path, faces):
@@ -264,12 +316,17 @@ def test_optcuts_shared_process_matches_solo(tmp_path, engine_binary):
     shutil.copyfile(FIXTURES / "cube.obj", cube)
     patch = input_dir / "patch.obj"
     write_bump_patch(patch)
-    # the pinned patch first, its pins must not leak into the cube
-    for obj in (patch, cube):
+    charts = input_dir / "charts.obj"
+    write_two_charts(charts)
+    # the charts and the pinned patch first, their state must not leak into the next mesh
+    for obj in (charts, patch, cube):
         assert run_engine(binary, obj, solo_dir).returncode == 0
     result = subprocess.run(
         [str(binary), "-o", str(shared_dir) + os.sep],
-        input=f"unwrap {patch}\nunwrap {cube}\nunwrap {input_dir / 'none.obj'}\n",
+        input=(
+            f"unwrap {charts}\nunwrap {patch}\nunwrap {cube}\n"
+            f"unwrap {input_dir / 'none.obj'}\n"
+        ),
         text=True,
         timeout=300,
         capture_output=True,
@@ -281,6 +338,8 @@ def test_optcuts_shared_process_matches_solo(tmp_path, engine_binary):
         if line.startswith(("start:", "done:", "failed:"))
     ]
     assert markers == [
+        "start: charts",
+        "done: charts",
         "start: patch",
         "done: patch",
         "start: cube",
@@ -288,7 +347,7 @@ def test_optcuts_shared_process_matches_solo(tmp_path, engine_binary):
         "start: none",
         "failed: none 103",
     ]
-    for obj in (patch, cube):
+    for obj in (charts, patch, cube):
         assert (shared_dir / obj.name).read_bytes() == (
             solo_dir / obj.name
         ).read_bytes()
@@ -405,16 +464,29 @@ def test_optcuts_keeps_a_flat_fan_with_straight_ends(tmp_path, engine_binary):
 
     # the input map is already isometric, so a kept map comes back only scaled
     uvs, output_uv_of = read_output(output_dir / "fan.obj", faces)
-    inputs = [math.dist(verts[0][:2], verts[t][:2]) for t in range(len(verts))]
-    outputs = [
-        math.dist(uvs[output_uv_of[0]], uvs[output_uv_of[t]]) for t in range(len(verts))
-    ]
-    scale = max(outputs) / max(inputs)
-    largest_error = max(
-        abs(output_distance - scale * input_distance)
-        for output_distance, input_distance in zip(outputs, inputs)
+    error = largest_similarity_error(
+        lambda t: verts[t][:2], lambda t: uvs[output_uv_of[t]], range(len(verts))
     )
-    assert largest_error < 1e-5 * max(outputs)
+    assert error < 1e-5
+
+
+@pytest.mark.smoke
+def test_optcuts_keeps_a_chart_under_the_bound_beside_one_over_it(
+    tmp_path, engine_binary
+):
+    input_dir, output_dir = make_dirs(tmp_path)
+    obj = input_dir / "charts.obj"
+    charts = write_two_charts(obj)
+
+    assert run_engine(engine_binary("optcuts"), obj, output_dir).returncode == 0
+
+    uvs, output_uv_of = read_output(output_dir / "charts.obj", charts.faces)
+
+    def after(t):
+        return uvs[output_uv_of[t]]
+
+    assert largest_similarity_error(charts.before, after, charts.kept) < 1e-5
+    assert largest_similarity_error(charts.before, after, charts.recut) > 1e-2
 
 
 def drag_center_uv(obj, verts):

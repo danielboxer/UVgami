@@ -9,7 +9,7 @@ from ..binary_engine import (
 
 PROXY_MODE_DEFAULT = "AUTO"
 # must match the optcuts engine VERSION
-OPTCUTS_VERSION = "1.24.0"
+OPTCUTS_VERSION = "1.25.0"
 OPTCUTS_MINIMUM_VERSION = "1.23.0"
 OPTCUTS_ARCHIVE_SHA256S = {
     "windows": "c898c8e6d779296e754467542d3e4d1b8b3dcd9e21faeea834dfa24a30da1e88",
