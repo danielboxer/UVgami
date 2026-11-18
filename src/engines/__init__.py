@@ -92,7 +92,7 @@ class Engine:
         )
 
     def unset_surface_mode(self, props):
-        return "AUTO"
+        return "ORGANIC"
 
     def preseed_work(self, obj, props, plane, surface_modes):
         return None

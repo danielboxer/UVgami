@@ -114,6 +114,7 @@ class PartuvEngine(CachedUpdateNotice, Engine):
     label = "PartUV"
     description = "Fewer islands and can be faster on dense meshes"
     icon = "MOD_EXPLODE"
+    supports_regions = True
     supports_symmetry = True
     property_group = UVGAMI_PG_partuv
     has_install_controls = True

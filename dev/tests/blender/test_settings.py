@@ -215,15 +215,12 @@ def test_auto_grid_lands_on_the_input_when_uvs_transfer(unwrap, outputs):
     )
 
 
-def test_partuv_alone_skips_splitting_and_every_engine_mirrors_by_default():
+def test_every_engine_splits_and_mirrors_by_default():
     props = bpy.context.scene.uvgami
     engines = addon.src.engines.ENGINES
-    for splitting in ("OPTCUTS", "XATLAS"):
-        assert engines[splitting].splits_regions(props)
-        assert engines[splitting].uses_symmetry(props)
-    if "PARTUV" in engines:
-        assert not engines["PARTUV"].splits_regions(props)
-        assert engines["PARTUV"].uses_symmetry(props)
+    for engine in engines.values():
+        assert engine.splits_regions(props)
+        assert engine.uses_symmetry(props)
 
     props.split_regions = False
     props.symmetry = False

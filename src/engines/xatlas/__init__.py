@@ -13,9 +13,6 @@ class XatlasEngine(XatlasInstall):
     description = "Fast CPU engine for baking lightmaps and texture painting"
     icon = "MESH_GRID"
 
-    def unset_surface_mode(self, props):
-        return "ORGANIC"
-
     def build_args(self, ctx, input_path, props):
         return [
             *self.command_prefix(ctx),
