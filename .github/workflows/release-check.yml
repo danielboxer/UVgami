@@ -159,8 +159,8 @@ jobs:
         blender:
           - release: "4.3"
             version: 4.3.2
-          - release: "5.2"
-            version: 5.2.0
+          - release: "5.3"
+            version: 5.3.0
         platform:
           - os: ubuntu-latest
             arch: linux-x64
