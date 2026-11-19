@@ -113,6 +113,7 @@ def test_other_engines_unwrap_the_cylinder(load_obj, unwrap, outputs, engine):
     assert has_uvs(outputs()["cylinder_unwrapped"])
 
 
+@needs_partuv
 def test_partuv_tree_segmentation_unwraps_the_cylinder(load_obj, unwrap, outputs):
     load_obj("cylinder")
     bpy.context.scene.uvgami.partuv.segmentation = "TREE"

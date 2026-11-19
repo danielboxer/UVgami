@@ -241,7 +241,7 @@ jobs:
           EXE: ${{ matrix.platform.os == 'windows-latest' && '.exe' || '' }}
         run: |
           mkdir -p engine-builds/$TAG
-          for ENGINE in optcuts xatlas; do
+          for ENGINE in optcuts xatlas partuv; do
             CONSTANT="$(echo "$ENGINE" | tr a-z A-Z)_VERSION"
             VERSION=$(grep -m1 "^$CONSTANT = " src/engines/$ENGINE/install.py | cut -d'"' -f2)
             ZIP="$ENGINE-engine-$VERSION-$TAG.zip"
@@ -250,6 +250,8 @@ jobs:
             mkdir -p extracted/$ENGINE
             unzip -q package/$ENGINE/*.zip -d extracted/$ENGINE
             cp "$(find extracted/$ENGINE -type f -name "$ENGINE$EXE")" engine-builds/$TAG/
+            # windows loads a binary's dlls from the binary's folder, and partuv needs libomp.dll
+            find extracted/$ENGINE -type f -name '*.dll' -exec cp {} engine-builds/$TAG/ \;
             chmod +x "engine-builds/$TAG/$ENGINE$EXE"
           done
           unzip -q -j addon.zip "bin/$TAG/uvgami-tools$EXE" -d engine-builds/$TAG
