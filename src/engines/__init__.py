@@ -25,6 +25,7 @@ class Engine:
     supports_painted_islands = False
     keeps_plane_vertices_on_u_zero = False
     supports_regions = False
+    segments_automatically = True
     supports_symmetry = False
     supports_material_seams = False
     has_install_controls = False

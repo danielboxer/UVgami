@@ -531,7 +531,14 @@ class SessionBuilder:
         if symmetry is not None:
             symmetric = numpy.asarray(symmetry.symmetric_faces, dtype=bool)
             write_symmetric_faces(obj.data, symmetric & ~painted_faces(obj.data))
-        if not self.engine.splits_regions(props):
+        from ..segmentation import segment_work, stored_regions
+
+        nothing_to_split = (
+            not self.engine.segments_automatically
+            and not props.material_seams
+            and stored_regions(obj.data) is None
+        )
+        if not self.engine.splits_regions(props) or nothing_to_split:
             if self.inputs[obj].proxy_parts is None or props.proxy_mode != "AUTO":
                 return self._start_preseed(obj, symmetry)
             worker = WorkerProcess(
@@ -547,8 +554,6 @@ class SessionBuilder:
                 "segmentation",
                 functools.partial(self._finish_classifying, obj=obj, symmetry=symmetry),
             )
-        from ..segmentation import segment_work
-
         worker = segment_work(
             obj.data,
             world_positions(obj.data, applied_matrix(obj)),
