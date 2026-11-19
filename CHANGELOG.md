@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.5.0
+
+**New:**
+
+- PartUV Tree segmentation mode
+- Seams on material borders option
+- PartUV on MacOs
+
+**Improvements:**
+
+- Segmentation for PartUV
+- Hard surface mode about twice as fast
+- Faster Import UVs on most meshes
+- Faster edit regions loops on high poly meshes
+- Improved progress bar during pre and post unwrap
+- Some bug fixes
+
 ## 2.4.0
 
 **New:**
