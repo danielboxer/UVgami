@@ -404,6 +404,48 @@ def test_coincident_input_faces_each_take_their_own_output():
     }
 
 
+def test_original_faces_settle_quads_sharing_three_vertices():
+    input_positions = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0), (0, 0, 1)]
+    input_faces = [[0, 1, 3, 2], [4, 1, 0, 2]]
+    first_uvs = {0: (0, 0), 1: (1, 0), 3: (1, 1), 2: (0, 1)}
+    second_uvs = {4: (5, 5), 1: (6, 5), 0: (5, 6), 2: (6, 6)}
+    output_faces = [[0, 1, 2], [1, 3, 2], [4, 1, 0], [4, 0, 2]]
+    output_uvs = [
+        [first_uvs[vertex] for vertex in output_faces[0]],
+        [first_uvs[vertex] for vertex in output_faces[1]],
+        [second_uvs[vertex] for vertex in output_faces[2]],
+        [second_uvs[vertex] for vertex in output_faces[3]],
+    ]
+
+    with pytest.raises(TransferError) as raised:
+        transfer_exact(
+            input_positions, input_faces, input_positions, output_faces, output_uvs
+        )
+    assert raised.value.reason == AMBIGUOUS_GEOMETRY
+
+    plan = transfer_exact(
+        input_positions,
+        input_faces,
+        input_positions,
+        output_faces,
+        output_uvs,
+        original_face_of_output_face=[0, 0, 1, 1],
+    )
+
+    assert plan.loop_uvs == approx_uvs(
+        {
+            0: (0, 0),
+            1: (1, 0),
+            2: (1, 1),
+            3: (0, 1),
+            4: (5, 5),
+            5: (6, 5),
+            6: (5, 6),
+            7: (6, 6),
+        }
+    )
+
+
 def test_cut_copy_near_a_second_vertex_is_ambiguous():
     a, b, c = (0, 0, 0), (1, 0, 0), (0, 1, 0)
     # vertex 3 is a needle away from vertex 0

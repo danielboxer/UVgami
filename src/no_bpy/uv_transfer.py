@@ -227,7 +227,16 @@ def transfer_exact(
     output_uvs,
     repack=True,
     partial=False,
+    original_face_of_output_face=None,
 ):
+    if original_face_of_output_face is not None and len(
+        original_face_of_output_face
+    ) != len(output_polygons):
+        raise TransferError(
+            "face_count",
+            f"{len(output_polygons)} output faces for {len(original_face_of_output_face)}"
+            " original faces",
+        )
     input_array = numpy.asarray(input_positions, dtype=float)
     output_array = numpy.asarray(output_positions, dtype=float)
 
@@ -308,6 +317,8 @@ def transfer_exact(
             candidate_faces &= allowed
             if not candidate_faces:
                 break
+        if original_face_of_output_face is not None:
+            candidate_faces &= {int(original_face_of_output_face[output_face])}
         if not candidate_faces:
             raise TransferError(
                 "face_match", f"output face {output_face} maps to no input face"

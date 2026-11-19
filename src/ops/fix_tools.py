@@ -2,6 +2,7 @@ from collections import namedtuple
 
 import bmesh
 import bpy
+import numpy
 
 from ..engines import ENGINES
 from ..no_bpy import (
@@ -13,7 +14,13 @@ from ..no_bpy import (
     signed_area,
     sorted_pair,
 )
-from ..proxy import ProxyIslandUVs, make_proxy, proxy_trigger_faces, triangle_count
+from ..proxy import (
+    ProxyIslandUVs,
+    make_proxy,
+    proxy_trigger_faces,
+    triangle_count,
+    values_carried_through,
+)
 from ..ui.props import describe_settings, fix_settings
 from ..unwrap.job import AreaUVs, IslandUVs
 from ..unwrap.logger import logger
@@ -135,9 +142,22 @@ def write_fixed_sidecar(path, pinned, *, nocut):
             file.write("\nnocut")
 
 
+ORIGINAL_FACE_ATTRIBUTE = "uvgami_original_face"
+
+
+def triangulate_recording_original_faces(temp):
+    original_faces = numpy.arange(len(temp.data.polygons), dtype=numpy.int32)
+    return values_carried_through(
+        temp,
+        ORIGINAL_FACE_ATTRIBUTE,
+        original_faces,
+        lambda: triangulate_mesh(temp.data),
+    )
+
+
 def queue_island(obj, group, bbox, area, number, input_path, props):
     temp, _ = face_subset_object(obj, group, "uvgami_island")
-    triangulate_mesh(temp.data)
+    original_face_of_triangle = triangulate_recording_original_faces(temp)
 
     proxied = props.proxy_mode != "OFF" and make_proxy(temp, proxy_trigger_faces(props))
 
@@ -150,7 +170,13 @@ def queue_island(obj, group, bbox, area, number, input_path, props):
     job = (
         ProxyIslandUVs(obj, list(group), bbox, area)
         if proxied
-        else IslandUVs(obj, list(group), bbox, area)
+        else IslandUVs(
+            obj,
+            list(group),
+            bbox,
+            area,
+            original_face_of_triangle=original_face_of_triangle,
+        )
     )
     queue_fix(obj, job, name, path, vertex_count)
 
@@ -235,7 +261,7 @@ def queue_nocut(obj, temp, group, bbox, area, number, input_path):
             u, w = corner.vector
             corner.vector = (-u, w)
 
-    triangulate_mesh(temp.data)
+    original_face_of_triangle = triangulate_recording_original_faces(temp)
 
     repair_flipped_island(obj, temp)
 
@@ -246,7 +272,14 @@ def queue_nocut(obj, temp, group, bbox, area, number, input_path):
     vertex_count = len(temp.data.vertices)
     remove_temp(temp)
 
-    job = IslandUVs(obj, list(group), bbox, area, mirrored=mirrored)
+    job = IslandUVs(
+        obj,
+        list(group),
+        bbox,
+        area,
+        original_face_of_triangle=original_face_of_triangle,
+        mirrored=mirrored,
+    )
     queue_fix(obj, job, name, path, vertex_count)
 
 
@@ -491,7 +524,7 @@ def queue_area(obj, patch, border, number, input_path, *, nocut):
     if any(area <= 0 for points in face_uv_lists for area in fan_areas(points)):
         repair_flipped(obj, temp, used, border)
 
-    triangulate_mesh(temp.data)
+    original_face_of_triangle = triangulate_recording_original_faces(temp)
 
     name = f"{obj.name}_area_{number}"
     path = unused_input_path(input_path, name, manager.claimed_paths())
@@ -501,7 +534,13 @@ def queue_area(obj, patch, border, number, input_path, *, nocut):
     vertex_count = len(temp.data.vertices)
     remove_temp(temp)
 
-    job = AreaUVs(obj, patch, pins, mirrored=mirrored)
+    job = AreaUVs(
+        obj,
+        patch,
+        pins,
+        original_face_of_triangle=original_face_of_triangle,
+        mirrored=mirrored,
+    )
     queue_fix(obj, job, name, path, vertex_count)
 
 

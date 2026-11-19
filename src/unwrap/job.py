@@ -341,11 +341,21 @@ class IslandUVs(TransferUVs):
     repack_input = False
     allows_missing_pieces = False
 
-    def __init__(self, input_mesh, faces, bbox, area, *, mirrored=False):
+    def __init__(
+        self,
+        input_mesh,
+        faces,
+        bbox,
+        area,
+        *,
+        original_face_of_triangle,
+        mirrored=False,
+    ):
         super().__init__(input_mesh)
         self.faces = faces
         self.bbox = bbox
         self.area = area
+        self.original_face_of_triangle = original_face_of_triangle
         self.mirrored = mirrored
         self.orig_vert = []
         self.loop_base = {}
@@ -381,6 +391,7 @@ class IslandUVs(TransferUVs):
             "input_corners": numpy.array(corners, dtype=numpy.int64),
             "input_totals": numpy.array(self.loop_counts, dtype=numpy.int64),
             **output_mesh_data(output),
+            "original_face_of_output_face": self.original_face_of_triangle,
         }
 
     def _fit(self, plan):
@@ -451,8 +462,15 @@ class IslandUVs(TransferUVs):
 
 
 class AreaUVs(IslandUVs):
-    def __init__(self, input_mesh, faces, pins, *, mirrored):
-        super().__init__(input_mesh, faces, None, None, mirrored=mirrored)
+    def __init__(self, input_mesh, faces, pins, *, original_face_of_triangle, mirrored):
+        super().__init__(
+            input_mesh,
+            faces,
+            None,
+            None,
+            original_face_of_triangle=original_face_of_triangle,
+            mirrored=mirrored,
+        )
         self.pins = pins
 
     def _fit(self, plan):
