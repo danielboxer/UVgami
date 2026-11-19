@@ -253,11 +253,13 @@ def move_to_collection(obj, target):
 
 
 def check_collection(name):
-    collection = bpy.data.collections.get(name)
-    if collection is None:
-        collection = bpy.data.collections.new(name)
-    if not bpy.context.scene.user_of_id(collection):
-        bpy.context.scene.collection.children.link(collection)
+    scene_collection = bpy.context.scene.collection
+    for collection in scene_collection.children_recursive:
+        # blender names a second collection with the same name "<name>.001"
+        if name in (collection.name, collection.name.rpartition(".")[0]):
+            return collection
+    collection = bpy.data.collections.new(name)
+    scene_collection.children.link(collection)
     return collection
 
 

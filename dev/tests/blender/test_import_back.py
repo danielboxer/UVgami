@@ -74,6 +74,24 @@ def test_unicode_name_output_is_named_hidden_and_collected(unwrap, outputs):
     ]
 
 
+def test_each_scene_collects_only_its_own_outputs(unwrap, outputs):
+    add_cube("first")
+    unwrap()
+    first_scene = bpy.context.scene
+    second_scene = bpy.data.scenes.new("second")
+    bpy.context.window.scene = second_scene
+    add_cube("second")
+
+    unwrap()
+
+    assert manager.summary_failed is False, manager.summary
+    first_output = outputs()["first_unwrapped"]
+    second_output = outputs()["second_unwrapped"]
+    assert set(first_output.users_scene) == {first_scene}
+    assert set(second_output.users_scene) == {second_scene}
+    assert second_output.users_collection[0].name.startswith(UNWRAPPED_COLLECTION)
+
+
 def test_far_small_mesh_keeps_its_place(unwrap, outputs):
     cube = add_cube("far", location=(1000, -2000, 3000), scale=(0.01, 0.01, 0.01))
     bpy.context.view_layer.update()
