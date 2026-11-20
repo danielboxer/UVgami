@@ -31,7 +31,7 @@ Add this repository URL: `https://uvgami.com/index.json` in Blender
 
 ## Engines
 
-UVgami has three unwrapping engines, see the [docs](https://uvgami.com/docs/) for more info:
+UVgami has three unwrapping engines, see the [docs](https://uvgami.com/docs/blender/#engines) for more info:
 
 - OptCuts (CPU): [OptCuts](https://github.com/liminchen/OptCuts) by Minchen Li et al. ([paper](https://www.cs.ubc.ca/labs/imager/tr/2018/OptCuts/))
 - xatlas (CPU): [xatlas](https://github.com/jpcy/xatlas) by Jonathan Young
