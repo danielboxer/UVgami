@@ -22,11 +22,11 @@ from blender_fixtures import (
 segmentation = importlib.import_module(addon.src.__name__ + ".segmentation")
 symmetry = importlib.import_module(addon.src.__name__ + ".symmetry")
 segment_edit = addon.src.ops.segmentation
-SegmentationRun = addon.src.ops.auto_preview.SegmentationRun
+PlanRun = addon.src.ops.plan.PlanRun
+RegionEditor = segment_edit.RegionEditor
 SettingsCopy = addon.src.unwrap.manager.SettingsCopy
 ToolsCommand = addon.src.no_bpy.engine_run.ToolsCommand
 active_engine = addon.src.engines.active_engine
-applied_matrix = addon.src.utils.mesh.applied_matrix
 SURFACE_MODE_CODES = addon.src.no_bpy.SURFACE_MODE_CODES
 edge_face_pairs = addon.src.no_bpy.segmentation.edge_face_pairs
 pair_borders = addon.src.no_bpy.segmentation.pair_borders
@@ -297,17 +297,10 @@ def dumbbell_segments(dumbbell):
     props.optcuts.mode = "ORGANIC"
     props.symmetry = False
     engine = active_engine(props.engine)
-    run = SegmentationRun(
-        dumbbell.data,
-        applied_matrix(dumbbell),
-        engine,
-        SettingsCopy(props),
-        False,
-        fine_cut=True,
-    )
+    run = PlanRun(dumbbell, engine, SettingsCopy(props))
     while not run.done():
         time.sleep(0.05)
-    _, segments = run.result()
+    segments = run.result().segments
     run.close()
     return segments
 
@@ -321,8 +314,7 @@ def test_the_region_editor_joins_the_bulbs_and_the_unwrap_keeps_it_whole(
     segments = dumbbell_segments(dumbbell)
     assert segments.region_count >= 2
 
-    segment_edit.start_session(dumbbell, segments, {})
-    session = segment_edit._session
+    session = RegionEditor(dumbbell, segments, {})
     assert session.part_count == segments.region_count
     assert len(session.on) >= 1
     # every fine region is one of the engine's regions or inside one
@@ -331,8 +323,6 @@ def test_the_region_editor_joins_the_bulbs_and_the_unwrap_keeps_it_whole(
         session.toggle(pair)
     assert session.part_count == 1
     assert len(segmentation.stored_regions(dumbbell.data).border_edges) == 0
-    segment_edit.stop_segment_edit()
-    assert segment_edit._session is None
 
     unwrap()
 
@@ -381,8 +371,7 @@ def hovered_loops(session):
 @needs_tools
 def test_a_clicked_loop_splits_its_region_and_a_second_click_removes_it(load_obj):
     (dumbbell,) = load_obj("dumbbell")
-    segment_edit.start_session(dumbbell, dumbbell_segments(dumbbell), {})
-    session = segment_edit._session
+    session = RegionEditor(dumbbell, dumbbell_segments(dumbbell), {})
     parts = session.part_count
     (candidate,) = next(loops for loops in hovered_loops(session) if loops)
 
@@ -394,7 +383,6 @@ def test_a_clicked_loop_splits_its_region_and_a_second_click_removes_it(load_obj
     )
     after_removal = session.part_count
 
-    segment_edit.stop_segment_edit()
     assert len(stored_loop) == len(candidate.edges)
     assert after_adding == parts + 1
     assert after_removal == parts
@@ -413,8 +401,7 @@ def test_a_loop_across_joined_regions_splits_their_part_until_clicked_again(
     load_obj,
 ):
     (dumbbell,) = load_obj("dumbbell")
-    segment_edit.start_session(dumbbell, dumbbell_segments(dumbbell), {})
-    session = segment_edit._session
+    session = RegionEditor(dumbbell, dumbbell_segments(dumbbell), {})
     mesh = dumbbell.data
     centers = numpy.empty(len(mesh.polygons) * 3)
     mesh.polygons.foreach_get("center", centers)
@@ -439,7 +426,6 @@ def test_a_loop_across_joined_regions_splits_their_part_until_clicked_again(
     loop_borders = [pair for pair in session.borders if session._is_loop_border(pair)]
     session.toggle(loop_borders[0])
 
-    segment_edit.stop_segment_edit()
     assert after_adding == 2
     assert len(far_parts) == 1
     assert len(near_parts) == 1
@@ -455,8 +441,7 @@ def test_the_mirrored_border_and_loop_change_with_the_clicked_one(load_obj):
     segments = dumbbell_segments(dumbbell)
     center, _ = symmetry.bounding_box_center_and_diagonal(dumbbell.data)
     partners = symmetry.mesh_mirror_partners(dumbbell.data, center, "X")
-    segment_edit.start_session(dumbbell, segments, partners)
-    session = segment_edit._session
+    session = RegionEditor(dumbbell, segments, partners)
     pair = next(pair for pair in session.borders if session._mirrored_border(pair))
     mirrored = session._mirrored_border(pair)
     was_on = pair in session.on
@@ -468,7 +453,6 @@ def test_the_mirrored_border_and_loop_change_with_the_clicked_one(load_obj):
     session.add_loops(loops)
     after_adding = session.part_count
 
-    segment_edit.stop_segment_edit()
     assert toggled == (not was_on, not was_on)
     assert after_adding == parts + 2
 
@@ -476,8 +460,7 @@ def test_the_mirrored_border_and_loop_change_with_the_clicked_one(load_obj):
 @needs_tools
 def test_a_region_draws_its_quad_loops_and_the_nearest_one_is_picked(load_obj):
     (dumbbell,) = load_obj("dumbbell")
-    segment_edit.start_session(dumbbell, dumbbell_segments(dumbbell), {})
-    session = segment_edit._session
+    session = RegionEditor(dumbbell, dumbbell_segments(dumbbell), {})
     part = next(
         part for part in session.regions_of_part[1:] if session._drawn_loops(part)
     )
@@ -488,7 +471,6 @@ def test_a_region_draws_its_quad_loops_and_the_nearest_one_is_picked(load_obj):
     nearest = session._nearest_drawn_loop(drawn, None, None, middle)
     (candidate,) = session._loop_and_mirror(drawn.loops[nearest.index])
 
-    segment_edit.stop_segment_edit()
     first_loop = drawn.edges[drawn.loop_of_edge == drawn.loop_of_edge[0], 0]
     assert nearest.index == drawn.loop_of_edge[0]
     assert numpy.allclose(nearest.closest, middle)

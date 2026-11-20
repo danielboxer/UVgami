@@ -108,25 +108,13 @@ def test_quad_loops_are_the_rings_between_the_caps():
     assert sorted(loop[0] // SEGMENTS for loop in loops) == list(range(1, RINGS - 1))
 
 
-def test_drawn_loops_skip_the_rings_that_cut_off_only_a_flat_cap():
+def test_drawn_loops_on_quads_include_the_rings_next_to_a_flat_cap():
     mesh = capped_cylinder(triangles=False, ring_spacing=0.1)
     everywhere = numpy.ones(len(mesh[2]), dtype=bool)
 
     loops = drawn_loops(EdgeLoops(*mesh), loop_region(mesh, everywhere))
 
-    # rings 1 and 2 cut off a nearly flat cap, which scores 1.2 and 1.4
-    assert sorted(loop[0] // SEGMENTS for loop in loops) == list(range(3, RINGS - 3))
-
-
-def test_drawn_loops_keep_rings_whose_small_side_reaches_the_region_border():
-    mesh = capped_cylinder(triangles=False, ring_spacing=0.1)
-    in_region = numpy.ones(len(mesh[2]), dtype=bool)
-    # capped_cylinder lists the cap triangles after the quads, bottom then top
-    in_region[(RINGS - 1) * SEGMENTS :: 2] = False
-
-    loops = drawn_loops(EdgeLoops(*mesh), loop_region(mesh, in_region))
-
-    assert sorted(loop[0] // SEGMENTS for loop in loops) == list(range(1, RINGS - 3))
+    assert sorted(loop[0] // SEGMENTS for loop in loops) == list(range(1, RINGS - 1))
 
 
 def test_drawn_loops_on_triangles_go_around_the_cylinder():

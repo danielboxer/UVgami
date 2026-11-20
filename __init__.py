@@ -17,11 +17,6 @@
 import bpy
 
 from .src.engines import ENGINES
-from .src.ops.auto_preview import (
-    UVGAMI_OT_clear_auto_preview,
-    UVGAMI_OT_preview_auto_settings,
-    stop_auto_preview,
-)
 from .src.ops.fix_tools import (
     UVGAMI_OT_combine_islands,
     UVGAMI_OT_relax_area,
@@ -50,16 +45,12 @@ from .src.ops.misc import (
     UVGAMI_OT_reset_settings,
 )
 from .src.ops.pack import UVGAMI_OT_pack
-from .src.ops.part_overrides import (
-    UVGAMI_OT_edit_part_overrides,
-    UVGAMI_OT_exit_part_overrides,
-    UVGAMI_PG_part_overrides,
-    stop_part_overrides,
-)
-from .src.ops.segmentation import (
-    UVGAMI_OT_edit_regions,
-    UVGAMI_OT_stop_edit_regions,
-    stop_segment_edit,
+from .src.ops.plan import (
+    UVGAMI_OT_plan,
+    UVGAMI_OT_set_part_keep_uvs,
+    UVGAMI_OT_set_part_mode,
+    UVGAMI_OT_stop_plan,
+    stop_plan,
 )
 from .src.ops.start import UVGAMI_OT_start
 from .src.ops.stop import (
@@ -103,12 +94,10 @@ classes = (
     # UVGAMI_OT_seed_restrictions,
     UVGAMI_OT_exit_draw,
     UVGAMI_OT_clear_draw,
-    UVGAMI_OT_edit_part_overrides,
-    UVGAMI_OT_exit_part_overrides,
-    UVGAMI_OT_preview_auto_settings,
-    UVGAMI_OT_clear_auto_preview,
-    UVGAMI_OT_edit_regions,
-    UVGAMI_OT_stop_edit_regions,
+    UVGAMI_OT_plan,
+    UVGAMI_OT_stop_plan,
+    UVGAMI_OT_set_part_mode,
+    UVGAMI_OT_set_part_keep_uvs,
     UVGAMI_OT_pack,
     UVGAMI_OT_unwrap_island,
     UVGAMI_OT_relax_island,
@@ -134,7 +123,6 @@ classes = (
     # engine groups must register before the main group that points to them
     *engine_classes,
     UVGAMI_PG_properties,
-    UVGAMI_PG_part_overrides,
     UVGAMI_AP_preferences,
 )
 
@@ -143,29 +131,21 @@ classes = (
 def _on_load_pre(*args):
     # load_post runs after the old file's objects are gone
     manager.shutdown()
-    stop_part_overrides()
-    stop_segment_edit()
-    stop_auto_preview()
+    stop_plan()
 
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.uvgami = bpy.props.PointerProperty(type=UVGAMI_PG_properties)
-    bpy.types.Scene.uvgami_part_overrides = bpy.props.PointerProperty(
-        type=UVGAMI_PG_part_overrides
-    )
     bpy.app.handlers.load_pre.append(_on_load_pre)
 
 
 def unregister():
     manager.shutdown()
-    stop_part_overrides()
-    stop_segment_edit()
-    stop_auto_preview()
+    stop_plan()
     if _on_load_pre in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(_on_load_pre)
     del bpy.types.Scene.uvgami
-    del bpy.types.Scene.uvgami_part_overrides
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

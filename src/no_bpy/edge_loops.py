@@ -614,9 +614,12 @@ def untouching_loops(loops, lengths):
 
 def drawn_loops(edge_loops, region):
     if region.mostly_quads:
-        candidates = edge_loops.quad_loops(region)
-    else:
-        candidates = edge_loops.sliced_loops(region)
+        return [
+            loop
+            for loop in edge_loops.quad_loops(region)
+            if _far_side_spans(region, loop) is not None
+        ]
+    candidates = edge_loops.sliced_loops(region)
     face_areas = edge_loops.face_areas[region.faces]
     off_interior = ~numpy.array(region.local_interior)
     touches_border = (
@@ -658,6 +661,4 @@ def drawn_loops(edge_loops, region):
         ):
             loops.append(loop)
             lengths.append(length)
-    if region.mostly_quads:
-        return loops
     return untouching_loops(loops, lengths)

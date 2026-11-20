@@ -1,4 +1,3 @@
-import bmesh
 import bpy
 import pytest
 from blender_fixtures import (
@@ -117,28 +116,3 @@ def test_part_mode_overrides_the_panel_mode(
 #     output = outputs()[f"{joined.name}_unwrapped"]
 #     ratio = side_uv_area(output, second=True) / side_uv_area(output, second=False)
 #     assert ratio == pytest.approx(4, rel=0.01)
-
-
-def test_panel_writes_the_whole_part_of_a_selected_face():
-    joined = two_loose_cubes()
-    bpy.ops.object.mode_set(mode="EDIT")
-    edit_mesh = bmesh.from_edit_mesh(joined.data)
-    for face in edit_mesh.faces:
-        face.select_set(False)
-    face = next(face for face in edit_mesh.faces if face.verts[0].co.x > 2)
-    face.select_set(True)
-    edit_mesh.faces.active = face
-    bmesh.update_edit_mesh(joined.data)
-
-    overrides = bpy.context.scene.uvgami_part_overrides
-    overrides.surface_mode = "HARD"
-    assert overrides.surface_mode == "HARD"
-    bpy.ops.object.mode_set(mode="OBJECT")
-
-    mesh = joined.data
-    values = part_overrides.face_values(mesh, part_overrides.SURFACE_MODE_ATTRIBUTE)
-    expected = [
-        SURFACE_MODE_CODES["HARD"] if is_second_cube(mesh, face) else 0
-        for face in mesh.polygons
-    ]
-    assert values.tolist() == expected

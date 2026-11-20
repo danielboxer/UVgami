@@ -2,15 +2,13 @@ import bpy
 
 from ..engines import ENGINES, active_engine, installed_engines
 from ..no_bpy import SURFACE_MODE_CODES
-from ..ops.auto_preview import draw_auto_preview
-from ..ops.part_overrides import is_editing, selected_part_count
-from ..ops.segmentation import draw_segment_edit
+from ..ops.plan import draw_unwrap_and_plan
 from ..part_overrides import KEEP_ATTRIBUTE, SURFACE_MODE_ATTRIBUTE, face_values
 from ..unwrap.job import Result
 from ..unwrap.logger import logger
 from ..unwrap.manager import manager
 from ..utils.paths import read_manifest
-from ..utils.ui import count_label, draw_active
+from ..utils.ui import draw_active
 from .props import SETTING_ICONS_AND_LABELS, fix_settings, unwrap_settings
 
 
@@ -232,10 +230,7 @@ class UVGAMI_PT_main(bpy.types.Panel):
             if candidate.is_available():
                 candidate.draw_update_notice(box)
 
-        row = box.row()
-        row.scale_y = 2
-        row.enabled = not manager.is_active
-        row.operator("uvgami.start", icon="UV")
+        draw_unwrap_and_plan(box, engine)
 
         if not manager.in_uv_editor:
             draw_summary(box)
@@ -249,11 +244,6 @@ class UVGAMI_PT_main(bpy.types.Panel):
         row = box.row()
         _setting_label(row, "priority")
         row.prop(props, "priority", text="")
-
-        if engine.supports_keep_quads:
-            split = box.split(factor=0.7)
-            _setting_label(split, "keep_quads")
-            split.prop(props, "keep_quads")
 
 
 def draw_concurrent(layout, props, engine):
@@ -289,6 +279,9 @@ class UVGAMI_PT_speed(EnginePanel, bpy.types.Panel):
         props = context.scene.uvgami
 
         engine = active_engine(props.engine)
+        if engine.supports_proxy:
+            draw_proxy(box, props)
+
         draw_concurrent(box, props, engine)
 
         split = box.split(factor=0.7)
@@ -296,42 +289,6 @@ class UVGAMI_PT_speed(EnginePanel, bpy.types.Panel):
         split.prop(props, "stack_similar")
 
         draw_timeout(box, props)
-
-
-def draw_part_overrides(layout, context, engine):
-    # props = context.scene.uvgami
-    overrides = context.scene.uvgami_part_overrides
-
-    count = selected_part_count()
-    selection = (
-        f"{count_label(count, 'part')} selected" if count else "Click a part to edit it"
-    )
-    row = layout.row()
-    row.scale_y = 1.5
-    row.operator("uvgami.exit_part_overrides", icon="PANEL_CLOSE")
-    layout.label(text=selection, icon="MOD_EXPLODE")
-
-    column = layout.column()
-    column.enabled = count > 0
-
-    split = column.split(factor=0.7)
-    split.label(icon="PINNED", text="Keep UVs")
-    split.prop(overrides, "keeps_uvs", text="")
-
-    settings = column.column()
-    settings.active = not overrides.keeps_uvs
-    if engine.supports_hard_surface:
-        row = settings.row()
-        row.label(icon="MOD_BEVEL", text="Mode")
-        row.prop(overrides, "surface_mode", text="")
-    # priority = settings.column(align=True)
-    # priority.label(icon="SOLO_OFF", text="Priority")
-    # priority.row(align=True).prop(overrides, "priority", expand=True)
-    # row = settings.row()
-    # # the scale is applied after Average Islands Scale
-    # row.active = props.fix_scale
-    # row.label(icon="FULLSCREEN_ENTER", text="UV Scale")
-    # row.prop(overrides, "uv_scale", text="")
 
 
 class UVGAMI_PT_weights(bpy.types.Panel):
@@ -417,14 +374,16 @@ class UVGAMI_PT_advanced(EnginePanel, bpy.types.Panel):
         engine = active_engine(props.engine)
         box = self.layout.box()
 
-        if engine.supports_proxy:
-            draw_proxy(box, props)
-
         if engine.supports_import_uvs:
             split = box.split(factor=0.7)
             split.active = not engine.import_uvs_ignored(props)
             _setting_label(split, "import_uvs")
             split.prop(props, "import_uvs")
+
+        if engine.supports_keep_quads:
+            split = box.split(factor=0.7)
+            _setting_label(split, "keep_quads")
+            split.prop(props, "keep_quads")
 
         split = box.split(factor=0.7)
         _setting_label(split, "transfer_uvs")
@@ -436,17 +395,11 @@ class UVGAMI_PT_advanced(EnginePanel, bpy.types.Panel):
             split.prop(props, "material_seams")
 
         if engine.supports_regions:
-            splits_regions = engine.splits_regions(props)
             no_organic_parts = _no_organic_parts(context, engine, props)
-            regions = box.box() if splits_regions else box
-            split = regions.split(factor=0.7)
+            split = box.split(factor=0.7)
             split.active = not engine.uses_import_uvs(props) and not no_organic_parts
             _setting_label(split, "split_regions")
             split.prop(props, "split_regions")
-            if splits_regions:
-                edit = regions.column()
-                edit.active = not no_organic_parts
-                draw_segment_edit(edit)
 
         if engine.supports_symmetry:
             split = box.split(factor=0.7)
@@ -461,14 +414,6 @@ class UVGAMI_PT_advanced(EnginePanel, bpy.types.Panel):
             # weld = box.row()
             # weld.active = engine.uses_symmetry(props) and engine.supports_plane_glue
             # weld.prop(props, "sym_weld")
-        draw_auto_preview(box)
-
-        if is_editing() and context.mode == "EDIT_MESH":
-            draw_part_overrides(box.box(), context, engine)
-        else:
-            row = box.row()
-            row.scale_y = 1.5
-            row.operator("uvgami.edit_part_overrides", icon="EDITMODE_HLT")
 
 
 class UVGAMI_PT_grid(EnginePanel, bpy.types.Panel):
