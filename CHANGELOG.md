@@ -4,6 +4,7 @@
 
 **New:**
 
+- Plan mode: combines Preview, edit regions, and edit parts
 - PartUV Tree segmentation mode
 - Seams on material borders option
 - PartUV on MacOs
@@ -15,6 +16,7 @@
 - Faster Import UVs on most meshes
 - Faster edit regions loops on high poly meshes
 - Improved progress bar during pre and post unwrap
+- Docs button link in the Misc panel
 - Some bug fixes
 
 ## 2.4.0
