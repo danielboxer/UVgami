@@ -2,6 +2,7 @@ from collections import namedtuple
 from enum import Enum
 
 import bmesh
+import bmesh.utils
 import bpy
 import numpy
 
@@ -70,6 +71,25 @@ def _carries_seam(edge, uv_layer):
 REMOVE_EDGE_ERROR = "Error removing added edge"
 
 
+def folded_polygons(mesh):
+    triangle_count = len(mesh.loop_triangles)
+    loops = numpy.empty(triangle_count * 3, dtype=numpy.int64)
+    mesh.loop_triangles.foreach_get("loops", loops)
+    polygons = numpy.empty(triangle_count, dtype=numpy.int64)
+    mesh.loop_triangle_polygons.foreach_get("value", polygons)
+
+    corners = loop_uvs(mesh)[loops.reshape(-1, 3)]
+    first = corners[:, 1] - corners[:, 0]
+    second = corners[:, 2] - corners[:, 0]
+    areas = first[:, 0] * second[:, 1] - first[:, 1] * second[:, 0]
+
+    has_negative = numpy.zeros(len(mesh.polygons), dtype=bool)
+    has_negative[polygons[areas < 0]] = True
+    has_positive = numpy.zeros(len(mesh.polygons), dtype=bool)
+    has_positive[polygons[areas > 0]] = True
+    return numpy.flatnonzero(has_negative & has_positive)
+
+
 class Preserve:
     def finish(self, output, added_edges):
         bm = new_bmesh(output)
@@ -87,8 +107,28 @@ class Preserve:
             # optcuts never cuts locked edges unless the input uv map has a seam there
             if not _carries_seam(edge, uv_layer):
                 dissolve_edges.append(edge)
+        dissolved_pairs = [
+            (edge.verts[0].index, edge.verts[1].index) for edge in dissolve_edges
+        ]
 
         bmesh.ops.dissolve_edges(bm, edges=dissolve_edges)
+        set_bmesh(bm, output)
+
+        # blender triangulates polygons in 3D, so polygons convex there but concave in uv fold
+        folded = folded_polygons(output.data)
+        if len(folded) == 0:
+            return
+        bm = new_bmesh(output)
+        bm.verts.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+        splittable = {bm.faces[index] for index in folded}
+        for a, b in dissolved_pairs:
+            first, second = bm.verts[a], bm.verts[b]
+            shared = splittable.intersection(first.link_faces, second.link_faces)
+            if not shared:
+                continue
+            new_face, _ = bmesh.utils.face_split(shared.pop(), first, second)
+            splittable.add(new_face)
         set_bmesh(bm, output)
 
 

@@ -12,6 +12,8 @@ boxes_overlap = addon.src.no_bpy.boxes_overlap
 fix_inconsistent_winding = addon.src.unwrap.session.fix_inconsistent_winding
 has_inconsistent_winding = addon.src.unwrap.session.has_inconsistent_winding
 Unwrap = addon.src.unwrap.unwrap.Unwrap
+Preserve = addon.src.unwrap.job.Preserve
+folded_polygons = addon.src.unwrap.job.folded_polygons
 PROGRESS_STALL_SECONDS = addon.src.unwrap.unwrap.PROGRESS_STALL_SECONDS
 
 SQUARE = [(0, 0), (1, 0), (1, 1), (0, 1)]
@@ -105,6 +107,34 @@ def test_stalled_marker_flags_frozen_progress():
     unwrap.progress_data.append("0.6 0.25 0.15")
     unwrap.update_progress()
     assert not unwrap.is_stalled
+
+
+def two_triangles_across_one_diagonal(make_mesh, corner_one_uv):
+    # vertex 0 sits inside the corner, so blender splits the quad from 0 to 2
+    positions = [(0.7, 0.7, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+    uvs = [(0, 0), corner_one_uv, (1, 1), (0, 1)]
+    triangles = [(0, 1, 3), (1, 2, 3)]
+    return make_mesh(
+        "diagonal",
+        positions,
+        triangles,
+        [[uvs[vertex] for vertex in triangle] for triangle in triangles],
+    )
+
+
+def test_keep_quads_keeps_the_diagonal_of_a_quad_that_folds_in_uv(make_mesh):
+    obj = two_triangles_across_one_diagonal(make_mesh, (0.3, 0.7))
+
+    Preserve().finish(obj, [(1, 3)])
+    assert len(obj.data.polygons) == 2
+    assert len(folded_polygons(obj.data)) == 0
+
+
+def test_keep_quads_dissolves_the_diagonal_of_a_quad_that_stays_flat(make_mesh):
+    obj = two_triangles_across_one_diagonal(make_mesh, (1, 0))
+
+    Preserve().finish(obj, [(1, 3)])
+    assert len(obj.data.polygons) == 1
 
 
 def test_fix_inconsistent_winding_rewinds_the_flipped_face(make_mesh):
