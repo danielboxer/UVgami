@@ -1,3 +1,5 @@
+import sys
+
 import bpy
 
 
@@ -55,6 +57,45 @@ def tag_redraw(region_types=("WINDOW", "UI"), area_types=("VIEW_3D", "IMAGE_EDIT
                     for region in area.regions:
                         if region.type in region_types:
                             region.tag_redraw()
+
+
+# WorkspaceStatus and event_icon_offset spacing, as separator factors
+WIDE_KEY_OFFSET = 1.07
+KEY_OFFSET = -0.4
+MOUSE_ICON_PAD = -0.68
+BEFORE_TEXT = 0.17
+AFTER_TEXT = 0.9
+SEPARATOR_PIXELS = 6
+
+
+def draw_status_hints(layout, hints, context):
+    system = context.preferences.system
+    widget_unit = round(18 * system.ui_scale) + 2 * system.pixel_size
+    wide_icons = {"EVENT_ESC"}
+    if sys.platform != "darwin":
+        wide_icons.add("EVENT_CTRL")
+    row = layout.row(align=True)
+    for text, icons in hints:
+        for index, icon in enumerate(icons):
+            factors = [WIDE_KEY_OFFSET if icon in wide_icons else KEY_OFFSET]
+            if icon.startswith("MOUSE_"):
+                factors.append(MOUSE_ICON_PAD)
+            if index == len(icons) - 1:
+                factors.append(BEFORE_TEXT)
+            # separators round down to whole pixels
+            gap = sum(
+                int(SEPARATOR_PIXELS * system.ui_scale * factor) for factor in factors
+            )
+            if gap >= 0:
+                row.label(icon=icon)
+                row.separator(factor=sum(factors))
+                continue
+            # separator factors have a minimum of 0, so the icon cell narrows instead
+            cell = row.row(align=True)
+            cell.ui_units_x = (widget_unit + gap) / widget_unit
+            cell.label(icon=icon)
+        row.label(text=text)
+        row.separator(factor=KEY_OFFSET + AFTER_TEXT)
 
 
 _status = None

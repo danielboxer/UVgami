@@ -8,7 +8,7 @@ from mathutils.bvhtree import BVHTree
 from ..engines import active_engine
 from ..engines.optcuts import SURFACE_MODES
 from ..no_bpy import SURFACE_MODE_CODES, EngineError
-from ..no_bpy.mesh import face_starts
+from ..no_bpy.mesh import face_starts, lowest_index_part_labels
 from ..no_bpy.preseed import SegmentRegions, classify_job
 from ..no_bpy.worker import WorkerError, WorkerProcess
 from ..part_overrides import (
@@ -19,8 +19,8 @@ from ..part_overrides import (
     surface_modes,
 )
 from ..proxy import (
+    auto_proxy_triangle_counts,
     part_triangles,
-    parts_for_auto_proxy,
     proxy_trigger_faces,
 )
 from ..segmentation import REGION_ATTRIBUTE, clear_regions, segment_work
@@ -39,7 +39,7 @@ from ..utils.mesh import (
     world_positions,
 )
 from ..utils.paths import get_extension_dir_path
-from ..utils.ui import count_label, tag_redraw
+from ..utils.ui import count_label, draw_status_hints, tag_redraw
 from ..utils.uvgami_tools import tools_command
 from .plan_drawing import (
     FILL_NUDGE,
@@ -69,6 +69,17 @@ ORGANIC = SURFACE_MODE_CODES["ORGANIC"]
 HARD = SURFACE_MODE_CODES["HARD"]
 
 PlanResult = namedtuple("PlanResult", "symmetry segments global_modes")
+
+
+def plan_run_inputs(engine, props):
+    return (
+        engine,
+        engine.unset_surface_mode(props),
+        engine.splits_regions(props),
+        props.material_seams,
+        engine.uses_symmetry(props),
+        engine.paint_is_seam_cost(props),
+    )
 
 
 class PlanRun:
@@ -204,6 +215,7 @@ class PlanSession:
         self.bvh = BVHTree.FromPolygons(positions.tolist(), face_vertices(mesh))
         self.part_counts = part_triangles(mesh)
         corners, totals = loop_vertices_and_face_sizes(mesh)
+        self.triangles_per_face = totals - 2
         face_labels = self.part_counts.vertex_labels[corners[face_starts(totals)]]
         self.face_loose_part = numpy.searchsorted(
             self.part_counts.part_labels, face_labels
@@ -328,18 +340,38 @@ class PlanSession:
             lines.append("Not symmetrical")
 
         if self.engine.uses_proxy(self.props):
-            candidates = self.part_counts
+            pieces = self._unwrap_pieces()
+            triangle_counts = numpy.bincount(
+                pieces, weights=self.triangles_per_face
+            ).astype(numpy.int64)
             if self.props.proxy_mode == "AUTO":
                 proxy_modes = numpy.where(self.kept, ORGANIC, self.modes)
-                candidates = parts_for_auto_proxy(
-                    self.part_counts, self.obj.data, proxy_modes
+                triangle_counts = auto_proxy_triangle_counts(
+                    triangle_counts, pieces, proxy_modes
                 )
             trigger = proxy_trigger_faces(self.props)
-            proxied = int((candidates.triangle_counts > trigger).sum())
-            if proxied:
-                verb = "uses" if proxied == 1 else "use"
-                lines.append(f"{count_label(proxied, 'part')} {verb} Proxy")
+            proxied = int((triangle_counts > trigger).sum())
+            lines.append(count_label(proxied, "proxy part"))
         return lines
+
+    def _unwrap_pieces(self):
+        if self.regions is None:
+            return self.face_loose_part
+        organic = (self.modes == ORGANIC) & ~self.kept
+        labels = numpy.where(organic, self.regions.joined, 0)
+        face_pairs = self.regions.face_pairs
+        first, second = labels[face_pairs.first], labels[face_pairs.second]
+        # split_on_borders cuts only edges between two segmented regions
+        attached = (first == second) | (first == 0) | (second == 0)
+        pairs = numpy.stack([face_pairs.first, face_pairs.second], axis=1)[attached]
+        _, pieces = numpy.unique(
+            lowest_index_part_labels(len(labels), pairs), return_inverse=True
+        )
+        return pieces
+
+    def set_props(self, props):
+        self.props = props
+        self.lines = self._lines()
 
     def _hit_under(self, region, event):
         x, y = event.mouse_region_x, event.mouse_region_y
@@ -502,24 +534,20 @@ def stop_plan():
 
 
 def _draw_status(header, context):
-    layout = header.layout
+    hints = []
     if _session is not None and _session.regions is not None:
-        layout.label(text="Edit Regions", icon="MOUSE_LMB")
-    layout.label(icon="EVENT_CTRL")
-    layout.label(text="Select Part", icon="MOUSE_LMB")
-    layout.label(icon="EVENT_CTRL")
-    layout.label(text="Undo", icon="EVENT_Z")
-    layout.label(text="Reset Regions", icon="EVENT_R")
-    # blender sizes label icons one unit wide, narrower than the esc key icon
-    layout.label(icon="EVENT_ESC")
-    layout.separator()
-    layout.label(text="Finish")
+        hints.append(("Edit Regions", ["MOUSE_LMB"]))
+    hints += [
+        ("Select Part", ["EVENT_CTRL", "MOUSE_LMB"]),
+        ("Undo", ["EVENT_CTRL", "EVENT_Z"]),
+        ("Reset Regions", ["EVENT_R"]),
+        ("Finish", ["EVENT_ESC"]),
+    ]
+    draw_status_hints(header.layout, hints, context)
 
 
 def _draw_loading_status(header, context):
-    header.layout.label(icon="EVENT_ESC")
-    header.layout.separator()
-    header.layout.label(text="Cancel")
+    draw_status_hints(header.layout, [("Cancel", ["EVENT_ESC"])], context)
 
 
 class UVGAMI_OT_plan(bpy.types.Operator):
@@ -568,7 +596,9 @@ class UVGAMI_OT_plan(bpy.types.Operator):
     def _start_run(self, context):
         global _run, _draw_handler
         props = context.scene.uvgami
-        _run = PlanRun(self.obj, active_engine(props.engine), SettingsCopy(props))
+        engine = active_engine(props.engine)
+        self.run_inputs = plan_run_inputs(engine, props)
+        _run = PlanRun(self.obj, engine, SettingsCopy(props))
         if _draw_handler is None:
             _draw_handler = bpy.types.SpaceView3D.draw_handler_add(
                 _draw, (), "WINDOW", "POST_VIEW"
@@ -576,13 +606,31 @@ class UVGAMI_OT_plan(bpy.types.Operator):
         context.workspace.status_text_set(_draw_loading_status)
         tag_redraw()
 
+    def _restart_run(self, context):
+        global _run, _session
+        if _run is not None:
+            _run.close()
+            _run = None
+        _session = None
+        try:
+            self._start_run(context)
+        except EngineError as error:
+            self.report({"ERROR"}, str(error))
+            return self._end(context, {"CANCELLED"})
+        return {"RUNNING_MODAL"}
+
     def modal(self, context, event):
-        global _session
         if not check_exists(self.obj) or context.mode != "OBJECT":
             return self._end(context, {"CANCELLED"})
         if _run is None and _session is None:
             return self._end(context, {"FINISHED"})
         if event.type == "TIMER":
+            props = context.scene.uvgami
+            if plan_run_inputs(active_engine(props.engine), props) != self.run_inputs:
+                return self._restart_run(context)
+            if _session is not None and _session.props.proxy_mode != props.proxy_mode:
+                _session.set_props(SettingsCopy(props))
+                tag_redraw()
             if _run is not None and _run.done() and not self._start_session(context):
                 return self._end(context, {"CANCELLED"})
             return {"PASS_THROUGH"}
@@ -598,13 +646,7 @@ class UVGAMI_OT_plan(bpy.types.Operator):
             return {"RUNNING_MODAL"}
         if event.type == "R" and event.value == "PRESS":
             clear_regions(self.obj.data)
-            _session = None
-            try:
-                self._start_run(context)
-            except EngineError as error:
-                self.report({"ERROR"}, str(error))
-                return self._end(context, {"CANCELLED"})
-            return {"RUNNING_MODAL"}
+            return self._restart_run(context)
         # blender's viewport region spans the whole area under an overlapping sidebar
         over_side_region = any(
             region.type != "WINDOW"

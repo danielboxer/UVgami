@@ -62,13 +62,19 @@ def proxy_trigger_faces(props):
     return PROXY_TARGET_FACES
 
 
+def auto_proxy_triangle_counts(triangle_counts, face_part, surface_modes):
+    counts = triangle_counts.copy()
+    is_hard = numpy.zeros(len(counts), dtype=bool)
+    is_hard[face_part[surface_modes == SURFACE_MODE_CODES["HARD"]]] = True
+    counts[is_hard & (counts <= PROXY_AUTO_HARD_SURFACE_FACES)] = 0
+    return counts
+
+
 def parts_for_auto_proxy(parts, mesh, surface_modes):
     corners, totals = loop_vertices_and_face_sizes(mesh)
     face_labels = parts.vertex_labels[corners[face_starts(totals)]]
-    hard_labels = face_labels[surface_modes == SURFACE_MODE_CODES["HARD"]]
-    counts = parts.triangle_counts.copy()
-    is_hard = numpy.isin(parts.part_labels, hard_labels)
-    counts[is_hard & (counts <= PROXY_AUTO_HARD_SURFACE_FACES)] = 0
+    face_part = numpy.searchsorted(parts.part_labels, face_labels)
+    counts = auto_proxy_triangle_counts(parts.triangle_counts, face_part, surface_modes)
     return parts._replace(triangle_counts=counts)
 
 

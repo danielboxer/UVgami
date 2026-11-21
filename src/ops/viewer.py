@@ -8,7 +8,7 @@ from ..unwrap.viewer import (
     stop_viewer_draw,
 )
 from ..utils.mesh import check_exists
-from ..utils.ui import tag_redraw
+from ..utils.ui import draw_status_hints, tag_redraw
 from .stop import group_targets, piece_target
 
 VIEWER_WORKSPACE = "UVgami Viewer"
@@ -49,14 +49,14 @@ def _schedule_workspace_trim(window):
 
 
 def _draw_viewer_status(header, context):
-    header.layout.label(icon="EVENT_LEFT_ARROW")
-    header.layout.label(icon="EVENT_RIGHT_ARROW")
-    header.layout.separator()
-    header.layout.label(text="Switch Unwrap")
-    header.layout.label(icon="MOUSE_LMB")
-    header.layout.label(icon="EVENT_ESC")
-    header.layout.separator()
-    header.layout.label(text="Exit")
+    draw_status_hints(
+        header.layout,
+        [
+            ("Switch Unwrap", ["EVENT_LEFT_ARROW", "EVENT_RIGHT_ARROW"]),
+            ("Exit", ["MOUSE_LMB", "EVENT_ESC"]),
+        ],
+        context,
+    )
 
 
 class UVGAMI_OT_view_unwrap(bpy.types.Operator):
