@@ -12,8 +12,8 @@ from ..unwrap.manager import manager
 from ..unwrap.session import MeshInput, SessionBuilder
 from ..utils.mesh import deselect_all, is_shading_modifier
 from ..utils.paths import get_preferences
-from ..utils.ui import tag_redraw
 from ..utils.uvgami_tools import tools_command
+from .plan import stop_plan
 
 PreparedMeshes = namedtuple("PreparedMeshes", ["inputs", "reports", "input_sizes"])
 
@@ -89,7 +89,7 @@ class UVGAMI_OT_start(bpy.types.Operator):
 
             manager.pieces_still_arriving += 1
             manager.start(engine, engine_ctx)
-            tag_redraw()
+            stop_plan()
 
             for level, text in prepared.reports:
                 self.report({level}, text)

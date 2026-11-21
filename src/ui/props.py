@@ -384,6 +384,8 @@ class UVGAMI_AP_preferences(bpy.types.AddonPreferences):
         installable = [
             engine for engine in ENGINES.values() if engine.has_install_controls
         ]
+        if not installable:
+            return
 
         box = layout.box()
         row = box.row()
