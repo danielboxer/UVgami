@@ -116,6 +116,7 @@ class PartuvEngine(CachedUpdateNotice, Engine):
     icon = "MOD_EXPLODE"
     supports_regions = True
     supports_symmetry = True
+    supports_proxy = True
     property_group = UVGAMI_PG_partuv
     has_install_controls = True
     install_owner = "partuv"
