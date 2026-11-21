@@ -221,17 +221,16 @@ jobs:
         env:
           URL: https://download.blender.org/release/Blender${{ matrix.blender.release }}/${{ env.BLENDER_DIR }}.${{ matrix.platform.archive }}
         run: |
+          curl -fsSL --retry 5 --retry-all-errors -o "blender.${{ matrix.platform.archive }}" "$URL"
           if [ "${{ matrix.platform.archive }}" = "zip" ]; then
-            curl -sSL -o blender.zip "$URL"
             unzip -q blender.zip
           elif [ "${{ matrix.platform.archive }}" = "dmg" ]; then
-            curl -sSL -o blender.dmg "$URL"
             hdiutil attach -nobrowse -mountpoint "$RUNNER_TEMP/blender-dmg" blender.dmg
             mkdir "$BLENDER_DIR"
             cp -R "$RUNNER_TEMP/blender-dmg/Blender.app" "$BLENDER_DIR/"
             hdiutil detach "$RUNNER_TEMP/blender-dmg"
           else
-            curl -sSL "$URL" | tar xJ
+            tar xJf blender.tar.xz
           fi
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
