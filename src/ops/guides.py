@@ -54,7 +54,7 @@ def _enter_draw_mode(context, obj):
 class UVGAMI_OT_draw_guides(bpy.types.Operator):
     bl_idname = "uvgami.draw_guides"
     bl_label = "Draw"
-    bl_description = "Paint the weights that change the unwrap. Red is weighted"
+    bl_description = "Paint where you want fewer seams. Red is weighted"
     bl_options = {"UNDO"}
 
     def execute(self, context):

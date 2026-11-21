@@ -226,8 +226,7 @@ class UVGAMI_PG_properties(bpy.types.PropertyGroup):
     weight_value: bpy.props.IntProperty(
         name="",
         description=(
-            "Higher values put fewer seams on the painted faces"
-            " and make the unwrap slower"
+            "Higher values mean fewer seams on the painted faces and a slower unwrap"
         ),
         min=1,
         max=5,

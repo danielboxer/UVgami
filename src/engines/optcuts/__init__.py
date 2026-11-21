@@ -15,7 +15,7 @@ SEAM_BORDER_TURN_DEGREES = {"LESS_STRETCH": 45, "BALANCED": 66, "FEWER_SEAMS": 7
 
 
 SURFACE_MODES = [
-    ("AUTO", "Auto", "Pick Organic or Hard Surface for each loose part"),
+    ("AUTO", "Auto", "Organic or Hard Surface is chosen for each loose part"),
     ("ORGANIC", "Organic", "Use for objects with smooth curves and irregular shapes"),
     ("HARD", "Hard Surface", "Use for objects with hard edges or mechanical parts"),
 ]

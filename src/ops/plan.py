@@ -526,7 +526,7 @@ class UVGAMI_OT_plan(bpy.types.Operator):
     bl_idname = "uvgami.plan"
     bl_label = "Plan"
     bl_description = (
-        "Show and edit the part modes, regions and symmetry plane the unwrap uses."
+        "Show and edit the part modes, regions and symmetry plane for the unwrap."
         " Click a border or edge loop to edit the regions,"
         " Ctrl+click a part to change its settings"
     )

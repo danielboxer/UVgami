@@ -91,7 +91,7 @@ PRIORITY_VALUES = {"LESS_STRETCH": "1.1", "BALANCED": "1.25", "FEWER_SEAMS": "1.
 class UVGAMI_PG_partuv(bpy.types.PropertyGroup):
     segmentation: bpy.props.EnumProperty(
         name="Mode",
-        description="How PartUV splits the mesh into parts",
+        description="How the mesh is split into parts",
         items=_segmentation_items,
         get=_segmentation_get,
         set=_segmentation_set,
