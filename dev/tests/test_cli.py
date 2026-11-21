@@ -408,7 +408,10 @@ def test_partuv_without_a_checkpoint_reports_json(
     assert "no PartField checkpoint" in result["message"]
 
 
-def test_json_success_reports_partuv_engine(triangle, fake_partuv, capsys):
+def test_json_success_reports_partuv_engine(
+    triangle, tmp_path, fake_partuv, monkeypatch, capsys
+):
+    monkeypatch.setenv("UVGAMI_PARTUV_CHECKPOINT", str(tmp_path / "model.ckpt"))
     assert cli.main(["unwrap", str(triangle), "--engine", "partuv", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["engine"] == "partuv"
 

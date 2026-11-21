@@ -75,7 +75,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: [optcuts, xatlas]
+        engine: [optcuts, xatlas, partuv]
         platform:
           - os: ubuntu-latest
             pkg_name: linux
@@ -137,6 +137,8 @@ jobs:
           fi
           mkdir -p engine-builds/${{ matrix.platform.pkg_name }}
           cp "$FOUND" engine-builds/${{ matrix.platform.pkg_name }}/
+          # windows loads a binary's dlls from the binary's folder, and partuv needs libomp.dll
+          find extracted -type f -name '*.dll' -exec cp {} engine-builds/${{ matrix.platform.pkg_name }}/ \;
           chmod +x engine-builds/${{ matrix.platform.pkg_name }}/$BINARY
 
       - name: Unwrap a cube
@@ -147,6 +149,8 @@ jobs:
           OUTPUT=$RUNNER_TEMP/cube_uv.obj
           EXTRA=""
           if [ "$ENGINE" = "optcuts" ]; then EXTRA="--timeout 120"; fi
+          # ai segmentation needs the PartField checkpoint, tree needs uvgami-tools
+          if [ "$ENGINE" = "partuv" ]; then EXTRA="--segmentation geometric"; fi
           python -m uvgami_cli unwrap dev/tests/fixtures/cube.obj --engine $ENGINE -o "$OUTPUT" $EXTRA
           grep -q '^vt ' "$OUTPUT"
 

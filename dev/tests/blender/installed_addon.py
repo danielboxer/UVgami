@@ -12,13 +12,16 @@ START_TIMEOUT_SECONDS = 60
 UNWRAP_TIMEOUT_SECONDS = 300
 
 
-def unwrap_cube(module, engine_name):
+def unwrap_model(module, engine_name, path):
     manager = importlib.import_module(module + ".src.unwrap.manager").manager
+    paths = importlib.import_module(module + ".src.utils.paths")
+    # background blender has no gpu to draw the bar, and reenabling the add-on turns it back on
+    paths.get_preferences().show_progress_bar = False
     bpy.ops.wm.read_homefile(use_empty=True)
-    bpy.ops.wm.obj_import(filepath=str(CUBE))
-    cube = bpy.data.objects[0]
-    cube.select_set(True)
-    bpy.context.view_layer.objects.active = cube
+    bpy.ops.wm.obj_import(filepath=str(path))
+    model = bpy.data.objects[0]
+    model.select_set(True)
+    bpy.context.view_layer.objects.active = model
     bpy.context.scene.uvgami.engine = engine_name
     with timer_pump.pump_timers() as pump:
         bpy.ops.uvgami.start()
@@ -36,10 +39,8 @@ def engines_to_check(engines):
 
 def check_installed_addon(module, prepare_engines):
     bpy.ops.preferences.addon_enable(module=module)
-    paths = importlib.import_module(module + ".src.utils.paths")
     engines = importlib.import_module(module + ".src.engines")
     engine_run = importlib.import_module(module + ".src.no_bpy.engine_run")
-    paths.get_preferences().show_progress_bar = False
     prepare_engines(engines)
     engines.invalidate_engine_caches()
 
@@ -50,7 +51,7 @@ def check_installed_addon(module, prepare_engines):
         except engine_run.EngineError as validate_error:
             error = str(validate_error)
         else:
-            error = unwrap_cube(module, engine.id)
+            error = unwrap_model(module, engine.id, CUBE)
         if error:
             failures.append(f"{engine.id}: {error}")
         else:
