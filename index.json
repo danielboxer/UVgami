@@ -14,7 +14,7 @@
       ],
       "id": "uvgami",
       "name": "UVgami",
-      "version": "2.4.0",
+      "version": "2.5.0",
       "blender_version_min": "4.3.0",
       "tagline": "Automatic UV unwrapping",
       "website": "https://uvgami.com",
@@ -25,9 +25,9 @@
         "files": "Import/export OBJ",
         "network": "Download the unwrapping engines"
       },
-      "archive_url": "https://github.com/danielboxer/UVgami/releases/download/v2.4.0/UVgami.zip",
-      "archive_size": 2766412,
-      "archive_hash": "sha256:d0c08945a84c45a1c5657b002071e76f54d59e74a87c8a3b902a40a88672dc65"
+      "archive_url": "https://github.com/danielboxer/UVgami/releases/download/v2.5.0/UVgami.zip",
+      "archive_size": 2845171,
+      "archive_hash": "sha256:2149d14bb2fcf07930f5c268003fa71e5f95842a72af5727f56ef907f2b96d00"
     }
   ]
 }
