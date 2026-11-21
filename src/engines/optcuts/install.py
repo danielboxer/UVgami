@@ -12,9 +12,9 @@ PROXY_MODE_DEFAULT = "AUTO"
 OPTCUTS_VERSION = "1.25.0"
 OPTCUTS_MINIMUM_VERSION = "1.23.0"
 OPTCUTS_ARCHIVE_SHA256S = {
-    "windows": "c898c8e6d779296e754467542d3e4d1b8b3dcd9e21faeea834dfa24a30da1e88",
-    "linux": "08eb36a36b8c893f84551733399284084986b2a8b676b818b826f672c468deb6",
-    "macos-arm64": "76f07f451a0a2d87ebbc61f9c59d601a9bb97f207746a77e55d8cecb4d85fa01",
+    "windows": "a000c416d5ae0ce3a1e122a99b92a0ab879fc1fd641b91a646e98d045e6ef7c8",
+    "linux": "0df5f23ca59ab0f3d00e4c0f83ba1cea49895533287153710c67a046f2a8198d",
+    "macos-arm64": "f07a14b7818b88aae51f679ab252fc04be6385fa9a1602117ea9a962338fcaae",
 }
 OPTCUTS = EngineRelease(
     "optcuts",

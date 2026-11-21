@@ -17,8 +17,11 @@ from .paths import get_partfield_checkpoint_path, get_partuv_venv_path, get_uv_p
 # must match the partuv engine VERSION and partuv-partfield's pyproject.toml
 PARTUV_VERSION = "0.2.0"
 PARTUV_MINIMUM_VERSION = "0.2.0"
-# TODO: fill in from the partuv 0.2.0 release zips
-PARTUV_ARCHIVE_SHA256S = {"windows": "", "linux": "", "macos-arm64": ""}
+PARTUV_ARCHIVE_SHA256S = {
+    "windows": "bbf31c3e3c8768ffb663463aa570d1c0178c6e0a5c6cf41cfb771684853febee",
+    "linux": "2e64c60b98d06234cf320412b4f96c20fe96c3aeb6ef0da74440586a92e9d455",
+    "macos-arm64": "7d65814f7cc3c0e9501ac3c4baafdf535af44b1383f664652907f1ff51581287",
+}
 PARTUV = EngineRelease(
     "partuv",
     "PartUV",
