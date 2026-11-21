@@ -11,6 +11,7 @@ from blender_fixtures import (
     needs_engine,
     needs_partuv,
     needs_xatlas,
+    uv_islands,
 )
 
 pytestmark = [needs_engine, pytest.mark.smoke]
@@ -52,6 +53,23 @@ def test_keep_quads_rebuilds_every_face(load_obj, unwrap, outputs):
     output = next(iter(outputs().values()))
     assert sorted(len(polygon.vertices) for polygon in output.data.polygons) == sizes
     assert output.data.uv_layers.active is not None
+
+
+@pytest.mark.parametrize("engine", OTHER_ENGINES)
+def test_other_engines_keep_every_quad_no_seam_crosses(
+    load_obj, unwrap, outputs, engine
+):
+    obj = load_obj("torus")[0]
+    assert all(len(polygon.vertices) == 4 for polygon in obj.data.polygons)
+    bpy.context.scene.uvgami.partuv.segmentation = "GEOMETRIC"
+    unwrap(engine)
+
+    assert manager.error_messages == []
+    mesh = next(iter(outputs().values())).data
+    seams = {edge.key for edge in mesh.edges if edge.use_seam}
+    triangles = [polygon for polygon in mesh.polygons if len(polygon.vertices) == 3]
+    assert len(triangles) < len(mesh.polygons) / 2
+    assert all(seams.intersection(polygon.edge_keys) for polygon in triangles)
 
 
 def test_flipped_face_is_rewound_instead_of_refused(load_obj, unwrap, outputs):
@@ -205,9 +223,7 @@ def test_hard_surface_keeps_seams_off_the_diagonals(make_mesh, unwrap, outputs):
     assert island_count(next(iter(outputs().values()))) == 3
 
 
-def test_material_seams_split_the_wall_where_the_material_changes(
-    make_mesh, unwrap, outputs
-):
+def two_material_cylinder(make_mesh):
     around, along = 24, 6
     verts, faces = capped_quad_cylinder(around, along)
     obj = make_mesh(
@@ -224,13 +240,34 @@ def test_material_seams_split_the_wall_where_the_material_changes(
         ],
     )
     props = bpy.context.scene.uvgami
-    props.optcuts.mode = "HARD"
     props.material_seams = True
     props.keep_quads = False
     props.symmetry = False
+
+
+def test_material_seams_split_the_wall_where_the_material_changes(
+    make_mesh, unwrap, outputs
+):
+    two_material_cylinder(make_mesh)
+    bpy.context.scene.uvgami.optcuts.mode = "HARD"
     unwrap()
 
     assert manager.error_messages == []
     assert manager.summary_failed is False, manager.summary
     # the two caps and the wall's two halves
     assert island_count(next(iter(outputs().values()))) == 4
+
+
+@pytest.mark.parametrize("engine", OTHER_ENGINES)
+def test_other_engines_keep_each_island_inside_one_material(
+    make_mesh, unwrap, outputs, engine
+):
+    two_material_cylinder(make_mesh)
+    bpy.context.scene.uvgami.partuv.segmentation = "GEOMETRIC"
+    unwrap(engine)
+
+    assert manager.error_messages == []
+    mesh = next(iter(outputs().values())).data
+    materials = [face.material_index for face in mesh.polygons]
+    islands = uv_islands(mesh)
+    assert all(len({materials[face] for face in island}) == 1 for island in islands)

@@ -303,7 +303,7 @@ class UVGAMI_PT_weights(bpy.types.Panel):
     @classmethod
     def poll(cls, context):
         engine = active_engine(context.scene.uvgami.engine)
-        return engine is not None and engine.supports_guided
+        return engine is not None and engine.supports_weights
 
     def draw_header(self, context):
         self.layout.prop(context.scene.uvgami, "use_weights")

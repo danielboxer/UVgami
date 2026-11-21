@@ -2,13 +2,17 @@ import importlib
 import time
 from types import SimpleNamespace
 
+import bmesh
 import bpy
 import numpy
+import pytest
 from blender_fixtures import (
     addon,
     cylinder_with_loose_cube,
     is_second_cube,
+    needs_partuv,
     needs_tools,
+    needs_xatlas,
     two_loose_cubes,
 )
 
@@ -152,3 +156,45 @@ def test_a_picked_part_writes_every_face_of_that_part():
     ]
     assert values.tolist() == expected
     assert session.picked_overrides().surface_mode == "HARD"
+
+
+def dense_cube(cuts):
+    obj = bpy.data.objects.new("cube", bpy.data.meshes.new("cube"))
+    bpy.context.scene.collection.objects.link(obj)
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=2.0)
+    bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=cuts, use_grid_fill=True)
+    bm.to_mesh(obj.data)
+    bm.free()
+    return obj
+
+
+def dense_monkey():
+    bpy.ops.mesh.primitive_monkey_add()
+    obj = bpy.context.active_object
+    modifier = obj.modifiers.new("subdivision", "SUBSURF")
+    modifier.levels = 3
+    bpy.ops.object.modifier_apply(modifier=modifier.name)
+    return obj
+
+
+@needs_tools
+@pytest.mark.parametrize(
+    ("engine", "cuts"),
+    [
+        pytest.param("XATLAS", 65, marks=needs_xatlas),
+        pytest.param("PARTUV", 41, marks=needs_partuv),
+    ],
+)
+def test_plan_leaves_a_dense_hard_part_out_of_the_auto_proxy(engine, cuts):
+    props = bpy.context.scene.uvgami
+    props.engine = engine
+    props.proxy_mode = "AUTO"
+    props.split_regions = False
+    props.symmetry = False
+
+    cube_lines = planned(dense_cube(cuts)).lines
+    monkey_lines = planned(dense_monkey()).lines
+
+    assert "0 proxy parts" in cube_lines
+    assert "1 proxy part" in monkey_lines

@@ -68,13 +68,15 @@ TIMER_SECONDS = 0.1
 ORGANIC = SURFACE_MODE_CODES["ORGANIC"]
 HARD = SURFACE_MODE_CODES["HARD"]
 
-PlanResult = namedtuple("PlanResult", "symmetry segments global_modes")
+PlanResult = namedtuple("PlanResult", "symmetry segments global_modes proxy_modes")
 
 
 def plan_run_inputs(engine, props):
     return (
         engine,
         engine.unset_surface_mode(props),
+        engine.proxy_surface_mode(props),
+        props.proxy_mode,
         engine.splits_regions(props),
         props.material_seams,
         engine.uses_symmetry(props),
@@ -89,12 +91,14 @@ class PlanRun:
         self.props = props
         self.worker = None
         self.global_classify = None
+        self.proxy_classify = None
         self.symmetry_check = start_unwrap_symmetry(
             engine, props, mesh, painted=paints_seams(obj, engine, props)
         )
         try:
             self.worker = self._start_worker(mesh, applied_matrix(obj))
             self.global_classify = self._start_global_classify(mesh)
+            self.proxy_classify = self._start_proxy_classify(mesh)
         except EngineError:
             self.close()
             raise
@@ -102,7 +106,12 @@ class PlanRun:
         self.corners, self.totals = loop_vertices_and_face_sizes(mesh)
 
     def tasks(self):
-        tasks = (self.worker, self.symmetry_check, self.global_classify)
+        tasks = (
+            self.worker,
+            self.symmetry_check,
+            self.global_classify,
+            self.proxy_classify,
+        )
         return [task for task in tasks if task is not None]
 
     def done(self):
@@ -113,7 +122,10 @@ class PlanRun:
         if self.symmetry_check is not None:
             symmetry = self.symmetry_check.result()
         segments = self._segments(symmetry)
-        return PlanResult(symmetry, segments, self._global_modes(segments))
+        proxy_modes = None
+        if self.proxy_classify is not None:
+            proxy_modes = self.proxy_classify.result()
+        return PlanResult(symmetry, segments, self._global_modes(segments), proxy_modes)
 
     def close(self):
         for task in self.tasks():
@@ -153,6 +165,20 @@ class PlanRun:
             numpy.full(
                 len(mesh.polygons), SURFACE_MODE_CODES["AUTO"], dtype=numpy.int64
             ),
+        )
+
+    def _start_proxy_classify(self, mesh):
+        if not self.engine.classifies_for_proxy_alone(self.props):
+            return None
+        largest_part = int(part_triangles(mesh).triangle_counts.max())
+        if largest_part <= proxy_trigger_faces(self.props):
+            return None
+        return WorkerProcess(
+            classify_job,
+            tools_command(),
+            get_extension_dir_path() / "segment",
+            *mesh_arrays(mesh),
+            surface_modes(mesh, self.engine.proxy_surface_mode(self.props)),
         )
 
     def _segments(self, symmetry):
@@ -211,6 +237,7 @@ class PlanSession:
         self.props = props
         self.symmetry = result.symmetry
         self.global_modes = result.global_modes
+        self.proxy_modes = result.proxy_modes
         positions = vertex_position_array(mesh)
         self.bvh = BVHTree.FromPolygons(positions.tolist(), face_vertices(mesh))
         self.part_counts = part_triangles(mesh)
@@ -345,9 +372,13 @@ class PlanSession:
                 pieces, weights=self.triangles_per_face
             ).astype(numpy.int64)
             if self.props.proxy_mode == "AUTO":
-                proxy_modes = numpy.where(self.kept, ORGANIC, self.modes)
+                modes = self.modes if self.proxy_modes is None else self.proxy_modes
+                proxy_modes = numpy.where(self.kept, ORGANIC, modes)
                 triangle_counts = auto_proxy_triangle_counts(
-                    triangle_counts, pieces, proxy_modes
+                    triangle_counts,
+                    pieces,
+                    proxy_modes,
+                    self.engine.auto_proxy_hard_surface_faces,
                 )
             trigger = proxy_trigger_faces(self.props)
             proxied = int((triangle_counts > trigger).sum())

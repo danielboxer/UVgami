@@ -21,6 +21,8 @@ class Engine:
     supports_keep_quads = False
     supports_import_uvs = False
     supports_proxy = False
+    # hard surface parts of 68k and 111k triangles miss 15 minutes at full resolution, 42k takes 207s
+    auto_proxy_hard_surface_faces = 50000
     supports_hard_surface = False
     supports_painted_islands = False
     keeps_plane_vertices_on_u_zero = False
@@ -29,6 +31,10 @@ class Engine:
     supports_symmetry = False
     supports_material_seams = False
     has_install_controls = False
+
+    @property
+    def supports_weights(self):
+        return self.supports_guided or self.supports_painted_islands
 
     def describe(self):
         return self.label
@@ -94,6 +100,16 @@ class Engine:
 
     def unset_surface_mode(self, props):
         return "ORGANIC"
+
+    def proxy_surface_mode(self, props):
+        return self.unset_surface_mode(props)
+
+    def classifies_for_proxy_alone(self, props):
+        return (
+            self.uses_proxy(props)
+            and props.proxy_mode == "AUTO"
+            and self.proxy_surface_mode(props) != self.unset_surface_mode(props)
+        )
 
     def preseed_work(self, obj, props, plane, surface_modes):
         return None

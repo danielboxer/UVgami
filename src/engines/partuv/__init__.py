@@ -117,6 +117,9 @@ class PartuvEngine(CachedUpdateNotice, Engine):
     supports_regions = True
     supports_symmetry = True
     supports_proxy = True
+    supports_keep_quads = True
+    supports_material_seams = True
+    supports_painted_islands = True
     property_group = UVGAMI_PG_partuv
     has_install_controls = True
     install_owner = "partuv"
@@ -130,6 +133,9 @@ class PartuvEngine(CachedUpdateNotice, Engine):
 
     def is_available(self):
         return get_platform_tag() in PARTUV_ARCHIVE_SHA256S
+
+    def proxy_surface_mode(self, props):
+        return "AUTO"
 
     def batches_queue(self, props):
         # more than one process runs out of vram

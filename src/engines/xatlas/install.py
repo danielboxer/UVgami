@@ -36,4 +36,7 @@ class XatlasInstall(BinaryEngine):
     supports_regions = True
     supports_symmetry = True
     supports_material_seams = True
+    supports_keep_quads = True
+    supports_proxy = True
+    supports_painted_islands = True
     classes = (UVGAMI_OT_install_xatlas, UVGAMI_OT_delete_engine)

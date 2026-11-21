@@ -1,7 +1,15 @@
 import bpy
 import numpy
 import pytest
-from blender_fixtures import add_sphere, addon, needs_engine, select, uv_islands
+from blender_fixtures import (
+    add_sphere,
+    addon,
+    needs_engine,
+    needs_partuv,
+    needs_xatlas,
+    select,
+    uv_islands,
+)
 
 pytestmark = [needs_engine, pytest.mark.smoke]
 
@@ -94,6 +102,30 @@ def test_paint_cuts_a_symmetric_cap_out_as_one_island(unwrap, outputs):
     )
     assert both_sides_seams
     assert cap_seams(outputs()[OUTPUT_NAME]) == both_sides_seams
+
+
+@pytest.mark.parametrize(
+    "engine",
+    [
+        pytest.param("XATLAS", marks=needs_xatlas),
+        pytest.param("PARTUV", marks=needs_partuv),
+    ],
+)
+def test_other_engines_cut_the_painted_cap_out_as_one_island(unwrap, outputs, engine):
+    props = bpy.context.scene.uvgami
+    props.use_weights = True
+    props.partuv.segmentation = "GEOMETRIC"
+    sphere = add_sphere("sphere")
+    paint_cap(sphere, one_sided=False)
+    select([sphere])
+    unwrap(engine)
+
+    output = outputs()[OUTPUT_NAME]
+    assert len(cap_islands(output)) == 1
+    assert cap_seams(output)
+    assert all(
+        min(end[2] for end in seam) < CAP_OUTLINE_Z + 0.01 for seam in cap_seams(output)
+    )
 
 
 def test_paint_outline_on_a_stored_region_border_still_unwraps(unwrap, outputs):

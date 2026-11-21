@@ -1,10 +1,8 @@
 import math
 
 import numpy
-import pytest
 from uvgami_cli._pytest_plugin import corners_and_totals, quad_grid
 
-from no_bpy import OptcutsRun
 from no_bpy.painted_islands import (
     borders_outside_paint,
     outline_edges,
@@ -15,11 +13,6 @@ from no_bpy.painted_islands import (
 
 GRID = 6
 SIDE = GRID + 1
-
-
-@pytest.fixture
-def optcuts(engine_binary):
-    return OptcutsRun([engine_binary("optcuts")], None, ["-u", "4.2"])
 
 
 def column_edges(column):
@@ -165,7 +158,7 @@ def test_outline_job_paints_the_mirror_of_each_painted_face(tools, tmp_path):
     assert columns == [0, GRID - 1]
 
 
-def test_flatten_job_keeps_a_hole_open_without_flips(tools, optcuts, tmp_path):
+def test_flatten_job_keeps_a_hole_open_without_flips(tools, tmp_path):
     verts, faces = bumped_grid()
     hole = {(2, 2), (3, 2), (2, 3), (3, 3)}
     faces = [
@@ -177,7 +170,6 @@ def test_flatten_job_keeps_a_hole_open_without_flips(tools, optcuts, tmp_path):
 
     flattened = painted_flatten_job(
         tools,
-        optcuts,
         tmp_path,
         numpy.array(verts),
         corners,
@@ -190,7 +182,7 @@ def test_flatten_job_keeps_a_hole_open_without_flips(tools, optcuts, tmp_path):
     assert (fan_areas(flattened.corner_uvs, totals) > 0).all()
 
 
-def test_flatten_job_flattens_an_island_with_one_flipped_face(tools, optcuts, tmp_path):
+def test_flatten_job_flattens_an_island_with_one_flipped_face(tools, tmp_path):
     verts, faces = bumped_grid()
     flipped = GRID + 2
     faces[flipped] = faces[flipped][::-1]
@@ -198,7 +190,6 @@ def test_flatten_job_flattens_an_island_with_one_flipped_face(tools, optcuts, tm
 
     flattened = painted_flatten_job(
         tools,
-        optcuts,
         tmp_path,
         numpy.array(verts),
         corners,
@@ -213,9 +204,7 @@ def test_flatten_job_flattens_an_island_with_one_flipped_face(tools, optcuts, tm
     assert (numpy.delete(areas, flipped_triangles) > 0).all()
 
 
-def test_flatten_job_reports_an_island_with_a_fin_face_as_overlapping(
-    tools, optcuts, tmp_path
-):
+def test_flatten_job_reports_an_island_with_a_fin_face_as_overlapping(tools, tmp_path):
     verts, faces = bumped_grid()
     shared = faces[GRID + 2][:2]
     verts = verts + [(*verts[v][:2], 2.0) for v in shared[::-1]]
@@ -224,7 +213,6 @@ def test_flatten_job_reports_an_island_with_a_fin_face_as_overlapping(
 
     flattened = painted_flatten_job(
         tools,
-        optcuts,
         tmp_path,
         numpy.array(verts),
         corners,

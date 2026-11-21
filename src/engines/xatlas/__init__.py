@@ -12,6 +12,8 @@ class XatlasEngine(XatlasInstall):
     label = "xatlas"
     description = "Fast CPU engine for baking lightmaps and texture painting"
     icon = "MESH_GRID"
+    # xatlas takes 196s on hard surface parts of 1.1M triangles at full resolution, 1.8M ran past 13 minutes
+    auto_proxy_hard_surface_faces = 1_000_000
 
     def build_args(self, ctx, input_path, props):
         return [
@@ -23,6 +25,9 @@ class XatlasEngine(XatlasInstall):
             "--max-cost",
             PRIORITY_VALUES[props.priority],
         ]
+
+    def proxy_surface_mode(self, props):
+        return "AUTO"
 
     def describe_failure(self, code):
         return {

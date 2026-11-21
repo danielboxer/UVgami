@@ -541,19 +541,7 @@ class SessionBuilder:
         if not self.engine.splits_regions(props) or nothing_to_split:
             if self.inputs[obj].proxy_parts is None or props.proxy_mode != "AUTO":
                 return self._start_preseed(obj, symmetry)
-            worker = WorkerProcess(
-                classify_job,
-                tools_command(),
-                get_extension_dir_path() / "segment",
-                *mesh_arrays(obj.data),
-                surface_modes(obj.data, self.engine.unset_surface_mode(props)),
-            )
-            return self._wait(
-                worker,
-                obj,
-                "segmentation",
-                functools.partial(self._finish_classifying, obj=obj, symmetry=symmetry),
-            )
+            return self._start_classifying(obj, symmetry)
         worker = segment_work(
             obj.data,
             world_positions(obj.data, applied_matrix(obj)),
@@ -569,13 +557,35 @@ class SessionBuilder:
             functools.partial(self._finish_segmenting, obj=obj, symmetry=symmetry),
         )
 
-    def _finish_classifying(self, task, *, obj, symmetry):
+    def _start_classifying(self, obj, symmetry, border_edges=()):
+        worker = WorkerProcess(
+            classify_job,
+            tools_command(),
+            get_extension_dir_path() / "segment",
+            *mesh_arrays(obj.data),
+            surface_modes(obj.data, self.engine.proxy_surface_mode(manager.props)),
+        )
+        return self._wait(
+            worker,
+            obj,
+            "segmentation",
+            functools.partial(
+                self._finish_classifying,
+                obj=obj,
+                symmetry=symmetry,
+                border_edges=border_edges,
+            ),
+        )
+
+    def _finish_classifying(self, task, *, obj, symmetry, border_edges):
         try:
             modes = task.result()
         except (EngineError, WorkerError) as error:
             logger.add_error(f"{self.inputs[obj].name}: classifying failed, {error}")
-            return self._start_preseed(obj, symmetry)
-        return self._start_preseed(obj, symmetry, surface_modes=modes)
+            return self._start_preseed(obj, symmetry, border_edges=border_edges)
+        return self._start_preseed(
+            obj, symmetry, surface_modes=modes, border_edges=border_edges
+        )
 
     def _finish_segmenting(self, task, *, obj, symmetry):
         try:
@@ -588,6 +598,11 @@ class SessionBuilder:
             segmentation,
             symmetry,
         )
+        has_proxy_parts = self.inputs[obj].proxy_parts is not None
+        if has_proxy_parts and self.engine.classifies_for_proxy_alone(manager.props):
+            return self._start_classifying(
+                obj, symmetry, border_edges=segmentation.border_edges
+            )
         return self._start_preseed(
             obj,
             symmetry,
@@ -624,7 +639,12 @@ class SessionBuilder:
 
                 parts = parts_without_painted(parts, obj.data, painted)
             if surface_modes is not None and props.proxy_mode == "AUTO":
-                parts = parts_for_auto_proxy(parts, obj.data, surface_modes)
+                parts = parts_for_auto_proxy(
+                    parts,
+                    obj.data,
+                    surface_modes,
+                    self.engine.auto_proxy_hard_surface_faces,
+                )
             if needs_proxy(obj, proxy_trigger_faces(props), parts):
                 surface_modes = self._make_proxy(
                     obj, props, parts, surface_modes, symmetry
@@ -758,7 +778,7 @@ class SessionBuilder:
         from ..painted_islands import flatten_work
 
         return self._wait(
-            flatten_work(obj, painted, manager.props.priority),
+            flatten_work(obj, painted),
             obj,
             "painted flatten",
             functools.partial(

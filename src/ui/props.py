@@ -68,7 +68,7 @@ def unwrap_settings(props):
             _priority_entry(props),
             _setting_entry(props, "split_regions", supported=engine.supports_regions),
             _setting_entry(props, "import_uvs", supported=import_uvs_shown),
-            _setting_entry(props, "use_weights", supported=engine.supports_guided),
+            _setting_entry(props, "use_weights", supported=engine.supports_weights),
             _setting_entry(props, "proxy_mode", supported=engine.supports_proxy),
             _setting_entry(props, "stack_similar", supported=True),
             _setting_entry(props, "symmetry", supported=True),

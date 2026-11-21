@@ -1,8 +1,6 @@
 import numpy
 
-from .engines.optcuts.flags import PRIORITY_VALUES
 from .guides import painted_weight_by_vertex
-from .hard_surface import optcuts_run
 from .no_bpy.mesh import face_starts
 from .no_bpy.painted_islands import painted_flatten_job, painted_outline_job
 from .no_bpy.worker import WorkerProcess
@@ -52,11 +50,10 @@ def parts_without_painted(parts, mesh, painted):
     return parts._replace(triangle_counts=counts)
 
 
-def flatten_work(obj, painted, priority):
+def flatten_work(obj, painted):
     return WorkerProcess(
         painted_flatten_job,
         tools_command(),
-        optcuts_run(["-u", PRIORITY_VALUES[priority]]),
         get_extension_dir_path() / "paint",
         *mesh_arrays(obj.data),
         painted,

@@ -15,6 +15,9 @@ mutual_mirror_partners = addon.src.symmetry.mesh_mirror_partners
 write_symmetric_faces = addon.src.utils.mesh.write_symmetric_faces
 
 PROXY_FACES = 500
+OPTCUTS_HARD_SURFACE_FACES = addon.src.engines.ENGINES[
+    "OPTCUTS"
+].auto_proxy_hard_surface_faces
 SURFACE_MODE_CODES = addon.src.no_bpy.SURFACE_MODE_CODES
 
 
@@ -69,7 +72,9 @@ def test_a_hard_surface_part_is_not_decimated():
     modes[centers < 2] = SURFACE_MODE_CODES["HARD"]
     assert (modes == SURFACE_MODE_CODES["HARD"]).sum() == sphere_faces
 
-    candidates = parts_for_auto_proxy(parts, obj.data, modes)
+    candidates = parts_for_auto_proxy(
+        parts, obj.data, modes, OPTCUTS_HARD_SURFACE_FACES
+    )
 
     assert not make_proxy(obj, PROXY_FACES, candidates)
     assert len(obj.data.polygons) == len(modes)
@@ -77,11 +82,13 @@ def test_a_hard_surface_part_is_not_decimated():
 
 def test_a_hard_surface_part_over_the_limit_stays_a_candidate():
     obj = add_dense_sphere("sphere")
-    limit = addon.src.proxy.PROXY_AUTO_HARD_SURFACE_FACES
+    limit = OPTCUTS_HARD_SURFACE_FACES
     modes = numpy.full(len(obj.data.polygons), SURFACE_MODE_CODES["HARD"])
     parts = part_triangles(obj.data)._replace(triangle_counts=numpy.array([limit + 1]))
 
-    assert parts_for_auto_proxy(parts, obj.data, modes).triangle_counts[0] == limit + 1
+    candidates = parts_for_auto_proxy(parts, obj.data, modes, limit)
+
+    assert candidates.triangle_counts[0] == limit + 1
 
 
 def test_parts_all_under_the_budget_are_left_alone():

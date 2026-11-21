@@ -52,8 +52,6 @@ def part_triangles(data):
 
 PROXY_TARGET_FACES = 5000
 PROXY_AUTO_TRIGGER_FACES = 20000
-# hard surface parts of 68k and 111k triangles miss 15 minutes at full resolution, 42k takes 207s
-PROXY_AUTO_HARD_SURFACE_FACES = 50000
 
 
 def proxy_trigger_faces(props):
@@ -62,19 +60,23 @@ def proxy_trigger_faces(props):
     return PROXY_TARGET_FACES
 
 
-def auto_proxy_triangle_counts(triangle_counts, face_part, surface_modes):
+def auto_proxy_triangle_counts(
+    triangle_counts, face_part, surface_modes, hard_surface_faces
+):
     counts = triangle_counts.copy()
     is_hard = numpy.zeros(len(counts), dtype=bool)
     is_hard[face_part[surface_modes == SURFACE_MODE_CODES["HARD"]]] = True
-    counts[is_hard & (counts <= PROXY_AUTO_HARD_SURFACE_FACES)] = 0
+    counts[is_hard & (counts <= hard_surface_faces)] = 0
     return counts
 
 
-def parts_for_auto_proxy(parts, mesh, surface_modes):
+def parts_for_auto_proxy(parts, mesh, surface_modes, hard_surface_faces):
     corners, totals = loop_vertices_and_face_sizes(mesh)
     face_labels = parts.vertex_labels[corners[face_starts(totals)]]
     face_part = numpy.searchsorted(parts.part_labels, face_labels)
-    counts = auto_proxy_triangle_counts(parts.triangle_counts, face_part, surface_modes)
+    counts = auto_proxy_triangle_counts(
+        parts.triangle_counts, face_part, surface_modes, hard_surface_faces
+    )
     return parts._replace(triangle_counts=counts)
 
 
