@@ -8,6 +8,7 @@
 - PartUV Tree segmentation mode
 - Seams on material borders option
 - PartUV on MacOs
+- Proxy, keep quads, and seam restrictions for PartUV and xatlas
 
 **Improvements:**
 
@@ -17,7 +18,11 @@
 - Faster edit regions loops on high poly meshes
 - Improved progress bar during pre and post unwrap
 - Docs button link in the Misc panel
-- Some bug fixes
+
+**Bug Fixes:**
+
+- Fix optcuts hang on Linux and macOS
+- Some other bug fixes
 
 ## 2.4.0
 
