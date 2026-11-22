@@ -12,7 +12,7 @@ from ..no_bpy import SURFACE_MODE_CODES, EngineError
 from ..no_bpy.mesh import face_starts, lowest_index_part_labels
 from ..no_bpy.preseed import SegmentRegions, classify_job
 from ..no_bpy.segmentation import edge_face_pairs
-from ..no_bpy.worker import WorkerError, WorkerProcess
+from ..no_bpy.worker import WorkerError, cached_worker
 from ..part_overrides import (
     KEEP_ATTRIBUTE,
     OVERRIDE_ATTRIBUTES,
@@ -184,7 +184,7 @@ class PlanRun:
             )
         if not self.engine.supports_hard_surface:
             return None
-        return WorkerProcess(
+        return cached_worker(
             classify_job,
             tools_command(),
             get_extension_dir_path() / "segment",
@@ -197,7 +197,7 @@ class PlanRun:
             return None
         if not any(face_values(mesh, name).any() for name in OVERRIDE_ATTRIBUTES):
             return None
-        return WorkerProcess(
+        return cached_worker(
             classify_job,
             tools_command(),
             get_extension_dir_path() / "segment",
@@ -213,7 +213,7 @@ class PlanRun:
         largest_part = int(part_triangles(mesh).triangle_counts.max())
         if largest_part <= proxy_trigger_faces(self.props):
             return None
-        return WorkerProcess(
+        return cached_worker(
             classify_job,
             tools_command(),
             get_extension_dir_path() / "segment",

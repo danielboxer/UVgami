@@ -17,6 +17,7 @@ from .no_bpy.symmetry import (
     start_symmetric_axis,
     symmetric_regions,
 )
+from .no_bpy.worker import CachedTask
 from .part_overrides import read_overrides
 from .unwrap.logger import logger
 from .utils.mesh import (
@@ -102,12 +103,13 @@ def mirror_workdir():
 
 
 def start_mesh_symmetric_axis(mesh, center, tolerance):
-    return start_symmetric_axis(
-        tools_command(),
-        mirror_workdir(),
-        *mesh_arrays(mesh),
-        center,
-        tolerance,
+    command = tools_command()
+    arrays = mesh_arrays(mesh)
+    return CachedTask(
+        (start_symmetric_axis.__name__, command, *arrays, center, tolerance),
+        lambda: start_symmetric_axis(
+            command, mirror_workdir(), *arrays, center, tolerance
+        ),
     )
 
 

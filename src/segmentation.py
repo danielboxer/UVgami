@@ -8,7 +8,7 @@ from .no_bpy.mesh import bounding_box_diagonal
 from .no_bpy.segmentation import segment_job, stored_segment_job
 
 # from .no_bpy.segmentation import split_loop_job, split_region_job
-from .no_bpy.worker import WorkerProcess
+from .no_bpy.worker import cached_worker
 from .part_overrides import KEEP_ATTRIBUTE, face_values, surface_modes
 from .proxy import part_triangles
 from .utils.mesh import (
@@ -83,7 +83,7 @@ def segment_work(
 ):
     stored = stored_regions(mesh)
     if stored is not None:
-        return WorkerProcess(
+        return cached_worker(
             stored_segment_job,
             segment_command,
             get_extension_dir_path() / "segment",
@@ -92,7 +92,7 @@ def segment_work(
             surface_modes(mesh, unset_mode),
             *stored,
         )
-    return WorkerProcess(
+    return cached_worker(
         segment_job,
         segment_command,
         get_extension_dir_path() / "segment",

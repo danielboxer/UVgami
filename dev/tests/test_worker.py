@@ -7,7 +7,7 @@ from no_bpy import (
     faces_by_edge,
 )
 from no_bpy.preseed import _read_hardsurface
-from no_bpy.worker import WorkerProcess, last_progress
+from no_bpy.worker import WorkerProcess, cached_worker, last_progress
 
 TWO_TRIANGLES = [(0, 1, 2), (1, 3, 2)]
 
@@ -40,6 +40,13 @@ def test_result_removes_the_worker_folder():
     assert folder.is_dir()
     worker.result()
     assert not folder.exists()
+
+
+def test_cached_worker_reuses_the_result_of_the_same_call():
+    expected = cached_worker(faces_by_edge, TWO_TRIANGLES).result()
+    repeat = cached_worker(faces_by_edge, TWO_TRIANGLES)
+    assert repeat.done()
+    assert repeat.result() == expected
 
 
 def test_last_progress_skips_a_half_written_line(tmp_path):

@@ -51,7 +51,7 @@ def symmetric_axis(mesh, center, tolerance):
 def test_auto_takes_the_first_axis_the_mesh_mirrors_across():
     bpy.ops.mesh.primitive_cube_add()
     cube = bpy.context.active_object
-    center = mathutils.Vector((0, 0, 0))
+    center = numpy.zeros(3)
     assert symmetric_axis(cube.data, center, 1e-6)[:2] == ("X", True)
 
     # a mesh that only mirrors across Y

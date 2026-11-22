@@ -3,7 +3,7 @@ import numpy
 from .guides import painted_weight_by_vertex
 from .no_bpy.mesh import face_starts
 from .no_bpy.painted_islands import painted_flatten_job, painted_outline_job
-from .no_bpy.worker import WorkerProcess
+from .no_bpy.worker import WorkerProcess, cached_worker
 from .utils.mesh import (
     activate_uv_layer,
     loop_uvs,
@@ -32,7 +32,7 @@ def outline_work(obj, painted, symmetry):
     plane = None
     if symmetry is not None and symmetry.kind in ("BISECT", "WHOLE"):
         plane = (symmetry.center, symmetry.axis)
-    return WorkerProcess(
+    return cached_worker(
         painted_outline_job,
         tools_command(),
         get_extension_dir_path() / "paint",

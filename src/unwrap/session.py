@@ -17,7 +17,7 @@ from ..no_bpy import (
 )
 from ..no_bpy.mesh import moved_island_uvs, next_corners_in_face
 from ..no_bpy.preseed import classify_job
-from ..no_bpy.worker import WorkerError, WorkerProcess
+from ..no_bpy.worker import WorkerError, cached_worker
 from ..part_overrides import (
     piece_keeps_uvs,
     # piece_priority_override,
@@ -558,7 +558,7 @@ class SessionBuilder:
         )
 
     def _start_classifying(self, obj, symmetry, border_edges=()):
-        worker = WorkerProcess(
+        worker = cached_worker(
             classify_job,
             tools_command(),
             get_extension_dir_path() / "segment",

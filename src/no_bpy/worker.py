@@ -1,3 +1,4 @@
+import hashlib
 import importlib
 import inspect
 import os
@@ -8,6 +9,7 @@ import sys
 import tempfile
 import time
 import traceback
+from collections import OrderedDict
 from pathlib import Path
 
 INPUT_NAME = "input"
@@ -155,6 +157,54 @@ class WorkerProcess:
 
     def close(self):
         stop_process(self.process, self._folder)
+
+
+CACHED_RESULT_COUNT = 8
+_cached_results = OrderedDict()
+
+
+class CachedTask:
+    def __init__(self, inputs, start):
+        self._key = hashlib.blake2b(
+            pickle.dumps(inputs, pickle.HIGHEST_PROTOCOL)
+        ).digest()
+        self._cached = _cached_results.get(self._key)
+        self._task = None
+        if self._cached is None:
+            self._task = start()
+        else:
+            _cached_results.move_to_end(self._key)
+
+    def done(self):
+        return self._task is None or self._task.done()
+
+    @property
+    def progress(self):
+        return 1.0 if self._task is None else self._task.progress
+
+    def result(self):
+        if self._task is None:
+            return pickle.loads(self._cached)
+        value = self._task.result()
+        _cached_results[self._key] = pickle.dumps(value, pickle.HIGHEST_PROTOCOL)
+        if len(_cached_results) > CACHED_RESULT_COUNT:
+            _cached_results.popitem(last=False)
+        return value
+
+    def cancel(self):
+        if self._task is not None:
+            self._task.cancel()
+
+    def close(self):
+        if self._task is not None:
+            self._task.close()
+
+
+def cached_worker(function, *args, **kwargs):
+    return CachedTask(
+        (function.__module__, function.__name__, args, kwargs),
+        lambda: WorkerProcess(function, *args, **kwargs),
+    )
 
 
 def _cancel_requested(folder):
