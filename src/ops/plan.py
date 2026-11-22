@@ -7,9 +7,12 @@ from mathutils.bvhtree import BVHTree
 
 from ..engines import active_engine
 from ..engines.optcuts import SURFACE_MODES
+from ..guides import SEAM_RESTRICTIONS_GROUP
 from ..no_bpy import SURFACE_MODE_CODES, EngineError
-from ..no_bpy.mesh import face_starts, lowest_index_part_labels
+from ..no_bpy.mesh import bounding_box_diagonal, face_starts, lowest_index_part_labels
+from ..no_bpy.mesh_reads import vertex_normal_array
 from ..no_bpy.preseed import SegmentRegions, classify_job
+from ..no_bpy.segmentation import edge_face_pairs
 from ..no_bpy.worker import WorkerError, WorkerProcess
 from ..part_overrides import (
     KEEP_ATTRIBUTE,
@@ -52,7 +55,7 @@ from .segmentation import RegionEditor
 
 PICKED_COLOR = (1.0, 0.9, 0.1, 0.45)
 HARD_COLOR = (0.3, 0.3, 0.3, 0.5)
-# no grey, which means hard surface, and no yellow, which means selected
+# no grey, which means hard surface, no yellow, which means selected, and no red, which means painted
 REGION_COLORS = (
     (0.9, 0.3, 0.6, 0.5),
     (0.2, 0.8, 0.85, 0.5),
@@ -61,17 +64,21 @@ REGION_COLORS = (
     (0.95, 0.5, 0.1, 0.5),
     (0.25, 0.45, 0.95, 0.5),
     (0.7, 0.45, 0.25, 0.5),
-    (0.9, 0.2, 0.2, 0.5),
 )
 HOVERED_PART_COLOR = (1.0, 0.9, 0.1, 0.25)
+PAINTED_COLOR = (1.0, 0.0, 0.0, 0.85)
+# fraction of the bounding box diagonal
+PAINTED_LIFT = 0.005
 TIMER_SECONDS = 0.1
 ORGANIC = SURFACE_MODE_CODES["ORGANIC"]
 HARD = SURFACE_MODE_CODES["HARD"]
 
-PlanResult = namedtuple("PlanResult", "symmetry segments global_modes proxy_modes")
+PlanResult = namedtuple(
+    "PlanResult", "symmetry segments global_modes proxy_modes painted"
+)
 
 
-def plan_run_inputs(engine, props):
+def plan_run_inputs(obj, engine, props):
     return (
         engine,
         engine.unset_surface_mode(props),
@@ -81,17 +88,31 @@ def plan_run_inputs(engine, props):
         props.material_seams,
         engine.uses_symmetry(props),
         engine.paint_is_seam_cost(props),
+        engine.paints_islands(props),
+        SEAM_RESTRICTIONS_GROUP in obj.vertex_groups,
     )
 
 
 class PlanRun:
     def __init__(self, obj, engine, props):
         mesh = obj.data
+        self.obj = obj
         self.engine = engine
         self.props = props
         self.worker = None
         self.global_classify = None
         self.proxy_classify = None
+        self.painted_outline = None
+        self.symmetry = None
+        self.weight_painted = None
+        if engine.paints_islands(props):
+            from ..painted_islands import weight_painted_faces
+
+            painted = weight_painted_faces(obj)
+            if painted.any():
+                self.weight_painted = painted
+        self.local_positions = vertex_position_array(mesh)
+        self.corners, self.totals = loop_vertices_and_face_sizes(mesh)
         self.symmetry_check = start_unwrap_symmetry(
             engine, props, mesh, painted=paints_seams(obj, engine, props)
         )
@@ -99,11 +120,11 @@ class PlanRun:
             self.worker = self._start_worker(mesh, applied_matrix(obj))
             self.global_classify = self._start_global_classify(mesh)
             self.proxy_classify = self._start_proxy_classify(mesh)
+            if self.symmetry_check is None:
+                self.painted_outline = self._start_painted_outline()
         except EngineError:
             self.close()
             raise
-        self.local_positions = vertex_position_array(mesh)
-        self.corners, self.totals = loop_vertices_and_face_sizes(mesh)
 
     def tasks(self):
         tasks = (
@@ -111,25 +132,47 @@ class PlanRun:
             self.symmetry_check,
             self.global_classify,
             self.proxy_classify,
+            self.painted_outline,
         )
         return [task for task in tasks if task is not None]
 
     def done(self):
+        if self.symmetry_check is not None and self.symmetry_check.done():
+            self.symmetry = self.symmetry_check.result()
+            self.symmetry_check = None
+            self.painted_outline = self._start_painted_outline()
         return all(task.done() for task in self.tasks())
 
     def result(self):
-        symmetry = None
-        if self.symmetry_check is not None:
-            symmetry = self.symmetry_check.result()
-        segments = self._segments(symmetry)
+        segments = self._segments(self.symmetry)
         proxy_modes = None
         if self.proxy_classify is not None:
             proxy_modes = self.proxy_classify.result()
-        return PlanResult(symmetry, segments, self._global_modes(segments), proxy_modes)
+        painted = numpy.zeros(len(self.totals), dtype=bool)
+        if self.painted_outline is not None:
+            from ..no_bpy.painted_islands import unpaint_closed_parts
+
+            painted = unpaint_closed_parts(
+                self.corners, self.totals, self.painted_outline.result()
+            )
+        return PlanResult(
+            self.symmetry,
+            segments,
+            self._global_modes(segments),
+            proxy_modes,
+            painted,
+        )
 
     def close(self):
         for task in self.tasks():
             task.close()
+
+    def _start_painted_outline(self):
+        if self.weight_painted is None:
+            return None
+        from ..painted_islands import outline_work
+
+        return outline_work(self.obj, self.weight_painted, self.symmetry)
 
     def _start_worker(self, mesh, matrix):
         unset_mode = self.engine.unset_surface_mode(self.props)
@@ -253,7 +296,27 @@ class PlanSession:
         self.plane_shapes = []
         if self.symmetry is not None:
             self.plane_shapes = plane_shapes(self.symmetry, positions, obj.matrix_world)
-        self.plane_batches = None
+        self.painted = result.painted
+        self.painted_shapes = []
+        self.painted_area_count = 0
+        if self.painted.any():
+            lift = PAINTED_LIFT * bounding_box_diagonal(positions)
+            raised = positions + vertex_normal_array(mesh) * lift
+            raised_corners, _ = lifted_triangles(mesh, raised, 0.0)
+            fill = raised_corners[self.painted[self.triangle_faces]].reshape(-1, 3)
+            world_fill = fill @ matrix[:3, :3].T + matrix[:3, 3]
+            self.painted_shapes = [
+                Shape("TRIS", world_fill, None, PAINTED_COLOR, FILL_NUDGE, None)
+            ]
+            face_pairs = edge_face_pairs(corners, totals)
+            both_painted = (
+                self.painted[face_pairs.first] & self.painted[face_pairs.second]
+            )
+            pairs = numpy.stack([face_pairs.first, face_pairs.second], axis=1)
+            areas = lowest_index_part_labels(len(totals), pairs[both_painted])
+            self.painted_area_count = len(numpy.unique(areas[self.painted]))
+        self.hovers_paint = False
+        self.static_batches = None
 
         self.regions = None
         segments = result.segments
@@ -263,7 +326,7 @@ class PlanSession:
                 partners = mesh_mirror_partners(
                     mesh, self.symmetry.center, self.symmetry.axis
                 )
-            self.regions = RegionEditor(obj, segments, partners)
+            self.regions = RegionEditor(obj, segments, partners, painted=self.painted)
 
         self.overrides = {name: face_values(mesh, name) for name in OVERRIDE_ATTRIBUTES}
         self.picked = set()
@@ -286,15 +349,16 @@ class PlanSession:
 
     def _regions_changed(self):
         organic = (self.modes == ORGANIC) & ~self.kept
+        organic_unpainted = organic & ~self.painted
         labels = numpy.zeros(len(self.modes), dtype=numpy.int64)
         region_count = 0
         touching = {}
         if self.regions is not None:
             self.regions.hide_regions(~organic)
-            labels = numpy.where(organic, self.regions.joined, 0)
+            labels = numpy.where(organic_unpainted, self.regions.joined, 0)
             region_count = self.regions.part_count
             touching = self.regions.parts_of_part
-        outside_regions = organic & (labels == 0)
+        outside_regions = organic_unpainted & (labels == 0)
         labels[outside_regions] = (
             region_count + 1 + self.face_loose_part[outside_regions]
         )
@@ -315,7 +379,9 @@ class PlanSession:
             (labels == label, REGION_COLORS[color_of_label[label]]) for label in drawn
         ]
         if self.engine.supports_hard_surface:
-            fills.append(((self.modes == HARD) & ~self.kept, HARD_COLOR))
+            fills.append(
+                ((self.modes == HARD) & ~self.kept & ~self.painted, HARD_COLOR)
+            )
         self.fill_shapes = [
             self._fill(faces, color) for faces, color in fills if faces.any()
         ]
@@ -366,10 +432,16 @@ class PlanSession:
         elif self.engine.uses_symmetry(self.props):
             lines.append("Not symmetrical")
 
+        if self.painted_area_count:
+            lines.append(
+                count_label(self.painted_area_count, "painted seam restriction")
+            )
+
         if self.engine.uses_proxy(self.props):
             pieces = self._unwrap_pieces()
+            # painted islands are never proxied, see parts_without_painted
             triangle_counts = numpy.bincount(
-                pieces, weights=self.triangles_per_face
+                pieces, weights=self.triangles_per_face * ~self.painted
             ).astype(numpy.int64)
             if self.props.proxy_mode == "AUTO":
                 modes = self.modes if self.proxy_modes is None else self.proxy_modes
@@ -430,10 +502,18 @@ class PlanSession:
         if self.regions is not None:
             region_hit = hit if edits_regions else None
             regions_changed = self.regions.hover(region, region_hit)
+        paint_before = self.hovers_paint
+        self.hovers_paint = (
+            hit is not None and not picks_parts(event) and bool(self.painted[hit.face])
+        )
         self.hovered_loose_part = None
-        if hit is not None and not edits_regions:
+        if hit is not None and not edits_regions and not self.hovers_paint:
             self.hovered_loose_part = int(self.face_loose_part[hit.face])
-        return regions_changed or self.hovered_loose_part != hovered_before
+        return (
+            regions_changed
+            or self.hovered_loose_part != hovered_before
+            or self.hovers_paint != paint_before
+        )
 
     def click(self, event):
         if self.hovered_loose_part is not None:
@@ -534,11 +614,12 @@ class PlanSession:
             items.append(self.hover_batches[part])
         if self.regions is not None:
             items.extend(self.regions.draw_items())
-        if self.plane_batches is None:
-            self.plane_batches = [
-                (shape, shape_batch(shape)) for shape in self.plane_shapes
+        if self.static_batches is None:
+            self.static_batches = [
+                (shape, shape_batch(shape))
+                for shape in [*self.painted_shapes, *self.plane_shapes]
             ]
-        items.extend(self.plane_batches)
+        items.extend(self.static_batches)
         return items
 
 
@@ -566,7 +647,9 @@ def stop_plan():
 
 def _draw_status(header, context):
     hints = []
-    if _session is not None and _session.regions is not None:
+    if _session is not None and _session.hovers_paint:
+        hints.append(("Painted seam restrictions", []))
+    elif _session is not None and _session.regions is not None:
         hints.append(("Edit Regions", ["MOUSE_LMB"]))
     hints += [
         ("Select Part", ["EVENT_CTRL", "MOUSE_LMB"]),
@@ -585,7 +668,8 @@ class UVGAMI_OT_plan(bpy.types.Operator):
     bl_idname = "uvgami.plan"
     bl_label = "Plan"
     bl_description = (
-        "Show and edit the part modes, regions and symmetry plane for the unwrap."
+        "Show and edit the part modes, regions, painted islands and symmetry plane"
+        " for the unwrap."
         " Click a border or edge loop to edit the regions,"
         " Ctrl+click a part to change its settings"
     )
@@ -628,7 +712,7 @@ class UVGAMI_OT_plan(bpy.types.Operator):
         global _run, _draw_handler
         props = context.scene.uvgami
         engine = active_engine(props.engine)
-        self.run_inputs = plan_run_inputs(engine, props)
+        self.run_inputs = plan_run_inputs(self.obj, engine, props)
         _run = PlanRun(self.obj, engine, SettingsCopy(props))
         if _draw_handler is None:
             _draw_handler = bpy.types.SpaceView3D.draw_handler_add(
@@ -657,12 +741,13 @@ class UVGAMI_OT_plan(bpy.types.Operator):
             return self._end(context, {"FINISHED"})
         if event.type == "TIMER":
             props = context.scene.uvgami
-            if plan_run_inputs(active_engine(props.engine), props) != self.run_inputs:
+            engine = active_engine(props.engine)
+            if plan_run_inputs(self.obj, engine, props) != self.run_inputs:
                 return self._restart_run(context)
             if _session is not None and _session.props.proxy_mode != props.proxy_mode:
                 _session.set_props(SettingsCopy(props))
                 tag_redraw()
-            if _run is not None and _run.done() and not self._start_session(context):
+            if _run is not None and not self._poll_run(context):
                 return self._end(context, {"CANCELLED"})
             return {"PASS_THROUGH"}
         if event.type in ("ESC", "RET") and event.value == "PRESS":
@@ -689,6 +774,8 @@ class UVGAMI_OT_plan(bpy.types.Operator):
             return {"PASS_THROUGH"}
         if event.type in ("MOUSEMOVE", "LEFT_CTRL", "RIGHT_CTRL", "OSKEY"):
             if session.hover(context.region, event):
+                # status_text_set redraws the status bar
+                context.workspace.status_text_set(_draw_status)
                 tag_redraw(("WINDOW",))
             return {"PASS_THROUGH"}
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
@@ -697,16 +784,19 @@ class UVGAMI_OT_plan(bpy.types.Operator):
             return {"RUNNING_MODAL"} if handled else {"PASS_THROUGH"}
         return {"PASS_THROUGH"}
 
-    def _start_session(self, context):
+    def _poll_run(self, context):
         global _run, _session
-        run, _run = _run, None
         try:
-            _session = PlanSession(self.obj, run.engine, run.props, run.result())
+            if not _run.done():
+                return True
+            run, _run = _run, None
+            try:
+                _session = PlanSession(self.obj, run.engine, run.props, run.result())
+            finally:
+                run.close()
         except (EngineError, WorkerError) as error:
             self.report({"ERROR"}, f"Plan: {error}")
             return False
-        finally:
-            run.close()
         context.workspace.status_text_set(_draw_status)
         tag_redraw()
         return True

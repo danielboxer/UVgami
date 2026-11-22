@@ -97,6 +97,22 @@ def add_sphere(name):
     )
 
 
+SEAM_RESTRICTIONS_GROUP = addon.src.guides.SEAM_RESTRICTIONS_GROUP
+# blender's 16 ring sphere has rings at z 0.71 and 0.56
+CAP_PAINT_Z = 0.6
+CAP_OUTLINE_Z = 0.56
+
+
+def paint_cap(obj, *, one_sided):
+    group = obj.vertex_groups.new(name=SEAM_RESTRICTIONS_GROUP)
+    painted = [
+        v.index
+        for v in obj.data.vertices
+        if v.co.z > CAP_PAINT_Z and (v.co.x >= 0 or not one_sided)
+    ]
+    group.add(painted, 1.0, "REPLACE")
+
+
 def add_dense_sphere(name, location=(0, 0, 0)):
     return add_primitive(
         name,

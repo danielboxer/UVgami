@@ -7,12 +7,15 @@ import bpy
 import numpy
 import pytest
 from blender_fixtures import (
+    CAP_OUTLINE_Z,
+    add_sphere,
     addon,
     cylinder_with_loose_cube,
     is_second_cube,
     needs_partuv,
     needs_tools,
     needs_xatlas,
+    paint_cap,
     two_loose_cubes,
 )
 
@@ -40,7 +43,8 @@ def planned(obj):
 
 
 def shape_colors(session):
-    return {shape.color for shape in [*session.fill_shapes, *session.plane_shapes]}
+    shapes = [*session.fill_shapes, *session.painted_shapes, *session.plane_shapes]
+    return {shape.color for shape in shapes}
 
 
 @needs_tools
@@ -79,6 +83,38 @@ def test_plan_draws_the_symmetry_plane():
 
     assert any(line.startswith("Symmetrical on") for line in session.lines)
     assert (*plan_drawing.AXIS_COLORS["X"], 0.9) in shape_colors(session)
+
+
+@needs_tools
+def test_plan_fills_the_mirrored_painted_island_and_counts_it():
+    bpy.context.scene.uvgami.use_weights = True
+    bpy.context.scene.uvgami.split_regions = False
+    sphere = add_sphere("sphere")
+    paint_cap(sphere, one_sided=True)
+
+    session = planned(sphere)
+
+    positions = addon.src.utils.mesh.vertex_positions(sphere.data)
+    cap = [
+        all(positions[v][2] > CAP_OUTLINE_Z - 0.01 for v in face.vertices)
+        for face in sphere.data.polygons
+    ]
+    assert session.painted.tolist() == cap
+    assert plan.PAINTED_COLOR in shape_colors(session)
+    assert "1 painted seam restriction" in session.lines
+
+
+def test_clearing_the_weights_restarts_the_plan():
+    props = bpy.context.scene.uvgami
+    props.use_weights = True
+    sphere = add_sphere("sphere")
+    paint_cap(sphere, one_sided=True)
+    engine = active_engine(props.engine)
+    painted_inputs = plan.plan_run_inputs(sphere, engine, props)
+
+    bpy.ops.uvgami.clear_draw()
+
+    assert plan.plan_run_inputs(sphere, engine, props) != painted_inputs
 
 
 def test_plan_counts_the_parts_left_out_of_the_mirror():

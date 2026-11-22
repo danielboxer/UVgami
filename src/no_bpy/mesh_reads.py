@@ -17,3 +17,9 @@ def vertex_position_array(mesh):
     flat = numpy.empty(len(mesh.vertices) * 3)
     mesh.vertices.foreach_get("co", flat)
     return flat.reshape(-1, 3)
+
+
+def vertex_normal_array(mesh):
+    flat = numpy.empty(len(mesh.vertices) * 3)
+    mesh.vertices.foreach_get("normal", flat)
+    return flat.reshape(-1, 3)

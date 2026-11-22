@@ -2,18 +2,21 @@ import bpy
 import numpy
 import pytest
 from blender_fixtures import (
+    CAP_OUTLINE_Z,
+    CAP_PAINT_Z,
+    SEAM_RESTRICTIONS_GROUP,
     add_sphere,
     addon,
     needs_engine,
     needs_partuv,
     needs_xatlas,
+    paint_cap,
     select,
     uv_islands,
 )
 
 pytestmark = [needs_engine, pytest.mark.smoke]
 
-SEAM_RESTRICTIONS_GROUP = addon.src.guides.SEAM_RESTRICTIONS_GROUP
 vertex_positions = addon.src.utils.mesh.vertex_positions
 
 OUTPUT_NAME = "sphere_unwrapped"
@@ -39,21 +42,6 @@ def top_half_seams(obj):
         for edge in obj.data.edges
         if edge.use_seam and sum(positions[v][2] for v in edge.vertices) / 2 > 0
     )
-
-
-# blender's 16 ring sphere has rings at z 0.71 and 0.56
-CAP_PAINT_Z = 0.6
-CAP_OUTLINE_Z = 0.56
-
-
-def paint_cap(obj, *, one_sided):
-    group = obj.vertex_groups.new(name=SEAM_RESTRICTIONS_GROUP)
-    painted = [
-        v.index
-        for v in obj.data.vertices
-        if v.co.z > CAP_PAINT_Z and (v.co.x >= 0 or not one_sided)
-    ]
-    group.add(painted, 1.0, "REPLACE")
 
 
 def cap_seams(obj):

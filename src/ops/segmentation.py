@@ -6,7 +6,11 @@ from bpy_extras.view3d_utils import location_3d_to_region_2d
 from mathutils import Vector
 
 from ..no_bpy.edge_loops import EdgeLoops, LoopRegion, drawn_loops, loop_side
-from ..no_bpy.mesh import faces_from_arrays, undirected_edge_keys
+from ..no_bpy.mesh import (
+    faces_from_arrays,
+    next_corners_in_face,
+    undirected_edge_keys,
+)
 from ..no_bpy.segmentation import (
     edge_face_pairs,
     joined_labels,
@@ -50,7 +54,7 @@ def closest_points_on_segments(starts, ends, point):
 
 
 class RegionEditor:
-    def __init__(self, obj, segments, partners):
+    def __init__(self, obj, segments, partners, *, painted):
         mesh = obj.data
         self.obj = obj
         self.positions = vertex_position_array(mesh)
@@ -62,6 +66,12 @@ class RegionEditor:
         self.vertex_partners[list(partners)] = list(partners.values())
         self.face_partners = face_partners(corners, totals, self.vertex_partners)
         self.face_pairs = edge_face_pairs(corners, totals)
+        self.painted = painted
+        edge_keys = undirected_edge_keys(corners, corners[next_corners_in_face(totals)])
+        painted_corners = numpy.repeat(painted, totals)
+        self.unpainted_edge_keys = numpy.setdiff1d(
+            edge_keys[~painted_corners], edge_keys[painted_corners]
+        )
         self.edge_loops = EdgeLoops(self.positions, corners, totals)
         self.loop_edges = set()
         if segments.hand_edited:
@@ -91,6 +101,15 @@ class RegionEditor:
     def _world(self, points):
         return points @ self.rotation_scale.T + self.offset
 
+    def _away_from_paint(self, edges):
+        # paint outlines are always seams and borders_outside_paint drops borders inside paint
+        keys = undirected_edge_keys(edges[:, 0], edges[:, 1])
+        return numpy.isin(keys, self.unpainted_edge_keys)
+
+    def _line_shape(self, edges, color, width):
+        positions = self._world(self.positions[edges.ravel()])
+        return Shape("LINES", positions, None, color, LINE_NUDGE, width)
+
     def _set_fine(self, fine):
         self.fine = fine
         self.region_partners = region_partners(fine, self.face_partners)
@@ -99,16 +118,14 @@ class RegionEditor:
         for pair in self.borders:
             for region in pair:
                 self.pairs_of_region.setdefault(region, []).append(pair)
+        self.drawn_borders = {}
+        for pair, edges in self.borders.items():
+            drawn = edges[self._away_from_paint(edges)]
+            if len(drawn):
+                self.drawn_borders[pair] = drawn
         self.border_shapes = {
-            pair: Shape(
-                "LINES",
-                self._world(self.positions[edges.ravel()]),
-                None,
-                OFF_BORDER_COLOR,
-                LINE_NUDGE,
-                LINE_WIDTH,
-            )
-            for pair, edges in self.borders.items()
+            pair: self._line_shape(edges, OFF_BORDER_COLOR, LINE_WIDTH)
+            for pair, edges in self.drawn_borders.items()
         }
         # gpu batches are made inside the draw handler, where the gpu context is
         self.border_batches = {}
@@ -147,7 +164,9 @@ class RegionEditor:
 
     def edits_face(self, face):
         region = int(self.fine[face])
-        return region != 0 and region not in self.hidden_regions
+        return (
+            region != 0 and region not in self.hidden_regions and not self.painted[face]
+        )
 
     def state(self):
         return RegionState(self.fine, frozenset(self.on), frozenset(self.loop_edges))
@@ -166,7 +185,9 @@ class RegionEditor:
     def border_near(self, face, point):
         nearest, nearest_point, nearest_distance = None, None, numpy.inf
         for pair in self.pairs_of_region.get(int(self.fine[face]), []):
-            edges = self.borders[pair]
+            if pair not in self.drawn_borders:
+                continue
+            edges = self.drawn_borders[pair]
             closest = closest_points_on_segments(
                 self.positions[edges[:, 0]], self.positions[edges[:, 1]], point
             )
@@ -253,17 +274,13 @@ class RegionEditor:
             edges = numpy.concatenate(
                 [numpy.stack([loop, numpy.roll(loop, -1)], axis=1) for loop in loops]
             )
-            shape = Shape(
-                "LINES",
-                self._world(self.positions[edges.ravel()]),
-                None,
-                OFF_BORDER_COLOR,
-                LINE_NUDGE,
-                LINE_WIDTH / 2,
-            )
             loop_of_edge = numpy.repeat(
                 numpy.arange(len(loops)), [len(loop) for loop in loops]
             )
+            away = self._away_from_paint(edges)
+            edges, loop_of_edge = edges[away], loop_of_edge[away]
+        if loops and len(edges):
+            shape = self._line_shape(edges, OFF_BORDER_COLOR, LINE_WIDTH / 2)
             drawn = DrawnLoops(edges, loop_of_edge, loops, shape)
         self.drawn_loops[part_regions] = drawn
         return drawn
@@ -330,14 +347,10 @@ class RegionEditor:
         if side is None:
             return None
         edges = numpy.stack([loop, numpy.roll(loop, -1)], axis=1)
-        shape = Shape(
-            "LINES",
-            self._world(self.positions[edges.ravel()]),
-            None,
-            HOVER_COLOR,
-            LINE_NUDGE,
-            LINE_WIDTH / 2,
-        )
+        drawn = edges[self._away_from_paint(edges)]
+        if len(drawn) == 0:
+            return None
+        shape = self._line_shape(drawn, HOVER_COLOR, LINE_WIDTH / 2)
         return LoopCandidate(side, loop, numpy.sort(edges, axis=1), shape)
 
     def add_loops(self, candidates):

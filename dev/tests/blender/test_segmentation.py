@@ -305,6 +305,10 @@ def dumbbell_segments(dumbbell):
     return segments
 
 
+def unpainted(obj):
+    return numpy.zeros(len(obj.data.polygons), dtype=bool)
+
+
 @needs_engine
 @needs_tools
 def test_the_region_editor_joins_the_bulbs_and_the_unwrap_keeps_it_whole(
@@ -314,7 +318,7 @@ def test_the_region_editor_joins_the_bulbs_and_the_unwrap_keeps_it_whole(
     segments = dumbbell_segments(dumbbell)
     assert segments.region_count >= 2
 
-    session = RegionEditor(dumbbell, segments, {})
+    session = RegionEditor(dumbbell, segments, {}, painted=unpainted(dumbbell))
     assert session.part_count == segments.region_count
     assert len(session.on) >= 1
     # every fine region is one of the engine's regions or inside one
@@ -371,7 +375,9 @@ def hovered_loops(session):
 @needs_tools
 def test_a_clicked_loop_splits_its_region_and_a_second_click_removes_it(load_obj):
     (dumbbell,) = load_obj("dumbbell")
-    session = RegionEditor(dumbbell, dumbbell_segments(dumbbell), {})
+    session = RegionEditor(
+        dumbbell, dumbbell_segments(dumbbell), {}, painted=unpainted(dumbbell)
+    )
     parts = session.part_count
     (candidate,) = next(loops for loops in hovered_loops(session) if loops)
 
@@ -401,7 +407,9 @@ def test_a_loop_across_joined_regions_splits_their_part_until_clicked_again(
     load_obj,
 ):
     (dumbbell,) = load_obj("dumbbell")
-    session = RegionEditor(dumbbell, dumbbell_segments(dumbbell), {})
+    session = RegionEditor(
+        dumbbell, dumbbell_segments(dumbbell), {}, painted=unpainted(dumbbell)
+    )
     mesh = dumbbell.data
     centers = numpy.empty(len(mesh.polygons) * 3)
     mesh.polygons.foreach_get("center", centers)
@@ -441,7 +449,7 @@ def test_the_mirrored_border_and_loop_change_with_the_clicked_one(load_obj):
     segments = dumbbell_segments(dumbbell)
     center, _ = symmetry.bounding_box_center_and_diagonal(dumbbell.data)
     partners = symmetry.mesh_mirror_partners(dumbbell.data, center, "X")
-    session = RegionEditor(dumbbell, segments, partners)
+    session = RegionEditor(dumbbell, segments, partners, painted=unpainted(dumbbell))
     pair = next(pair for pair in session.borders if session._mirrored_border(pair))
     mirrored = session._mirrored_border(pair)
     was_on = pair in session.on
@@ -460,7 +468,9 @@ def test_the_mirrored_border_and_loop_change_with_the_clicked_one(load_obj):
 @needs_tools
 def test_a_region_draws_its_quad_loops_and_the_nearest_one_is_picked(load_obj):
     (dumbbell,) = load_obj("dumbbell")
-    session = RegionEditor(dumbbell, dumbbell_segments(dumbbell), {})
+    session = RegionEditor(
+        dumbbell, dumbbell_segments(dumbbell), {}, painted=unpainted(dumbbell)
+    )
     part = next(
         part for part in session.regions_of_part[1:] if session._drawn_loops(part)
     )

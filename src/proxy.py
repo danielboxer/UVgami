@@ -9,6 +9,7 @@ from mathutils import Matrix, Vector
 from .hard_surface import apply_seams
 from .no_bpy import SURFACE_MODE_CODES, fit_uvs_keeping_area
 from .no_bpy.mesh import face_starts, lowest_index_part_labels
+from .no_bpy.mesh_reads import vertex_normal_array
 from .no_bpy.proxy import dense_subset, start_proxy_transfer
 from .symmetry import cut_on_axis, mirror_geometry, part_geometry
 from .unwrap.job import Transfer, apply_island_uvs_and_seams, island_edges_on_mesh
@@ -250,12 +251,6 @@ def _inverted(face):
 #     return Matrix.Scale(1 / max(high - low), 4) @ Matrix.Translation(-(low + high) / 2)
 
 
-def _vertex_normals(data):
-    flat = numpy.empty(len(data.vertices) * 3)
-    data.vertices.foreach_get("normal", flat)
-    return flat.reshape(-1, 3)
-
-
 # # candidates to pick a facing match from when snapping a cut vertex
 # NEAREST_VERTS = 8
 
@@ -316,10 +311,10 @@ def _vertex_normals(data):
 #         out_matrix = output.matrix_world
 #     nearest = facing_matcher(
 #         vertex_position_array(input_mesh.data),
-#         _vertex_normals(input_mesh.data),
+#         vertex_normal_array(input_mesh.data),
 #         numpy.array(matrix, dtype=numpy.float64),
 #         vertex_position_array(output.data),
-#         _vertex_normals(output.data),
+#         vertex_normal_array(output.data),
 #         numpy.array(out_matrix, dtype=numpy.float64),
 #     )
 #     return nearest(
@@ -339,7 +334,7 @@ def transfer_inputs(input_mesh, output):
     corners, totals = loop_vertices_and_face_sizes(data)
     dense = {
         "positions": vertex_position_array(data),
-        "normals": _vertex_normals(data),
+        "normals": vertex_normal_array(data),
         "matrix": numpy.array(input_mesh.matrix_world, dtype=numpy.float64),
         "corners": corners,
         "face_sizes": totals,
