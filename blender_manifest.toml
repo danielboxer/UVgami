@@ -10,6 +10,7 @@ id = "uvgami"
 name = "UVgami"
 version = "2.5.0"
 blender_version_min = "4.3.0"
+platforms = ["windows-x64", "windows-arm64", "linux-x64", "macos-arm64"]
 tagline = "Automatic UV unwrapping"
 website = "https://uvgami.com"
 
