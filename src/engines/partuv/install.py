@@ -15,7 +15,7 @@ from ..install_task import (
 from .paths import get_partfield_checkpoint_path, get_partuv_venv_path, get_uv_path
 
 # must match the partuv engine VERSION and partuv-partfield's pyproject.toml
-PARTUV_VERSION = "0.2.0"
+PARTUV_VERSION = "0.3.0"
 PARTUV_MINIMUM_VERSION = "0.2.0"
 PARTUV_ARCHIVE_SHA256S = {
     "windows": "bbf31c3e3c8768ffb663463aa570d1c0178c6e0a5c6cf41cfb771684853febee",
