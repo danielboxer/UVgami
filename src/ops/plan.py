@@ -9,8 +9,7 @@ from ..engines import active_engine
 from ..engines.optcuts import SURFACE_MODES
 from ..guides import SEAM_RESTRICTIONS_GROUP
 from ..no_bpy import SURFACE_MODE_CODES, EngineError
-from ..no_bpy.mesh import bounding_box_diagonal, face_starts, lowest_index_part_labels
-from ..no_bpy.mesh_reads import vertex_normal_array
+from ..no_bpy.mesh import face_starts, lowest_index_part_labels
 from ..no_bpy.preseed import SegmentRegions, classify_job
 from ..no_bpy.segmentation import edge_face_pairs
 from ..no_bpy.worker import WorkerError, WorkerProcess
@@ -66,9 +65,7 @@ REGION_COLORS = (
     (0.7, 0.45, 0.25, 0.5),
 )
 HOVERED_PART_COLOR = (1.0, 0.9, 0.1, 0.25)
-PAINTED_COLOR = (1.0, 0.0, 0.0, 0.85)
-# fraction of the bounding box diagonal
-PAINTED_LIFT = 0.005
+PAINTED_COLOR = (1.0, 0.0, 0.0, 0.7)
 TIMER_SECONDS = 0.1
 ORGANIC = SURFACE_MODE_CODES["ORGANIC"]
 HARD = SURFACE_MODE_CODES["HARD"]
@@ -300,13 +297,11 @@ class PlanSession:
         self.painted_shapes = []
         self.painted_area_count = 0
         if self.painted.any():
-            lift = PAINTED_LIFT * bounding_box_diagonal(positions)
-            raised = positions + vertex_normal_array(mesh) * lift
-            raised_corners, _ = lifted_triangles(mesh, raised, 0.0)
-            fill = raised_corners[self.painted[self.triangle_faces]].reshape(-1, 3)
-            world_fill = fill @ matrix[:3, :3].T + matrix[:3, 3]
+            fill = self.triangle_corners[self.painted[self.triangle_faces]]
             self.painted_shapes = [
-                Shape("TRIS", world_fill, None, PAINTED_COLOR, FILL_NUDGE, None)
+                Shape(
+                    "TRIS", fill.reshape(-1, 3), None, PAINTED_COLOR, FILL_NUDGE, None
+                )
             ]
             face_pairs = edge_face_pairs(corners, totals)
             both_painted = (
