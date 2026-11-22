@@ -29,8 +29,7 @@ from .venv_commands import VENV_PYTHON, build_install_commands
 
 # must match partuv-partfield's pyproject.toml
 PARTFIELD_WHEEL = f"partuv_partfield-{PARTUV_VERSION}-py3-none-any.whl"
-# Hugging Face's copy changes with its main branch
-CHECKPOINT_URL = "https://github.com/DanielBoxer/UVgami/releases/download/checkpoint/model_objaverse.ckpt"
+CHECKPOINT_URL = f"{ENGINE_DOWNLOADS_URL}/{CHECKPOINT_NAME}"
 AI_DOWNLOAD_SIZE = "5 GB"
 UV_VERSION = "0.11.25"
 UV_ARCHIVES = {

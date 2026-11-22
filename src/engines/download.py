@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-ENGINE_DOWNLOADS_URL = "https://uvgami.com/engine-downloads"
+ENGINE_DOWNLOADS_URL = "https://uvgami.com/downloads"
 
 _CHUNK = 1 << 20
 _ATTEMPTS = 4

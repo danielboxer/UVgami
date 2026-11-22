@@ -68,7 +68,7 @@ class UVGAMI_OT_install_partuv(PartuvTask, bpy.types.Operator):
             self,
             event,
             title=f"{action} PartUV",
-            message=f"{PARTUV.download_size}. Under the UVgami Engine License.",
+            message=f"{PARTUV.download_size} (UVgami Engine License)",
             confirm_text=action,
         )
 

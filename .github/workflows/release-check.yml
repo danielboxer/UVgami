@@ -102,7 +102,7 @@ jobs:
           VERSION=$(grep -m1 "^$CONSTANT = " src/engines/$ENGINE/install.py | cut -d'"' -f2)
           ZIP="$ENGINE-engine-$VERSION-${{ matrix.platform.pkg_name }}.zip"
           mkdir -p package
-          curl -fsSL -A uvgami-ci -o "package/$ZIP" "https://uvgami.com/engine-downloads/$ZIP"
+          curl -fsSL -A uvgami-ci -o "package/$ZIP" "https://uvgami.com/downloads/$ZIP"
 
       - name: Check the zip against the pinned sha256
         shell: bash
@@ -237,7 +237,7 @@ jobs:
             VERSION=$(grep -m1 "^$CONSTANT = " src/engines/$ENGINE/install.py | cut -d'"' -f2)
             ZIP="$ENGINE-engine-$VERSION-$TAG.zip"
             mkdir -p package/$ENGINE
-            curl -fsSL -A uvgami-ci -o "package/$ENGINE/$ZIP" "https://uvgami.com/engine-downloads/$ZIP"
+            curl -fsSL -A uvgami-ci -o "package/$ENGINE/$ZIP" "https://uvgami.com/downloads/$ZIP"
             mkdir -p extracted/$ENGINE
             unzip -q package/$ENGINE/*.zip -d extracted/$ENGINE
             cp "$(find extracted/$ENGINE -type f -name "$ENGINE$EXE")" engine-builds/$TAG/

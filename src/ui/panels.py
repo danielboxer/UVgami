@@ -568,7 +568,7 @@ class UVGAMI_PT_misc(EnginePanel, bpy.types.Panel):
         row.scale_y = 1.5
         row.operator(
             "wm.url_open", text="Docs", icon="HELP"
-        ).url = "https://uvgami.com/docs/blender/"
+        ).url = "https://uvgami.com/docs/blender/?utm_source=blender-addon"
 
         row = box.row()
         row.scale_y = 1.5
