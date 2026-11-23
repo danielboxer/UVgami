@@ -11,9 +11,9 @@ from ..binary_engine import (
 XATLAS_VERSION = "0.2.9"
 XATLAS_MINIMUM_VERSION = "0.2.0"
 XATLAS_ARCHIVE_SHA256S = {
-    "windows": "0836f686230f61800a8e3d57fbf8ee1225ec6b5751b005ffb41c696f3e4d630b",
-    "linux": "781f8e280bef569577b63e6ff08d94b36ed9b4ff44de86b3fd970324bfc74bfa",
-    "macos-arm64": "b26c0f50b7439ce2b841ebe33b57698fccf64dc481c4375e123be09b40be2a20",
+    "windows": "449d58878775e2dcc2bc486a5c4f46fa1cf8ffe12ae814aac6ce2bdb29beca82",
+    "linux": "3f84a83ed2bdd3670f4bd3f8399b9d591c6b35fd5c66b86e9219668830ca928e",
+    "macos-arm64": "190ed8af4e7b6ad31e499f1793d8fd199fbe0f63babbdaa87ac1a1f7b46835a3",
 }
 XATLAS = EngineRelease(
     "xatlas",

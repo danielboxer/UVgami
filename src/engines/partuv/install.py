@@ -18,9 +18,9 @@ from .paths import get_partfield_checkpoint_path, get_partuv_venv_path, get_uv_p
 PARTUV_VERSION = "0.3.0"
 PARTUV_MINIMUM_VERSION = "0.2.0"
 PARTUV_ARCHIVE_SHA256S = {
-    "windows": "bbf31c3e3c8768ffb663463aa570d1c0178c6e0a5c6cf41cfb771684853febee",
-    "linux": "2e64c60b98d06234cf320412b4f96c20fe96c3aeb6ef0da74440586a92e9d455",
-    "macos-arm64": "7d65814f7cc3c0e9501ac3c4baafdf535af44b1383f664652907f1ff51581287",
+    "windows": "21c612bb189c951512d0f0d530f8adb1a7697bac72b020a752f7b54c5852f001",
+    "linux": "c2f6d9168894f4938067127ac9a1d5cd005fa8864809c35f0d3ad2c251ced13a",
+    "macos-arm64": "313abe44358a5a7d857e96b955ba8910743d6f318625b490cec198c3b9601f0e",
 }
 PARTUV = EngineRelease(
     "partuv",
